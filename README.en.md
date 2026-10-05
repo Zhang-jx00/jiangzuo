@@ -67,7 +67,7 @@ Built from a research pass across 155+ sources and 25 top-star repositories — 
 
 - Scripts: Python 3.8+ stdlib only, cross-platform; without Python, every booklet has an equivalent manual checklist
 - All scripts are read-only toward your project, never touch the network, and never write outside their own skill folder
-- SKILL.md is 176 lines (limit 500); description is 418 chars (limit 1024) — room to grow
+- SKILL.md is 254 lines (limit 500); description is 396 chars (limit 1024) and trigger-only — it deliberately summarizes no workflow, so agents read the body instead of shortcutting off the description
 
 ## Contributing
 

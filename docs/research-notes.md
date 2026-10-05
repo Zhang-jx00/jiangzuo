@@ -22,6 +22,12 @@
 | 13 | 简历型技能（"你有 20 年经验"人设宣言）是社区最痛恨的反模式 | Reddit r/ClaudeAI 高赞批评帖 | 全文无人设宣言，只有可执行规则 |
 | 14 | 团队经验应回写技能形成闭环，但需人工审查（不安全轨迹也会被沉淀） | Archer continuous-learning；arXiv 2605.23899 | learnings.md 回写机制；docs-delivery.md |
 | 15 | 先建评测再写技能（eval-first），触发准确率目标 ≥90% | Anthropic 工程博客；掘金实战指南 | evals/ 三件套 |
+| 16 | **description 里摘要工作流是实测反模式**：agent 会照 description 抄近路、跳过正文（换掉含工作流的 description 后两段式审查才被正确执行） | obra/superpowers writing-skills（SDO 实测） | v0.4.0 description 重写为纯触发条件，工作流只留在正文 |
+| 17 | 纪律类技能的三件套：禁令 + 反合理化表 + **红旗清单**；"违反字面=违反精神"一句话切断整类"精神遵守"式辩解 | obra/superpowers writing-skills（Bulletproofing） | v0.4.0 SKILL.md 红旗信号、字面=精神原则 |
+| 18 | 流程图只用于非显然的决策点；参考材料用表格、线性步骤用编号 | obra/superpowers writing-skills（Flowchart Usage） | v0.4.0 L0–L4 定级决策树 |
+| 19 | "同意完成任务 ≠ 同意扩大范围或额外权限"；技能不要把一次示例/失败上升为普适要求 | Codex 官方 skill-creator | v0.4.0 纪律红线·最小改动 |
+| 20 | `agents/openai.yaml` 承载跨客户端 UI 元数据（display_name/short_description/icon） | Codex 官方 skill-creator（Anatomy） | v0.4.0 新增 agents/openai.yaml |
+| 21 | 简短技能自包含即可，路由层只在"确有多个模式需要分流"时才建 | Codex 官方 skill-creator（Progressive Disclosure in Practice） | 将作 17 分册均为按需路由，正文零重复 |
 
 ## 二、官方规范与文档
 

@@ -98,6 +98,11 @@ def check_frontmatter(skill_dir, text):
             err("description %d 字符，超过 1024 上限（超限的技能会被直接丢弃）" % len(desc))
         else:
             info("description %d 字符（≤1024 ✓）" % len(desc))
+        # 部分客户端（Claude Code）对 description+when_to_use 合计在 ~1536 字符处截断
+        wtu = meta.get("when_to_use", "")
+        if wtu and len(desc) + len(wtu) > 1536:
+            warn("description+when_to_use 合计 %d 字符，超过约 1536 的截断阈值，"
+                 "关键触发信息请放前面" % (len(desc) + len(wtu)))
     unknown = [k for k in meta if k not in RECOGNIZED_KEYS | TOLERATED_KEYS]
     if unknown:
         warn("未识别的 frontmatter 字段：%s（不同平台可能忽略）" % ", ".join(unknown))

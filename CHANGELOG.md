@@ -2,6 +2,30 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.4.0] - 2026-10-05
+
+对齐成熟技能：精读本机官方元技能（superpowers/writing-skills、Codex/skill-creator）全文，逐条吸收其被实测验证的写作范式。
+
+### 变更
+
+- **description 重写为纯触发条件**：移除工作流摘要（"按先读懂再想清…推进"）。writing-skills 实测证明：description 摘要工作流会让 agent 照 description 抄近路、跳过技能正文。工作流表述保留在 metadata.short-description 与正文
+- 新增 `when_to_use` frontmatter（ZCode/Claude Code 认可的触发短语扩展字段），validate_skill 同步新增"合计 ≤1536 截断阈值"检查
+- SKILL.md 新增：
+  - **60 秒示例**：一段真实感对话展示门控提问、最小范围、验证证据、风险同报、技术债登记五个动作（官方质量清单要求正文含具体示例）
+  - **L0–L4 定级决策树**：非显然决策点用流程图（writing-skills 规范），命中即停、拿不准按高一级
+  - **红旗信号清单**：6 个"出现即停"信号，与反合理化表互补（禁令防辩解、红旗防状态）
+  - **"违反字面=违反精神"** 原则：切断"精神遵守"式辩解（superpowers Bulletproofing）
+  - **术语表** 12 条：核心循环/铁律/分级门/棘轮/HARD-GATE/交接单/常备授权/兜底等全文统一用法
+- 纪律红线·最小改动：写入 **"同意完成任务 ≠ 同意扩大范围或额外权限"**（skill-creator）
+- templates/task-plan.md：新增"执行方式"（主代理/子代理逐任务）与每任务 REQUIRED REFERENCE（执行前必读分册）
+- 新增 `agents/openai.yaml`（Codex 系客户端 UI 元数据）
+- evals/trigger-tests.md：新增开发上下文 PPT 交付物触发用例与三组正反边界甄别
+- docs/research-notes.md：新增 #16–#21 结论来源映射
+
+### 修复
+
+- description 中"线上事故止血"表述统一为"线上事故排查"（与术语表一致）
+
 ## [0.3.0] - 2026-10-05
 
 ### 新增：技能协同能力
