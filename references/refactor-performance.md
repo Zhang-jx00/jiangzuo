@@ -25,6 +25,7 @@
 
 - 定个目标口径：哪个操作、什么数据量、现在多慢、期望多快（性能预算）。
 - 手段按场景选：浏览器 Performance 面板/Lighthouse（前端）、profiler（py-spy、cProfile、pprof）、慢查询日志、APM、`time` 计时最简版。
+- 前端预算参考 Core Web Vitals：LCP < 2.5s、INP < 200ms、CLS < 0.1；后端先定 P95 延迟目标再谈优化。
 - 保留优化前的基线数字。
 
 ### 第二步：定位

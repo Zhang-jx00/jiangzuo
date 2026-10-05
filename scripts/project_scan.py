@@ -186,6 +186,38 @@ def find_key_files(root):
     return found
 
 
+LOCKFILES = {
+    "pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "package-lock.json": "npm",
+    "poetry.lock": "poetry", "uv.lock": "uv", "Pipfile.lock": "pipenv",
+    "Cargo.lock": "cargo", "go.sum": "go modules", "composer.lock": "composer",
+    "Gemfile.lock": "bundler",
+}
+
+
+def detect_pkg_manager(root):
+    for lock, mgr in LOCKFILES.items():
+        if os.path.isfile(os.path.join(root, lock)):
+            return mgr
+    return None
+
+
+def parse_env_example(root):
+    for name in (".env.example", "env.example", ".env.sample", ".env.template"):
+        p = os.path.join(root, name)
+        if os.path.isfile(p):
+            text = read_text(p)
+            vars_ = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                var = line.split("=", 1)[0].strip()
+                if var and not var.startswith(" "):
+                    vars_.append(var)
+            return name, vars_
+    return None, []
+
+
 def readme_excerpt(root):
     for name in ("README.md", "readme.md", "README.rst", "README"):
         p = os.path.join(root, name)
@@ -227,6 +259,16 @@ def build_report(root):
     dirs_md = "\n".join("- `%s/` — ？？（人工补一句职责）" % d for d in list_top_dirs(root)) or "- （空）"
     keys_md = "\n".join("- %s" % k for k in find_key_files(root)) or "- （未发现）"
 
+    mgr = detect_pkg_manager(root)
+    env_name, env_vars = parse_env_example(root)
+    extra_md = ""
+    if mgr:
+        extra_md += "\n## 包管理器（由锁文件判定）\n\n- %s\n" % mgr
+    if env_name:
+        shown = "`%s`" % "`、`".join(env_vars[:15]) if env_vars else "（空文件）"
+        more = " ……共 %d 个" % len(env_vars) if len(env_vars) > 15 else ""
+        extra_md += "\n## 环境变量（来自 %s）\n\n- %s%s\n- 每个变量的用途与取值方式：？？\n" % (env_name, shown, more)
+
     return u"""# 项目摸底档案（草稿）：{name}
 
 > 生成日期：{date} ｜ 生成方式：scripts/project_scan.py 自动扫描 + 人工补充
@@ -253,7 +295,7 @@ def build_report(root):
 ## 发现的关键文件
 
 {keys}
-
+{extra}
 ## README 开头（原文摘录）
 
 ```
@@ -273,7 +315,7 @@ def build_report(root):
   2. ？？
 """.format(name=name, date=date.today().isoformat(),
                stack_rows="\n".join("| %s | %s | %s |" % r for r in stack_rows),
-               scripts=scripts_md, dirs=dirs_md, keys=keys_md,
+               scripts=scripts_md, dirs=dirs_md, keys=keys_md, extra=extra_md,
                readme=readme_excerpt(root))
 
 

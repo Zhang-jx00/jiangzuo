@@ -179,12 +179,28 @@ def main():
             text = f.read()
         meta, rest = parse_frontmatter(text)
         if meta is not None and rest is not None:
-            body_lines = len([ln for ln in rest])
+            body = "\n".join(rest)
+            body_lines = len(rest)
             if body_lines > 500:
                 warn("SKILL.md 正文 %d 行，超过建议的 500 行——考虑把内容外移到 references/" % body_lines)
             else:
                 info("SKILL.md 正文 %d 行（≤500 ✓）" % body_lines)
+            if re.search(r"\b[A-Za-z]:[\\/]\S|/Users/\S|/home/\S", body):
+                err("正文含本机绝对路径（跨环境会失效，应使用相对路径）")
             check_frontmatter(skill_dir, text)
+            version = (meta.get("metadata") or {}).get("version", "")
+            if version:
+                changelog = os.path.join(skill_dir, "CHANGELOG.md")
+                if os.path.isfile(changelog):
+                    with io.open(changelog, "r", encoding="utf-8", errors="replace") as f:
+                        m = re.search(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", f.read(), re.M)
+                    if m and m.group(1) != version:
+                        warn("metadata.version (%s) 与 CHANGELOG 最新版本 (%s) 不一致"
+                             % (version, m.group(1)))
+                    elif m:
+                        info("metadata.version 与 CHANGELOG 一致（%s ✓）" % version)
+            if os.path.isdir(os.path.join(skill_dir, "evals")):
+                info("含 evals/ 评测集 ✓")
             refs = check_refs(skill_dir, text)
             check_one_level(skill_dir, refs)
             check_scripts(skill_dir)

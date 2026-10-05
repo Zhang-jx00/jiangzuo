@@ -40,6 +40,12 @@ SCAN_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".vue", ".php", ".rb", ".go",
 SECRET_PATTERNS = [
     ("critical", "私钥块", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("critical", "AWS AccessKey", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("high", "GitHub Token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("high", "Google API Key", re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b")),
+    ("high", "Slack Token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
+    ("high", "OpenAI/Anthropic Key", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{20,}\b")),
+    ("high", "带凭证的连接串", re.compile(
+        r"\b(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp)://[^\s:/@]+:[^\s/@]{4,}@")),
     ("high", "赋值型密钥", re.compile(
         r"(?i)(?:api[_-]?key|apikey|secret|access[_-]?token|auth[_-]?token|"
         r"private[_-]?key|password|passwd|pwd)\w*\s*[:=]\s*['\"]([^'\"]{6,})['\"]")),
@@ -130,6 +136,11 @@ def check_file(rel_path, root):
     ext = os.path.splitext(rel_path)[1].lower()
     base = os.path.basename(rel_path)
     abs_path = os.path.join(root, rel_path)
+    try:
+        if os.path.getsize(abs_path) > 2_000_000:
+            findings.append(("info", "大文件(>2MB)", 1, "确认是否应入库"))
+    except OSError:
+        pass
     lines = read_lines(abs_path)
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
@@ -145,8 +156,8 @@ def check_file(rel_path, root):
                 value = m.group(1) if m.groups() else m.group(0)
                 if any(h in value.lower() for h in PLACEHOLDER_HINTS):
                     continue
-                shown = value[:4] + "****" if m.groups() else label
-                findings.append((level, "疑似密钥：%s" % label, i, "%s → %s" % (label, shown)))
+                findings.append((level, "疑似密钥：%s" % label, i,
+                                 "%s → %s****" % (label, value[:6])))
         for level, label, rx, exts in DEBUG_PATTERNS:
             if ext in exts and rx.search(line):
                 findings.append((level, label, i, stripped[:80]))

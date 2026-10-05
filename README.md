@@ -116,7 +116,7 @@ npx skills add <you>/jiangzuo
 
 ## 设计依据
 
-本技能的设计不是拍脑袋，来自一轮系统调研（155+ 篇来源、25 个高星仓库深析）：
+本技能的设计不是拍脑袋，来自一轮系统调研（155+ 篇来源、25 个高星仓库深析），**每条规则的出处可追溯**：见 [docs/research-notes.md](docs/research-notes.md) 的"结论 → 来源 → 落点"映射表。
 
 - **Agent Skills 开放规范**（agentskills.io）：name/description 约束、<500 行、渐进式披露三层
 - **Anthropic 官方最佳实践**：description=触发器公式、自由度三档、反模式清单
@@ -130,7 +130,7 @@ npx skills add <you>/jiangzuo
 
 - 脚本仅用 Python 3.8+ 标准库，Windows/macOS/Linux 通用；环境没有 Python 时按各分册的人工清单执行，效果等价
 - 所有脚本只读项目文件、不联网、不写技能目录外的东西，可放心审计
-- SKILL.md 153 行（上限 500），description 322 字符（上限 1024），预留了扩展空间
+- SKILL.md 176 行（上限 500），description 418 字符（上限 1024），预留了扩展空间
 
 ## 参与贡献
 

@@ -61,13 +61,13 @@ No configuration needed afterwards: any software-development request auto-loads 
 
 ## Design basis
 
-Built from a research pass across 155+ sources and 25 top-star repositories: the [Agent Skills spec](https://agentskills.io), Anthropic's official skill best practices, arXiv 2608.14036 ("Demystifying Agent Skills" — 65.7% of skill value is procedural anchoring), obra/superpowers (iron-law + anti-rationalization tables), planning-with-files (on-disk plans beat memory), GitHub spec-kit & Kiro (EARS acceptance criteria, gated workflows), and Snyk's ToxicSkills audit (supply-chain safety — hence zero-dependency, auditable, offline scripts).
+Built from a research pass across 155+ sources and 25 top-star repositories — **every rule is traceable to its source**: see [docs/research-notes.md](docs/research-notes.md) for the "conclusion → source → where it landed" mapping table. Key inputs: the [Agent Skills spec](https://agentskills.io), Anthropic's official skill best practices, arXiv 2608.14036 ("Demystifying Agent Skills" — 65.7% of skill value is procedural anchoring), obra/superpowers (iron-law + anti-rationalization tables), planning-with-files (on-disk plans beat memory), GitHub spec-kit & Kiro (EARS acceptance criteria, gated workflows), and Snyk's ToxicSkills audit (supply-chain safety — hence zero-dependency, auditable, offline scripts).
 
 ## Compatibility
 
 - Scripts: Python 3.8+ stdlib only, cross-platform; without Python, every booklet has an equivalent manual checklist
 - All scripts are read-only toward your project, never touch the network, and never write outside their own skill folder
-- SKILL.md is 153 lines (limit 500); description is 322 chars (limit 1024) — room to grow
+- SKILL.md is 176 lines (limit 500); description is 418 chars (limit 1024) — room to grow
 
 ## Contributing
 

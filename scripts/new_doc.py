@@ -21,6 +21,7 @@
     progress   进度报告     → docs/jiangzuo/reports/YYYY-MM-DD-progress-<标题>.md
     delivery   交付报告     → docs/jiangzuo/reports/YYYY-MM-DD-delivery-<标题>.md
     debt       技术债登记   → docs/jiangzuo/debts/tech-debt.md（唯一登记簿，已存在则提示追加）
+    learning   经验教训     → docs/jiangzuo/learnings.md（追加一条：情境=标题，教训待填）
 
 仅使用 Python 标准库（3.8+）。
 """
@@ -85,6 +86,30 @@ def main():
     args = parser.parse_args()
 
     t = args.type.lower()
+
+    project_root = os.path.abspath(args.dir)
+    if not os.path.isdir(project_root):
+        print("错误：项目目录不存在：%s" % project_root, file=sys.stderr)
+        return 2
+
+    if t == "learning":
+        learnings_dir = os.path.join(project_root, "docs", "jiangzuo")
+        os.makedirs(learnings_dir, exist_ok=True)
+        out_path = os.path.join(learnings_dir, "learnings.md")
+        if not os.path.exists(out_path):
+            header = (
+                u"# 经验教训（learnings）\n\n"
+                u"> 规则：用户纠正你、踩了坑时，追加一行：`- [日期] 情境：…… 教训：……`。\n"
+                u"> 教训写可复用的行为改变，不写情绪与流水账。下次同类任务开始前先读本文件。\n\n")
+            with io.open(out_path, "w", encoding="utf-8") as f:
+                f.write(header)
+        entry = u"- [%s] 情境：%s 教训：（待填）\n" % (date.today().isoformat(), args.title.strip())
+        with io.open(out_path, "a", encoding="utf-8") as f:
+            f.write(entry)
+        print("已追加经验条目：%s" % os.path.relpath(out_path, project_root))
+        print("下一步：把『教训』补成可复用的行为改变；同类任务开工前先读 learnings.md。")
+        return 0
+
     if t not in TYPES:
         print("错误：未知类型 %r。可选：%s" % (args.type, " / ".join(TYPES)), file=sys.stderr)
         return 2
@@ -93,11 +118,6 @@ def main():
     template_path = os.path.join(TEMPLATE_DIR, template_name)
     if not os.path.isfile(template_path):
         print("错误：找不到模板 %s（技能目录可能不完整）" % template_path, file=sys.stderr)
-        return 2
-
-    project_root = os.path.abspath(args.dir)
-    if not os.path.isdir(project_root):
-        print("错误：项目目录不存在：%s" % project_root, file=sys.stderr)
         return 2
 
     out_dir = os.path.join(project_root, "docs", "jiangzuo", subdir)
