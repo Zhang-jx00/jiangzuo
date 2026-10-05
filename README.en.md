@@ -21,9 +21,9 @@ And three iron laws:
 - **No bug fixes without a root cause.** (No patching over symptoms.)
 - **Minimal diff, task scope only.** (No unsolicited dependencies, no drive-by refactors.)
 
-## Coverage (16 on-demand booklets)
+## Coverage (17 on-demand booklets)
 
-Project onboarding · requirements clarification (plain-language confirmation + EARS-style acceptance criteria) · architecture & tech-selection with ADRs · API contracts · frontend · UI/UX design system & walkthrough · backend · database migrations with rollback · security (OWASP mindset) · 4-phase systematic debugging · incident response (stop the bleeding first) · layered testing · pre-commit review · test-guarded refactoring & measured optimization · DevOps (12-factor, CI/CD, release checklist) · living documentation & delivery reports.
+Project onboarding · requirements clarification (plain-language confirmation + EARS-style acceptance criteria) · architecture & tech-selection with ADRs · API contracts · frontend · UI/UX design system & walkthrough · backend · database migrations with rollback · security (OWASP mindset) · 4-phase systematic debugging · incident response (stop the bleeding first) · layered testing · pre-commit review · test-guarded refactoring & measured optimization · DevOps (12-factor, CI/CD, release checklist) · living documentation & delivery reports · **skill orchestration** — with user consent, coordinates other installed skills (slides, charts, docs, browser walkthrough, images, web research) through a propose → approve → handoff → verify protocol, with standing authorizations and fallbacks.
 
 ## Task tiering (L0–L4)
 
