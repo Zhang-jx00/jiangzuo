@@ -87,12 +87,14 @@ jiangzuo/
 git clone https://github.com/<you>/jiangzuo.git && cp -r jiangzuo ~/.zcode/skills/
 # Claude Code
 cp -r jiangzuo ~/.claude/skills/
+# 跨客户端新默认（Cursor 等同时识别 Claude/Codex 目录）
+cp -r jiangzuo ~/.agents/skills/
 ```
 
 **方式二：项目级**（仅当前项目生效，可随仓库提交给团队）
 
 ```bash
-cp -r jiangzuo <你的项目>/.zcode/skills/     # 或 .claude/skills/
+cp -r jiangzuo <你的项目>/.zcode/skills/     # 或 .claude/skills/、.agents/skills/
 ```
 
 **方式三：skills.sh CLI**
@@ -132,6 +134,20 @@ npx skills add <you>/jiangzuo
 - 脚本仅用 Python 3.8+ 标准库，Windows/macOS/Linux 通用；环境没有 Python 时按各分册的人工清单执行，效果等价
 - 所有脚本只读项目文件、不联网、不写技能目录外的东西，可放心审计
 - SKILL.md 254 行（上限 500），description 396 字符（上限 1024）且为纯触发条件（不含工作流摘要，防 agent 抄近路），预留了扩展空间
+
+## 占用与性能（可度量）
+
+```
+python scripts/validate_skill.py . --stats
+```
+
+| 项 | 数值 | 说明 |
+|---|---|---|
+| 常驻成本 | SKILL.md ~5.5K tokens | 每次触发进上下文的全部内容（正文预算 ≤5K，超了先删再增） |
+| 按需成本 | 17 本分册合计 ~23K tokens | 典型任务只读 1-3 本（~1.5-5K tokens），渐进式披露 |
+| 脚本成本 | ~0 tokens | 脚本只执行不进上下文，把确定性操作从生成变为运行 |
+
+瘦身依据：上下文膨胀占技能致错归因的 25%（arXiv 307 例）；"何时不适用"区块是 6.9 万技能分析中单项收益最高的可靠性修改（+16）——本技能两者都已落实。详见 [docs/research-notes.md](docs/research-notes.md)。
 
 ## 参与贡献
 

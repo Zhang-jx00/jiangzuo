@@ -182,6 +182,7 @@ def main():
         files, stat = git_changed_files(root, args.staged)
         if not files:
             print("（git 没有发现%s变更，无事可查）" % ("暂存区" if args.staged else "未提交"))
+            print("RESULT: PASS（无变更）")
             return 0
     else:
         files = [os.path.relpath(p, root).replace("\\", "/")
@@ -201,6 +202,7 @@ def main():
     if not findings:
         print("## 结果\n\n机械检查全部通过，共扫描 %d 个文件。\n" % len(files))
         print("提醒：机械检查通过 ≠ 审查通过，请继续按 code-review.md 人工清单过一遍。")
+        print("\nRESULT: PASS（0 发现）")
         return 0
 
     print("## 结果（%d 个文件，%d 条发现）\n" % (len(files), len(findings)))
@@ -216,8 +218,12 @@ def main():
 
     print("处理建议：🔴/🟠 必须处理（密钥泄露要先作废轮换，不是只删代码）；"
           "🟡 提交前清掉；⚪ 记录到 TODO 或技术债。")
-    critical = any(f[0] in ("critical", "high") for f in findings)
-    if args.strict and critical:
+    blocking = [f for f in findings if f[0] in ("critical", "high")]
+    print("\nRESULT: %s（critical/high=%d, warning=%d, info=%d）"
+          % ("PASS" if not blocking else "FAIL", len(blocking),
+             sum(1 for f in findings if f[0] == "warning"),
+             sum(1 for f in findings if f[0] == "info")))
+    if args.strict and blocking:
         return 1
     return 0
 

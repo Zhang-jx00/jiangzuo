@@ -28,6 +28,23 @@
 | 19 | "同意完成任务 ≠ 同意扩大范围或额外权限"；技能不要把一次示例/失败上升为普适要求 | Codex 官方 skill-creator | v0.4.0 纪律红线·最小改动 |
 | 20 | `agents/openai.yaml` 承载跨客户端 UI 元数据（display_name/short_description/icon） | Codex 官方 skill-creator（Anatomy） | v0.4.0 新增 agents/openai.yaml |
 | 21 | 简短技能自包含即可，路由层只在"确有多个模式需要分流"时才建 | Codex 官方 skill-creator（Progressive Disclosure in Practice） | 将作 17 分册均为按需路由，正文零重复 |
+| 22 | **技能致错实证（307 例）**：上下文膨胀占效率回归 25.3% 且 43/46 由入口过大引起；头号功能失败是"示例/默认值被误当任务要求"（86 例） | arXiv 2608.11888 | v0.5.0 正文压回 ≤5K；示例统一标注"模式参考，勿照抄" |
+| 23 | **"何时不适用"区块是可靠性单项最高杠杆**（6.9 万技能分析 +16 分） | claudskills.com 反模式报告 | v0.5.0 SKILL.md 新增「不适用与让位」 |
+| 24 | **聚焦技能优于穷尽式文档**：精选技能把通过率 33.9%→50.5%；跨组件堆叠存在干扰 | arXiv 2602.12670（SkillsBench）、2605.05716 | 入口只放路由+硬约束；分册按需读取不整批载入；CONTRIBUTING 加读取频率审计 |
+| 25 | **长会话上下文腐烂**：定时重注入关键指令、子代理隔离是对策 | mindstudio/reinteractive/developerway | v0.5.0 装载即用新增"长会话/压缩后重读核心循环与计划" |
+| 26 | **确定性脚本替代生成**是官方与 Uber（3600+ 技能、日 3 万次执行）双重背书的省 token 手段 | Anthropic 工程博客、Uber 软件工厂 | 将作四脚本架构不变，新增 --stats 度量与 RESULT 结论行 |
+| 27 | **跨端兼容新默认**：`.agents/skills/` 被多家客户端识别；skills.sh 生态均分仅 6.2/12——分发解决后质量靠自己保证 | agentman.ai 生态报告、codylindley 兼容矩阵 | README 安装增加 `.agents/skills/`；validate/preflight 双门槛保质量 |
+
+### v0.5.0 补充来源（瘦身与可靠性专项）
+
+- arXiv 2608.11888 — 技能致失败 307 例归因（TIF/过度流程/上下文膨胀）
+- arXiv 2602.12670 — SkillsBench 87 任务×18 配置（聚焦技能 +16.6pp）
+- arXiv 2605.05716 — More Is Not Always Better（脚手架组件干扰）
+- claudskills.com/learn/skill-md-anti-patterns — 6.9 万技能反模式与分值杠杆
+- uber.com/blog/efficient-software-factory — Uber 技能工厂实测
+- agentman.ai/blog/agent-skills-ecosystem-report-2026 — 2026 生态报告（40 产品兼容）
+- notes.ansonbiggs.com — "You're probably using Agent Skills wrong"
+- arXiv 2412.17189 — 表格结构较散文对事实类任务 +40.29%（路由表用表格的依据）
 
 ## 二、官方规范与文档
 

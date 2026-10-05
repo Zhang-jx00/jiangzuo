@@ -169,13 +169,61 @@ def check_scripts(skill_dir):
         info("scripts/ 下全部 Python 脚本语法可编译 ✓")
 
 
+def estimate_tokens(text):
+    """粗略 token 估算：CJK 字符约 1 token/字，其余约 4 字符/token。"""
+    cjk = len(re.findall(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", text))
+    return cjk + (len(text) - cjk) // 4
+
+
+def print_stats(skill_dir):
+    """占用报告：常驻成本（SKILL.md 全文）与按需成本（分册）分开计量。"""
+    import glob
+    print("\n# 占用报告（估算 token：CJK≈1/字，ASCII≈4 字符/token）\n")
+
+    skill_md = os.path.join(skill_dir, "SKILL.md")
+    with io.open(skill_md, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    idx = text.index("\n---", 4) if text.startswith("---") else 0
+    front, body = (text[:idx + 4], text[idx + 4:]) if idx else ("", text)
+    meta, _ = parse_frontmatter(text)
+    print("常驻（每次触发都进上下文）:")
+    print("  SKILL.md 全文    ~%5d tokens（frontmatter ~%d + 正文 ~%d）"
+          % (estimate_tokens(text), estimate_tokens(front), estimate_tokens(body)))
+    if meta:
+        print("  description      ~%5d tokens" % estimate_tokens(meta.get("description", "")))
+        if meta.get("when_to_use"):
+            print("  when_to_use      ~%5d tokens" % estimate_tokens(meta.get("when_to_use", "")))
+
+    refs = sorted(glob.glob(os.path.join(skill_dir, "references", "*.md")))
+    if refs:
+        rows = []
+        for p in refs:
+            with io.open(p, "r", encoding="utf-8", errors="replace") as f:
+                rows.append((os.path.basename(p), estimate_tokens(f.read())))
+        rows.sort(key=lambda r: -r[1])
+        total = sum(est for _, est in rows)
+        print("\n按需（进入对应阶段才读取）: references/ 共 %d 本，合计 ~%d tokens" % (len(rows), total))
+        for name, est in rows[:5]:
+            print("  最大 %-30s ~%5d tokens" % (name, est))
+        if rows:
+            print("  典型任务读取 1-3 本 ≈ %d-%d tokens" % (rows[0][1], sum(e for _, e in rows[:3])))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
     parser.add_argument("skill_dir", nargs="?", default=".", help="技能目录（默认当前目录）")
+    parser.add_argument("--stats", action="store_true", help="打印上下文占用报告后退出（不做校验）")
     args = parser.parse_args()
 
     skill_dir = os.path.abspath(args.skill_dir)
+    if args.stats:
+        if not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+            print("错误：找不到 SKILL.md：%s" % skill_dir, file=sys.stderr)
+            return 2
+        print_stats(skill_dir)
+        return 0
+
     skill_md = os.path.join(skill_dir, "SKILL.md")
     if not os.path.isfile(skill_md):
         err("找不到 SKILL.md：%s" % skill_md)
