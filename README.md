@@ -133,7 +133,7 @@ npx skills add <you>/jiangzuo
 
 - 脚本仅用 Python 3.8+ 标准库，Windows/macOS/Linux 通用；环境没有 Python 时按各分册的人工清单执行，效果等价
 - 所有脚本只读项目文件、不联网、不写技能目录外的东西，可放心审计
-- SKILL.md 254 行（上限 500），description 396 字符（上限 1024）且为纯触发条件（不含工作流摘要，防 agent 抄近路），预留了扩展空间
+- SKILL.md 222 行（上限 500），description 373 字符（上限 1024）且为纯触发条件（不含工作流摘要，防 agent 抄近路），预留了扩展空间
 
 ## 占用与性能（可度量）
 

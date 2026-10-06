@@ -13,8 +13,12 @@
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
 
+会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
+不会做：内容质量与触发率——那要靠 evals/trigger-tests.md 与 red-tests.md 实测。
+
 用法:
     python validate_skill.py [技能目录]      # 退出码 0=通过 1=有错误
+    python validate_skill.py --stats [技能目录]  # 只打印占用报告
 
 仅使用 Python 标准库（3.8+）。
 """

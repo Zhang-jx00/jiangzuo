@@ -34,6 +34,9 @@
 | 25 | **长会话上下文腐烂**：定时重注入关键指令、子代理隔离是对策 | mindstudio/reinteractive/developerway | v0.5.0 装载即用新增"长会话/压缩后重读核心循环与计划" |
 | 26 | **确定性脚本替代生成**是官方与 Uber（3600+ 技能、日 3 万次执行）双重背书的省 token 手段 | Anthropic 工程博客、Uber 软件工厂 | 将作四脚本架构不变，新增 --stats 度量与 RESULT 结论行 |
 | 27 | **跨端兼容新默认**：`.agents/skills/` 被多家客户端识别；skills.sh 生态均分仅 6.2/12——分发解决后质量靠自己保证 | agentman.ai 生态报告、codylindley 兼容矩阵 | README 安装增加 `.agents/skills/`；validate/preflight 双门槛保质量 |
+| 28 | **官方重型技能实现范式**（docx/pptx/pdf 源码精读）：入口 Task→Approach 路由、分册首行 CRITICAL 防跳步（"complete these steps in order. Do not skip ahead"）、脚本"会修/不会修"边界声明、QA 反确认偏差（"Assume there are problems… zero issues = 你没认真找"）、纯数据资产化（字体/schema/tar 由脚本消费） | anthropics/skills 5 个技能全文精读 | v0.6.0 分册 CRITICAL 首行、脚本会做/不会做 docstring、code-review 反偏差三件套 |
+| 29 | **顶尖门控与循环机制**（superpowers/addyosmani/mattpocock 全文精读）：门控=STOP YOUR TURN（提问即结束回合）、棘轮"同意某阶段≠同意尚未存在的产物"、裁决而非停摆（`Ruling: 决定—理由—错了的代价`）、四类停摆白名单、修复熔断（≥3 次失败质疑架构）、多假设反锚定（单假设必锚定）、验证证据区分"必须/不充分" | obra/superpowers、addyosmani/agent-skills、mattpocock/skills 精读 | v0.6.0 HARD-GATE 停回合、小歧义裁决权、debugging 反锚定+熔断、code-review 证据矩阵 |
+| 30 | **检索式知识库与去重原则**：679 行巨技能用 search.py+CSV 做知识检索（但 BM25 无中文分词会失效，中文需 grep/加权子串）；同一清单出现两份是巨型技能通病；入口不得镜像分册内容 | ui-ux-pro-max、frontend-design、skill-creator 对照精读 | v0.6.0 scripts/lookup.py（CJK 加权子串）、反合理化表与红旗清单去重 |
 
 ### v0.5.0 补充来源（瘦身与可靠性专项）
 

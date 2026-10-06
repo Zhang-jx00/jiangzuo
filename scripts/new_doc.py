@@ -23,6 +23,9 @@
     debt       技术债登记   → docs/jiangzuo/debts/tech-debt.md（唯一登记簿，已存在则提示追加）
     learning   经验教训     → docs/jiangzuo/learnings.md（追加一条：情境=标题，教训待填）
 
+会做：按模板生成骨架并落盘到规范路径、ADR 自动编号、learnings 追加、防覆盖保护。
+不会做：填写内容质量——骨架填充后的正确性由对应分册的检查清单保证。
+
 仅使用 Python 标准库（3.8+）。
 """
 import argparse

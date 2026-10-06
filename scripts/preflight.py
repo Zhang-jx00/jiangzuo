@@ -14,6 +14,11 @@
 - --all：忽略 git，全量扫描指定路径（非 git 目录自动走此模式）
 - --strict：发现 critical/high 问题时退出码 1（可用于 CI）
 
+会做：静态模式匹配——疑似密钥（8 类特征）、调试残留、合并冲突标记、
+      TODO/FIXME、大文件提示、diff 统计；输出 RESULT 结论行供 CI 扫描。
+不会做：逻辑错误、并发问题、契约不匹配、性能问题——RESULT PASS ≠ 审查通过，
+      它只是 code-review.md 人工清单的机器层。
+
 仅使用 Python 标准库（3.8+），只读不改。
 """
 import argparse
