@@ -35,7 +35,9 @@
    python scripts/validate_skill.py .        # 结构校验，0 错误才可提交
    python scripts/preflight.py --all         # 无 critical/high
    ```
-3. 改了 SKILL.md 的 description：在 evals/trigger-tests.md 补一条对应触发用例
+3. 改了 SKILL.md 的 description：
+   - **先过截断预算**：Qoder CN 实测技能清单把每条 entry（`description` + `" - "` + `when_to_use`）截断在约 299 字符，超出部分对会话**完全不可见**（2026-10-07 让新会话逐字抄回条目测得）。`validate_skill.py` 会报这条预算；竞争定位句与触发词必须落在前 299 字符内。
+   - 在 evals/trigger-tests.md 补一条对应触发用例，并**重跑该文件全部用例**，把前后触发率写进实测记录。
 4. 改了脚本：附上你实际运行的手动验证记录（命令 + 输出摘要）
 5. 提交信息用祈使句说明"改了什么、为什么"（如 `fix(design): 选型表要求至少两个候选并说明理由`）
 6. CI 会自动跑结构校验，绿了才可合并

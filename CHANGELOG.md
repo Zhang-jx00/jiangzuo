@@ -2,7 +2,19 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [未发布]
+
+评测实跑（两轮真实会话）暴露的缺陷与修复，全部红/绿配对验证过：
+
+- **触发面重做**：实测技能清单把每条 entry（`description` + `" - "` + `when_to_use`）截断在约 299 字符，原 373 字符 description 的触发词表与竞争定位句对会话完全不可见。description 重写为 241 字符、when_to_use 压缩为 46 字符（entry 合计 290），把"任何软件工程任务都优先加载本技能 + 流程技能是它的分包商 + 别用一句『你想做什么』推回工程需求"放进可见预算内。复跑 24 条用例：正例 1/19 → 2/19，反例仍 5/5 零误触发；未达 ≥90%，归因与三条后续选项见 evals/trigger-tests.md 第二轮实测记录。
+- **`preflight.py` 密钥检测漏报**：GitHub 规则 `\bgh[pousr]_…\b` 匹配不到 fine-grained PAT（`github_pat_…`）——本仓库 remote URL 里正是这种形态。规则已扩展；红（修复前只报 ghp_）/绿（两种都报）/误报防护（`github_pat_11xxxx…` 占位符仍不报）均已实测。
+- **Windows GBK 控制台中文乱码**：`project_scan.py`、`lookup.py`、`new_doc.py` 补 stdout UTF-8（与 v0.6.0 后修的 `validate_skill.py`/`preflight.py` 同源缺陷，CI 在 Linux 不会暴露）。
+- **`validate_skill.py` 新增检查**：entry 合计超过 299 字符时警告"尾部不会被会话看到"；红/绿配对验证（290 ✓ / 509 → 警告）。
+- **`evals/trigger-tests.md`** 补两条测试法约束：299 可见预算、无效运行（turn failed）必须重跑而非记 ✘。
+
 ## [0.6.0] - 2026-10-05
+
+对标世界顶尖技能的**实现级**升级。
 
 对标世界顶尖技能的**实现级**升级。三路精读：Anthropic 官方重型技能源码（docx/pptx/pdf/canvas-design/web-artifacts-builder）、社区大小对照（ui-ux-pro-max 679 行 / frontend-design 55 行）、顶尖方法论技能全文（superpowers/addyosmani/mattpocock 核心技能）。全部改动溯源见 docs/research-notes.md #28–#30。
 

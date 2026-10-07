@@ -3,6 +3,8 @@
 > 用途：description 是技能触发的唯一依据。本文件收录真实用户措辞，用于验证"该触发的时候触发、不该触发的时候不打扰"。
 > 用法：把每条用户话术原样发给 agent（其他技能并存时尤其要看冲突），记录是否加载了 jiangzuo。触发准确率目标 ≥90%。
 > 维护规则：每次修改 SKILL.md 的 description，必须重跑本文件全部用例；新增触发词时在这里补用例。
+> **可见预算**：Qoder CN 实测技能清单把每条 entry（`description` + `" - "` + `when_to_use`）截断在约 **299 字符**，超出部分对会话不可见（证据：2026-10-07 让新会话逐字抄回条目）。写 description 时按 `validate_skill.py` 的这条预算检查，竞争定位句和触发词必须在前面。
+> **无效运行**：新建会话有时会出现 turn failed / "没收到具体任务"（两轮实测约 12%–17%）。这类运行**必须重跑**，不能记为未触发。
 
 ## 应触发（正例）
 
@@ -55,3 +57,18 @@
 - 结果：**正例 1/19 触发（#2"接手…看不懂…摸一遍"），反例 0/5 误触发，总体 6/24** —— 未达 ≥90%，判定不通过。
 - 主因：①brainstorming/systematic-debugging/writing-skills/find-skills/pptx 等已装技能抢占"先查技能"反射；②话术出现在技能开发工作区，部分会话直接反问"你想做什么"（语境混淆）；③待证实：新会话技能清单是否展示 description 全文（有会话自述呈"裸名"）。
 - 修复待办：可见性诊断 → description 竞争定位调整 → 中性工作区复测。逐条证据档案在本地 eval-runs/results/trigger-results-final-20261007.md（不随仓库分发）。
+
+## 实测记录（2026-10-07 第二轮，改 description 后复跑全部 24 条）
+
+- **前置诊断（决定修复方向的那一步）**：让新会话逐字抄回清单条目，实测 **entry 被截断在约 299 字符**（entry = description + `" - "` + when_to_use）。第一轮的 373 字符版本与本轮初稿的 460 字符版本，尾部（触发词表、竞争定位句）对会话根本不可见——"description 改了但会话没看到"是这一轮最大的发现。据此把 description 压到 241、when_to_use 压到 46，entry 合计 290 字符，逐字复核确认完整可见后才开测。
+- 方法：与第一轮同一套隔离（评测文件与相关记忆移出工作区）、同一安装副本、同一 24 条话术逐字发送；判定以会话第一个动作处的 `Launching skill: <名字>` 工具输出为准，不信自述。
+- **结果：正例 2/19 = 10.5%（#2 接手摸底、#19 开发上下文里的 PPT），反例 5/5 零误触发，总体 7/24 = 29.2%** —— 对比第一轮 6/24 = 25%，**仍未达 ≥90%，判定不通过**。
+- 有效变化：#19 从被 `Presentations:pptx` 夺回（新句"头脑风暴、调试、技能检索、做PPT 等领域技能是它的分包商"正是针对它）；反例仍然全对，说明压缩没有带来误触发。
+- **失败归因（16 条）**：superpowers 流程技能 8（brainstorming 4 / systematic-debugging 3 / requesting-code-review 1）、领域套件 2（fullstack-dev-expert 单元测试、pm-output-engine 需求文档撰写）、无任何技能加载直接动手或反问 6。抢占来源与第一轮同型，**瓶颈不在措辞而在加载竞争**：superpowers 插件的 SessionStart 注入直接命令"任何回复前先加载技能，brainstorming/systematic-debugging 是最常用流程技能"，模型对这种祈使式短描述的服从度高于覆盖面描述。
+- 无效运行：24 条里 4 条出现 turn failed / "没收到具体任务"（#1、#9、#14 首发 + #9 两次重跑仍失败），已按上面的规则重跑；#9 最终只有一条有效运行。
+- 结论与下一步（三选一，需产品决策，不在本轮擅自执行）：
+  A. **无竞争对照**——临时移除 superpowers 与领域套件后复跑 19 条正例，分离"description 本身够不够"与"被竞争压制"；
+  B. **改口径**——把触发率目标改为"显式调用 + 高重合话术"，竞争定位从 description 挪到安装引导文档；
+  C. **继续磨措辞**——按本轮证据预期收益仍在个位数百分点。
+  逐条证据与波次记录在本地 `eval-runs/results/`（trigger-rerun-after-description-20261007.md、wave1/2/3-findings.md，不随仓库分发）。
+- **本轮附带产出**（评测发现的真实缺陷，已修复并红/绿验证）：`preflight.py` 的 GitHub 规则匹配不到 fine-grained PAT（`github_pat_…`）；`project_scan.py`/`lookup.py`/`new_doc.py` 在 Windows GBK 控制台输出中文乱码；`validate_skill.py` 新增 299 字符 entry 预算检查。
