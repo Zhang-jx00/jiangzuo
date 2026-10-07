@@ -12,6 +12,7 @@
   4. 正文中引用的 references/ templates/ scripts/ 文件必须存在（路径含反斜杠即报错）
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
+  7. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
 
 会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
 不会做：内容质量与触发率——那要靠 evals/trigger-tests.md 与 red-tests.md 实测。
@@ -103,7 +104,7 @@ def check_frontmatter(skill_dir, text):
         err("frontmatter 缺少 description（description 是触发的唯一依据，必填）")
     else:
         if len(desc) > 1024:
-            err("description %d 字符，超过 1024 上限（超限的技能会被直接丢弃）" % len(desc))
+            err("description %d 字符，超过 1024 上限——Codex/Copilot 会静默丢弃整个条目（比截断更危险）" % len(desc))
         else:
             info("description %d 字符（≤1024 ✓）" % len(desc))
         # 部分客户端（Claude Code）对 description+when_to_use 合计在 ~1536 字符处截断
@@ -186,6 +187,39 @@ def check_scripts(skill_dir):
             err("脚本语法错误：%s（%s）" % (fn, e))
     if found:
         info("scripts/ 下全部 Python 脚本语法可编译 ✓")
+
+
+def check_booklet_contract(skill_dir):
+    """分册骨架契约（K-Dense 模式：一致性靠校验器不靠约定）。
+    references/*.md 必须含 何时读/产出/CRITICAL 防跳步行（缺一即错），
+    建议含 前置 与「常见错误」节（缺失警告）；超过 160 行警告。"""
+    import glob
+    refs = sorted(glob.glob(os.path.join(skill_dir, "references", "*.md")))
+    if not refs:
+        return
+    problems = []
+    for path in refs:
+        name = os.path.basename(path)
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        n_lines = len(content.splitlines())
+        for must, label in (("何时读", "何时读"), ("产出**", "产出"),
+                            ("CRITICAL：读完全册再动手", "CRITICAL 防跳步行")):
+            if must not in content:
+                problems.append((name, "%s 缺失（骨架契约）" % label, True))
+        if "前置" not in content:
+            problems.append((name, "缺 前置 行（建议）", False))
+        if "## 常见错误" not in content:
+            problems.append((name, "缺「常见错误」节（建议）", False))
+        if n_lines > 160:
+            problems.append((name, "%d 行超过 160 行上限" % n_lines, False))
+    if problems:
+        for name, msg, hard in problems:
+            (err if hard else warn)("分册 %s：%s" % (name, msg))
+    else:
+        info("17 项分册骨架契约全部满足（何时读/前置/产出/CRITICAL/常见错误/行数） ✓"
+             if len(refs) == 17 else
+             "%d 本分册骨架契约全部满足 ✓" % len(refs))
 
 
 def estimate_tokens(text):
@@ -276,6 +310,7 @@ def main():
             refs = check_refs(skill_dir, text)
             check_one_level(skill_dir, refs)
             check_scripts(skill_dir)
+            check_booklet_contract(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:

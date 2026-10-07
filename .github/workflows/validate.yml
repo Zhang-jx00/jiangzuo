@@ -20,3 +20,6 @@ jobs:
 
       - name: 交付自检（critical/high 应为零）
         run: python scripts/preflight.py --all --strict
+
+      - name: 脚本冒烟测试（stdlib unittest）
+        run: python -m unittest discover -s tests -v

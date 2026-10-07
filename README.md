@@ -135,7 +135,8 @@ npx skills add <you>/jiangzuo
 
 - 脚本仅用 Python 3.8+ 标准库，Windows/macOS/Linux 通用；环境没有 Python 时按各分册的人工清单执行，效果等价
 - 所有脚本只读项目文件、不联网、不写技能目录外的东西，可放心审计
-- SKILL.md 222 行（上限 500），description 373 字符（上限 1024）且为纯触发条件（不含工作流摘要，防 agent 抄近路），预留了扩展空间
+- SKILL.md 220 行（上限 500），description 241 字符（entry 合计 290，适配清单 299 字符可见截断），纯触发条件不含工作流摘要
+- **跨平台硬约束已适配**（实测+官方文档）：Claude/ZCode 系技能清单 entry≈299 字符截断（本技能全可见）；Codex/Copilot 对超 1024 字符的 description 静默丢弃（本技能 241，安全）；Cursor 要求 name 与目录同名（jiangzuo ✓）；`.agents/skills/` 为 Codex/Cursor/Gemini/Copilot 通用项目级目录
 
 ## 占用与性能（可度量）
 

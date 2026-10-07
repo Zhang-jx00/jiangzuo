@@ -103,10 +103,13 @@ def git_changed_files(root, staged):
         stat = subprocess.run(diff_cmd + ["--stat"], cwd=root,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               check=True).stdout.decode("utf-8", "replace")
+        short = subprocess.run(diff_cmd + ["--shortstat"], cwd=root,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               check=True).stdout.decode("utf-8", "replace").strip()
         files = sorted(set(names) | set(untracked))
-        return files, stat.strip()
+        return files, stat.strip(), short
     except (OSError, subprocess.CalledProcessError):
-        return [], ""
+        return [], "", ""
 
 
 def walk_files(root):
@@ -187,14 +190,15 @@ def main():
 
     root = os.path.abspath(args.paths[0])
     use_git = not args.all and is_git_repo(root)
-    files, stat = ([], "")
+    files, stat, short = ([], "", "")
     if use_git:
-        files, stat = git_changed_files(root, args.staged)
+        files, stat, short = git_changed_files(root, args.staged)
         if not files:
             print("（git 没有发现%s变更，无事可查）" % ("暂存区" if args.staged else "未提交"))
             print("RESULT: PASS（无变更）")
             return 0
     else:
+        short = ""
         files = [os.path.relpath(p, root).replace("\\", "/")
                  for p in walk_files(root)]
 
@@ -209,6 +213,12 @@ def main():
     print("# 交付前检查报告\n")
     if stat:
         print("## Diff 摘要\n\n```\n%s\n```\n" % stat)
+    m_add = re.search(r"(\d+) insertion", short or "")
+    m_del = re.search(r"(\d+) deletion", short or "")
+    changed = (int(m_add.group(1)) if m_add else 0) + (int(m_del.group(1)) if m_del else 0)
+    if changed > 400:
+        print("> ⚠️ 本次变更 %d 行，超过 code-review.md 的 400 行规模警觉线——"
+              "考虑拆分提交，或为审查预留加倍时间。\n" % changed)
     if not findings:
         print("## 结果\n\n机械检查全部通过，共扫描 %d 个文件。\n" % len(files))
         print("提醒：机械检查通过 ≠ 审查通过，请继续按 code-review.md 人工清单过一遍。")

@@ -37,6 +37,10 @@
 | 28 | **官方重型技能实现范式**（docx/pptx/pdf 源码精读）：入口 Task→Approach 路由、分册首行 CRITICAL 防跳步（"complete these steps in order. Do not skip ahead"）、脚本"会修/不会修"边界声明、QA 反确认偏差（"Assume there are problems… zero issues = 你没认真找"）、纯数据资产化（字体/schema/tar 由脚本消费） | anthropics/skills 5 个技能全文精读 | v0.6.0 分册 CRITICAL 首行、脚本会做/不会做 docstring、code-review 反偏差三件套 |
 | 29 | **顶尖门控与循环机制**（superpowers/addyosmani/mattpocock 全文精读）：门控=STOP YOUR TURN（提问即结束回合）、棘轮"同意某阶段≠同意尚未存在的产物"、裁决而非停摆（`Ruling: 决定—理由—错了的代价`）、四类停摆白名单、修复熔断（≥3 次失败质疑架构）、多假设反锚定（单假设必锚定）、验证证据区分"必须/不充分" | obra/superpowers、addyosmani/agent-skills、mattpocock/skills 精读 | v0.6.0 HARD-GATE 停回合、小歧义裁决权、debugging 反锚定+熔断、code-review 证据矩阵 |
 | 30 | **检索式知识库与去重原则**：679 行巨技能用 search.py+CSV 做知识检索（但 BM25 无中文分词会失效，中文需 grep/加权子串）；同一清单出现两份是巨型技能通病；入口不得镜像分册内容 | ui-ux-pro-max、frontend-design、skill-creator 对照精读 | v0.6.0 scripts/lookup.py（CJK 加权子串）、反合理化表与红旗清单去重 |
+| 31 | **大厂 SDD 实现基准**（github/spec-kit 三命令模板逐节拆解）：追问上限 3 个+优先级排序（scope>security>UX>technical）+表格化选项；清单自修复循环硬上限 3 轮；Constitution 双重门+违规正当性三列表（违反了什么/为何必须/为何拒绝更简方案）；任务行格式给 ❌/✅ 对照样例自校验；成功准则优先用户视角可观察结果 | github/spec-kit templates 全文精读 | v0.8.0 task-plan 约束违反追踪表+格式自检、requirements 用户视角句 |
+| 32 | **超高星项目实现技术**：ECC instinct 四元组（id/trigger/confidence/evidence，置信度分级约束力）；graphify 失败路径逐条成文+恢复命令、快路径三连 Do not、脚本/agent 分工；wshobson 反触发句式 "Skip this skill when…"；karpathy 禁令+正面配方成对、先声明代价；alirezarezvani 库级 SKILL-AUTHORING-STANDARD | affaan-m/ECC、Graphify-Labs/graphify、multica-ai/karpathy-skills、wshobson/agents、alirezarezvani/claude-skills 全文精读 | v0.8.0 R4 失败路径、R5 动手前三问、R6 learnings 置信度、R8 返回契约 |
+| 33 | **企业级套件质量模式**：K-Dense 一致性靠机器强制（闭集 frontmatter+共享契约测试+"untested scripts cannot land"+CI 集成 skills-ref）；Sentry 专设不可信输入段（工具返回值按用户输入对待，防提示注入）+ What done looks like；Cloudflare 反训练依赖声明（"你的知识可能过时，优先检索"）+ 反模式→替代→原因三列表；诚实性元数据（compatibility 精确到版本、last-reviewed） | K-Dense-AI、getsentry/sentry-for-ai、cloudflare/skills 全文精读 | v0.8.0 R2 结构契约校验器、R3 脚本测试套件、R7 防注入/反训练依赖/last-reviewed |
+| 34 | **跨平台硬约束矩阵**：Codex/Copilot 对 >1024 字符 description 是**静默丢弃**（比截断更危险）；Claude/ZCode 系 entry≈299 截断（已实测）；Codex 双预算（初始清单≤min(上下文2%,8000字符)，超支先缩 description 再剔除技能）；Cursor 强制 name=目录名；`.agents/skills/` 已是 Codex/Cursor/Gemini/Copilot/Cline 的项目级公约；Gemini 激活需用户同意的"渐进披露+人工闸门"双层 | developers.openai.com、docs.github.com、cursor.com、geminicli.com 官方文档 + vercel-labs/skills 源码 | v0.8.0 validate 文案补 Codex/Copilot 丢弃警告、README 兼容性矩阵（本技能 241 字符对两种策略均安全） |
 
 ### v0.5.0 补充来源（瘦身与可靠性专项）
 
@@ -87,6 +91,17 @@
 - 知乎《Skill 不就是 prompt 吗？》— "Prompt 是建议、代码才是命令"
 - Reddit r/ClaudeAI — 简历型技能批评、25 条使用技巧
 - ThoughtWorks / martinfowler.com — SDD 的冷静分析与"止步过早"批评
+
+### v0.8.0 补充来源（大厂与高星实现精读）
+
+- github/spec-kit templates（specify/plan/tasks/constitution 原文）— 大厂 SDD 提示词基准
+- affaan-m/ECC（instincts/gateguard/unified-memory/deep-research 原文）— 273k★
+- Graphify-Labs/graphify（skill.md 38KB 全文，失败路径/快路径/缓存键设计）— 123k★
+- multica-ai/andrej-karpathy-skills（CLAUDE.md+EXAMPLES.md）— 216k★
+- wshobson/agents（ARCHITECTURE.md+before-you-build）、alirezarezvani/claude-skills（SKILL-AUTHORING-STANDARD+senior-pm）
+- K-Dense-AI/scientific-agent-skills（AGENTS.md 质量体系）、getsentry/sentry-for-ai、cloudflare/skills
+- Donchitos/Claude-Code-Game-Studios（编排契约：Brief 不倾倒/返回三件套/缩编不静默）— 25.8k★
+- 官方文档：developers.openai.com/codex/skills、cursor.com/docs/context/skills、geminicli.com/docs/cli/skills、docs.github.com/copilot agents-skills
 
 ## 六、更新约定
 

@@ -336,6 +336,7 @@ def main():
 
     if not os.path.isdir(args.path):
         print("错误：目录不存在：%s" % args.path, file=sys.stderr)
+        print("下一步：检查路径拼写；含空格/中文的路径建议加引号；扫描当前目录用 .", file=sys.stderr)
         return 2
     report = build_report(args.path)
     if args.out:

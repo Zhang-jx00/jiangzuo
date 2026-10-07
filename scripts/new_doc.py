@@ -97,6 +97,7 @@ def main():
     project_root = os.path.abspath(args.dir)
     if not os.path.isdir(project_root):
         print("错误：项目目录不存在：%s" % project_root, file=sys.stderr)
+        print("下一步：先 cd 到项目根再执行，或用 --dir 指定项目根（文档会生成到 <项目根>/docs/jiangzuo/）。", file=sys.stderr)
         return 2
 
     if t == "learning":
@@ -106,15 +107,16 @@ def main():
         if not os.path.exists(out_path):
             header = (
                 u"# 经验教训（learnings）\n\n"
-                u"> 规则：用户纠正你、踩了坑时，追加一行：`- [日期] 情境：…… 教训：……`。\n"
+                u"> 规则：用户纠正你、踩了坑时，追加一行：`- [日期] 情境：…… 教训：…… 置信度：高/低`。\n"
+                u"> 置信度语义：高 = 已在多个任务验证，直接约束同类任务；低 = 单次经验，仅作提示。\n"
                 u"> 教训写可复用的行为改变，不写情绪与流水账。下次同类任务开始前先读本文件。\n\n")
             with io.open(out_path, "w", encoding="utf-8") as f:
                 f.write(header)
-        entry = u"- [%s] 情境：%s 教训：（待填）\n" % (date.today().isoformat(), args.title.strip())
+        entry = u"- [%s] 情境：%s 教训：（待填）置信度：低\n" % (date.today().isoformat(), args.title.strip())
         with io.open(out_path, "a", encoding="utf-8") as f:
             f.write(entry)
         print("已追加经验条目：%s" % os.path.relpath(out_path, project_root))
-        print("下一步：把『教训』补成可复用的行为改变；同类任务开工前先读 learnings.md。")
+        print("下一步：补『教训』为可复用的行为改变；多次验证后把置信度升为高。")
         return 0
 
     if t not in TYPES:
