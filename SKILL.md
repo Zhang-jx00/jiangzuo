@@ -5,7 +5,7 @@ when_to_use: 用户说「帮我做个…」「加个功能」「改个样式」�
 license: MIT
 metadata:
   display_name: 将作
-  version: 0.6.0
+  version: 0.7.0
   short-description: 资深全栈软件工程搭档：先读懂、再想清、后动手、必验证、留文档
 ---
 
