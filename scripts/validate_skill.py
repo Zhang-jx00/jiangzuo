@@ -111,6 +111,17 @@ def check_frontmatter(skill_dir, text):
         if wtu and len(desc) + len(wtu) > 1536:
             warn("description+when_to_use 合计 %d 字符，超过约 1536 的截断阈值，"
                  "关键触发信息请放前面" % (len(desc) + len(wtu)))
+        # Qoder CN 实测（2026-10-07，让新会话逐字抄回清单条目）：技能清单把每条 entry
+        # 截断在约 299 字符，entry 文本 = description + " - " + when_to_use。
+        # 超出的尾部对会话完全不可见——触发词写在后面等于没写。
+        entry_len = len(desc) + (len(wtu) + 3 if wtu else 0)
+        if entry_len > 299:
+            warn("清单 entry（description+when_to_use）合计 %d 字符，超过 Qoder CN 实测的"
+                 "约 299 字符截断预算，尾部 %d 字符不会被会话看到；"
+                 "把竞争定位与触发词放进前 299 字符，或压缩后重跑 evals/trigger-tests.md"
+                 % (entry_len, entry_len - 299))
+        else:
+            info("清单 entry %d 字符（≤299 Qoder CN 截断预算 ✓）" % entry_len)
     unknown = [k for k in meta if k not in RECOGNIZED_KEYS | TOLERATED_KEYS]
     if unknown:
         warn("未识别的 frontmatter 字段：%s（不同平台可能忽略）" % ", ".join(unknown))
