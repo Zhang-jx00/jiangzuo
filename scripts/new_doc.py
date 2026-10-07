@@ -35,6 +35,10 @@ import re
 import sys
 from datetime import date
 
+# Windows GBK 控制台打印中文路径与标题会 UnicodeEncodeError 或乱码（与 preflight/validate 同源缺陷）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.normpath(os.path.join(HERE, "..", "templates"))
 

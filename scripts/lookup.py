@@ -24,6 +24,10 @@ import os
 import re
 import sys
 
+# Windows GBK 控制台打印中文/符号会 UnicodeEncodeError 或乱码（2026-10-07 实跑实测，CI 在 Linux 未暴露）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REF_DIR = os.path.normpath(os.path.join(HERE, "..", "references"))
 

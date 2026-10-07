@@ -23,6 +23,10 @@ import re
 import sys
 from datetime import date
 
+# Windows GBK 控制台输出中文档案会乱码（2026-10-07 触发测试会话实测：扫描结果整段不可读）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # 常见框架名 -> 人类可读名称（用于从依赖里猜框架）
 FRAMEWORK_HINTS = {
     "react": "React", "vue": "Vue", "svelte": "Svelte", "angular": "Angular",

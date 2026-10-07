@@ -49,7 +49,8 @@ SCAN_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".vue", ".php", ".rb", ".go",
 SECRET_PATTERNS = [
     ("critical", "私钥块", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("critical", "AWS AccessKey", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("high", "GitHub Token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("high", "GitHub Token", re.compile(
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
     ("high", "Google API Key", re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b")),
     ("high", "Slack Token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")),
     ("high", "OpenAI/Anthropic Key", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{20,}\b")),
