@@ -28,6 +28,10 @@ import os
 import re
 import sys
 
+# Windows GBK 控制台打印 ✔ 等符号会 UnicodeEncodeError（2026-10-07 本地实跑实测崩溃，CI 在 Linux 未暴露）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 RECOGNIZED_KEYS = {"name", "description", "when_to_use", "license", "metadata"}
 TOLERATED_KEYS = {"version", "allowed-tools", "compatibility", "argument-hint",
                   "user-invocable", "disable-model-invocation"}
