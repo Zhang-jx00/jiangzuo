@@ -42,6 +42,7 @@
 4. 改了脚本：附上你实际运行的手动验证记录（命令 + 输出摘要）
 5. 提交信息用祈使句说明"改了什么、为什么"（如 `fix(design): 选型表要求至少两个候选并说明理由`）
 6. CI 会自动跑结构校验，绿了才可合并
+7. **改的是规则本身**（加/删/收紧一条纪律）：先跑 `python scripts/evolve_report.py .` 取信号，按 `references/self-evolution.md` 六道闸门执行，并在 `docs/jiangzuo/evolution.md` 记一行（证据/假设/变异/结果/KEEP 或 ROLLBACK）。一次只改一个假设，新增 ≤40 行必须同时给出可删候选
 
 ## 新增分册的规则
 

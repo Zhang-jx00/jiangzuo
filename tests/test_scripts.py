@@ -22,7 +22,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
-SCRIPT_NAMES = ["lookup.py", "new_doc.py", "preflight.py",
+SCRIPT_NAMES = ["evolve_report.py", "lookup.py", "new_doc.py", "preflight.py",
                 "project_scan.py", "ship_check.py", "validate_skill.py"]
 
 
@@ -167,6 +167,42 @@ class TestProjectScan(unittest.TestCase):
         r = run([os.path.join(SCRIPTS, "project_scan.py"),
                  os.path.join(tempfile.gettempdir(), "不存在的目录xyzzy")])
         self.assertEqual(r.returncode, 2)
+
+
+class TestEvolveReport(unittest.TestCase):
+    """进化信号采集器：要能认出真信号，也不能被无关的"作废"字样骗到。"""
+
+    @staticmethod
+    def _write(root, rel, text):
+        path = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_flags_high_confidence_learning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "docs/jiangzuo/learnings.md",
+                        "# 经验教训\n\n- [2026-10-01] 情境：改契约 教训：三处同批改 置信度：高\n"
+                        "- [2026-10-02] 情境：改契约 教训：三处同批改 置信度：高\n")
+            r = run([os.path.join(SCRIPTS, "evolve_report.py"), tmp])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("高置信度教训", r.stdout)
+            self.assertIn("EVOLVE-CANDIDATES", r.stdout)
+
+    def test_ignores_unrelated_void_wording(self):
+        """精确度回归：任务描述里的"作废（搜索逻辑）"不是评测失效信号。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "evals/red-tests.md",
+                        "- [ ] 停手，先盘点：哪些可复用、哪些作废（搜索逻辑）\n")
+            r = run([os.path.join(SCRIPTS, "evolve_report.py"), tmp])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("0 条失效标记", r.stdout)
+
+    def test_empty_project_reports_no_signals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = run([os.path.join(SCRIPTS, "evolve_report.py"), tmp])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("EVOLVE-NONE", r.stdout)
 
 
 class TestShipCheck(unittest.TestCase):

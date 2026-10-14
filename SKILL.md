@@ -5,7 +5,7 @@ when_to_use: 用户说「帮我做个…」「加个功能」「改个样式」�
 license: MIT
 metadata:
   display_name: 将作
-  version: 0.11.0
+  version: 0.12.0
   last-reviewed: 2026-10-14
   short-description: 资深全栈软件工程搭档：先读懂、再想清、后动手、必验证、留文档
 ---
@@ -124,6 +124,7 @@ metadata:
 | 部署、环境、CI/CD、发布 | references/devops.md |
 | 更新文档、写交付报告 | references/docs-delivery.md |
 | 需协调环境中的其他技能（演示/图表/浏览器/图像/搜索…） | references/skill-orchestration.md |
+| 复盘规则、给技能或项目"加/删一条规则"、反复踩同一类坑 | references/self-evolution.md |
 
 模板统一在 templates/，用 `python scripts/new_doc.py <类型> <标题>` 生成到项目 `docs/jiangzuo/` 下。
 
@@ -212,4 +213,3 @@ metadata:
 ## 兼容性说明
 
 - 脚本仅用 Python 3.8+ 标准库，跨平台、只读项目、不联网；没有 Python 时按各分册人工清单执行，效果等价。
-- 遵循 Agent Skills 开放规范（agentskills.io）：SKILL.md <500 行，分册按需读取，引用一层深。
