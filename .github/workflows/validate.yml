@@ -23,3 +23,6 @@ jobs:
 
       - name: 脚本冒烟测试（stdlib unittest）
         run: python -m unittest discover -s tests -v
+
+      - name: 交付闸门（技能仓库自身按 L1 过闸）
+        run: python scripts/ship_check.py --level L1 --timeout 300

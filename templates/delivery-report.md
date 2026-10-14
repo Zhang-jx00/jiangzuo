@@ -15,6 +15,7 @@
 
 - 方案要点：____
 - 被否掉的备选：____（一句话理由）
+- **复用阶梯：停在第 ____ 级**（依据：____；例：停在 2——仓库已有 `calc` 模块，直接扩展而非新写）
 - 重要取舍详见 ADR：docs/jiangzuo/adr/____.md
 
 ## 3. 怎么验证的（证据，不是口号）
@@ -25,6 +26,7 @@
 | 构建/lint | `____` | 通过 |
 | 手动验收（对照需求简报逐条） | | 验收标准 1 ✔ 标准 2 ✔ |
 | preflight 检查 | `python scripts/preflight.py` | 0 critical |
+| **交付闸门** | `python scripts/ship_check.py --level __` | RESULT: SHIP-OK |
 | 边界实测 | | |
 
 ## 4. 剩余风险与未竟事项

@@ -67,11 +67,13 @@
 jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
 ├── references/       # 17 本分册（渐进式披露：进入哪个阶段读哪本）
-├── templates/        # 12 个填空即用模板（计划/ADR/契约/复盘/交付报告…）
-├── scripts/          # 4 个纯标准库脚本
+├── templates/        # 13 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准…）
+├── scripts/          # 6 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿
 │   ├── preflight.py       # 交付自检：密钥/调试残留/冲突标记/TODO/diff 统计
+│   ├── ship_check.py      # 交付闸门：测试+静态检查+报告四问+阶梯+残留+常驻标准，一条命令核完
 │   ├── new_doc.py         # 按模板生成 docs/jiangzuo/ 落盘文档（ADR 自动编号）
+│   ├── lookup.py          # 按关键词在 17 本分册里检索规则（不整册载入）
 │   └── validate_skill.py  # 技能结构校验（本仓库 CI 在用）
 └── evals/            # 触发测试、红测场景、任务评测
 ```

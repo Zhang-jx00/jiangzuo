@@ -21,7 +21,7 @@
 
 ## 内容维护规则（持续瘦身与聚焦）
 
-1. **token 预算**：SKILL.md 正文目标 ≤5K tokens（`python scripts/validate_skill.py . --stats` 可测）。新增内容前先想删什么。
+1. **token 预算**：SKILL.md 正文目标 ≤5K tokens（`python scripts/validate_skill.py . --stats` 可测）。新增内容前先想删什么。**当前实测 5112（v0.10.0）**——超出目标 2.2%，这笔债登记在此处，偿还是下一版的任务之一（候选：合并「装载即用」与「60 秒示例」两节）。任何一次提交让数字变大，都要在提交信息里写明净增数。
 2. **示例标注**：所有示例必须可识别为"模式参考，按任务实际要求覆盖"——把示例误当需求是技能致错的第一大根因。
 3. **Gotchas 优先**：真实踩坑（learnings、常见错误）是信号密度最高的内容，优先收录；抽象原则最后考虑。
 4. **读取频率审计**：分册的最终去留以"是否被实际读取"为准——连续多个版本未被任何路由命中的分册，候选合并或删除。
@@ -34,6 +34,7 @@
    ```bash
    python scripts/validate_skill.py .        # 结构校验，0 错误才可提交
    python scripts/preflight.py --all         # 无 critical/high
+   python scripts/ship_check.py --level L1   # 交付闸门：测试+静态检查+报告+残留一次核完
    ```
 3. 改了 SKILL.md 的 description：
    - **先过截断预算**：Qoder CN 实测技能清单把每条 entry（`description` + `" - "` + `when_to_use`）截断在约 299 字符，超出部分对会话**完全不可见**（2026-10-07 让新会话逐字抄回条目测得）。`validate_skill.py` 会报这条预算；竞争定位句与触发词必须落在前 299 字符内。

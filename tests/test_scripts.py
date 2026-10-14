@@ -23,7 +23,7 @@ SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
 SCRIPT_NAMES = ["lookup.py", "new_doc.py", "preflight.py",
-                "project_scan.py", "validate_skill.py"]
+                "project_scan.py", "ship_check.py", "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -66,6 +66,26 @@ class TestValidate(unittest.TestCase):
             r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("ghost.md", r.stdout)
+
+    def test_validate_detects_stale_readme_counts(self):
+        """红测：README 写"4 个脚本"而实际 2 个 → 必须报出计数不符（防文档滞后）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "sk")
+            os.makedirs(os.path.join(skill, "scripts"))
+            for name in ("a.py", "b.py"):
+                with io.open(os.path.join(skill, "scripts", name), "w", encoding="utf-8") as f:
+                    f.write("pass\n")
+            with io.open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+            with io.open(os.path.join(skill, "README.md"), "w", encoding="utf-8") as f:
+                f.write("# sk\n\nscripts/  # 4 个纯标准库脚本\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
+            self.assertIn("README 计数与实物不符", r.stdout)
+
+    def test_validate_readme_counts_match_on_self(self):
+        """绿测：本仓库 README 的脚本/模板/分册计数必须与实物一致。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertIn("README 计数与实物一致", r.stdout)
 
 
 class TestPreflight(unittest.TestCase):
@@ -147,6 +167,66 @@ class TestProjectScan(unittest.TestCase):
         r = run([os.path.join(SCRIPTS, "project_scan.py"),
                  os.path.join(tempfile.gettempdir(), "不存在的目录xyzzy")])
         self.assertEqual(r.returncode, 2)
+
+
+class TestShipCheck(unittest.TestCase):
+    """交付闸门：绿（齐全→SHIP-OK）与红（缺项→SHIP-BLOCKED）配对。
+
+    只测绿不测红，闸门就会退化成永远通过的摆设——所以每种缺项都要能把它打黑。
+    """
+
+    REPORT_OK = (
+        "# 交付报告：demo\n\n## 改了什么\n新增 add()。\n\n## 为什么\n"
+        "用户要加法。\n\n## 怎么验证的\npython -m unittest → OK\n\n"
+        "## 剩余风险\n无。\n\n复用阶梯：停在 2——仓库已有 calc 模块，直接扩展。\n")
+
+    REPORT_NO_RISK = ("# 交付报告：demo\n\n## 改了什么\n新增 add()。\n\n"
+                      "## 为什么\n要加法。\n\n## 怎么验证的\n跑过测试\n\n"
+                      "复用阶梯：停在 2\n")
+
+    def _proj(self, tmp, report=None, with_tests=True):
+        os.makedirs(os.path.join(tmp, "docs", "jiangzuo", "reports"))
+        with io.open(os.path.join(tmp, "docs", "jiangzuo", "constitution.md"),
+                     "w", encoding="utf-8") as f:
+            f.write("# 常驻标准\n\n- [ ] 全量测试：python -m unittest\n"
+                    "- [ ] 交付报告四问齐全\n- [ ] 无试验残留\n")
+        if with_tests:
+            os.makedirs(os.path.join(tmp, "tests"))
+            with io.open(os.path.join(tmp, "tests", "test_ok.py"), "w", encoding="utf-8") as f:
+                f.write("import unittest\n\n\nclass T(unittest.TestCase):\n"
+                        "    def test_ok(self):\n        self.assertTrue(True)\n")
+        if report is not None:
+            with io.open(os.path.join(tmp, "docs", "jiangzuo", "reports",
+                                      "2026-01-01-delivery-demo.md"), "w", encoding="utf-8") as f:
+                f.write(report)
+
+    def test_green_when_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._proj(tmp, report=self.REPORT_OK)
+            r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("SHIP-OK", r.stdout)
+
+    def test_red_when_risk_section_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._proj(tmp, report=self.REPORT_NO_RISK)
+            r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("剩余风险", r.stdout)
+
+    def test_red_when_no_test_channel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._proj(tmp, report=self.REPORT_OK, with_tests=False)
+            r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("测试通道", r.stdout)
+
+    def test_red_when_no_delivery_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._proj(tmp, report=None)
+            r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("交付报告", r.stdout)
 
 
 if __name__ == "__main__":

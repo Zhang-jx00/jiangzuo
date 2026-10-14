@@ -2,6 +2,30 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.10.0] - 2026-10-14
+
+把"收尾五步"里能机械核对的部分做成一道**交付闸门**——对标 addyosmani/agent-skills 的 `definition-of-done.md` 与 mattpocock/skills 的"提交前必过 /code-review"（溯源 research-notes #37–#38）。
+
+### 新增
+
+- **`scripts/ship_check.py` 交付闸门**：一条命令核完 ①测试通道（自动识别并**执行** pytest/unittest/npm/cargo/go/make，识别不到时 L2/L3 判失败——"没测过"不等于"测不了"）② preflight ③交付报告四问＋**复用阶梯停在第几级** ④试验残留（`_probe*`/`_verify*`/`*.log`/`*.tmp`/`scratch/` 等）⑤项目常驻标准 ⑥若目录本身是技能仓库则加跑结构校验。输出逐项结论＋下一步指令，`RESULT: SHIP-OK / SHIP-BLOCKED`，退出码 0/1 可接 CI。只读不写文件。
+- **`templates/definition-of-done.md` 项目常驻标准**：与单次验收标准叠加的常驻门槛（测试命令、构建命令、契约同步、回滚、报告、无残留），并明确"只有用户可豁免，且必须写进剩余风险"。onboarding 第 11 步负责建立，摸底标准新增一条。
+- **README 计数一致性检查**（validate_skill.py 第 7 项）：README 声明的脚本/模板/分册数量与磁盘实物不符即警告——本仓库曾把"4 个脚本"写错两个版本，靠人记得改不如机器盯着。
+- **CI 接入闸门**：`.github/workflows/validate.yml` 新增 `ship_check.py --level L1` 一步。
+- **自我约束**：`.gitignore` 改为 `docs/jiangzuo/*` + 例外 `constitution.md`，本仓库公开自己的常驻标准——做不到就别拿去要求别人的项目。
+
+### 变更
+
+- 交付收尾由 5 步收敛为 4 步：报告与文档同步合并，第 3 步统一走闸门（preflight 仍在闸门内，可单独跑）。
+- `templates/delivery-report.md` 新增"复用阶梯：停在第 N 级"字段与"交付闸门"证据行（闸门会检查这两处）。
+- README 脚本清单补回 `lookup.py` 与 `ship_check.py`，计数改为实际的 6 脚本 / 13 模板。
+
+### 回归
+
+- 新增 6 个测试（4 个闸门红/绿配对 + 2 个 README 计数红/绿），套件 12 → **18 用例全绿**。
+- validate 10 项 0 错 0 警；preflight RESULT PASS；`ship_check --level L1` → SHIP-OK（2 项警告为交付报告与 L2 门槛，符合技能仓库定位）。
+- 入口正文 5112 tokens（v0.8.0 为 5060，**净增 52**）：已压缩交付收尾、自净细则、L3 流程行、沟通协议首条等四处表述来抵销，仍超 5K 目标 2.2%——这笔债写进 CONTRIBUTING 作为下一版任务，不靠调高目标数字掩盖。
+
 ## [0.9.0] - 2026-10-14
 
 任务评测 5 项双臂实跑收口，外加两路未覆盖过的高星竞品精读（DietrichGebert/ponytail 163k★、garrytan/gstack 136k★）。溯源见 docs/research-notes.md #35–#36。

@@ -12,6 +12,7 @@
   4. 正文中引用的 references/ templates/ scripts/ 文件必须存在（路径含反斜杠即报错）
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
+  7. README 声明的脚本/模板/分册数量与磁盘实物一致（防文档滞后）
   7. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
 
 会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
@@ -262,6 +263,40 @@ def print_stats(skill_dir):
             print("  典型任务读取 1-3 本 ≈ %d-%d tokens" % (rows[0][1], sum(e for _, e in rows[:3])))
 
 
+def check_readme_counts(skill_dir):
+    """README 声明的脚本/模板/分册数量必须与磁盘实物一致。
+
+    文档计数滞后是接手者踩的第一个坑（本仓库曾把"4 个脚本"写了两个版本），
+    所以这条做成机器检查，而不是靠人记得改。
+    """
+    readme = os.path.join(skill_dir, "README.md")
+    if not os.path.isfile(readme):
+        return
+    with io.open(readme, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    patterns = {
+        "脚本": (r"(\d+)\s*个纯标准库脚本", ("scripts", ".py")),
+        "模板": (r"(\d+)\s*个填空即用模板", ("templates", ".md")),
+        "分册": (r"(\d+)\s*本分册", ("references", ".md")),
+    }
+    bad, seen = [], 0
+    for key, (rx, (folder, suffix)) in patterns.items():
+        m = re.search(rx, text)
+        if not m:
+            continue
+        seen += 1
+        path = os.path.join(skill_dir, folder)
+        actual = 0
+        if os.path.isdir(path):
+            actual = len([f for f in os.listdir(path) if f.endswith(suffix)])
+        if int(m.group(1)) != actual:
+            bad.append("README 写 %s=%s，实际 %s" % (key, m.group(1), actual))
+    if bad:
+        warn("README 计数与实物不符：%s —— 增删文件时同步改 README" % "；".join(bad))
+    elif seen:
+        info("README 计数与实物一致（脚本/模板/分册 ✓）")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -311,6 +346,7 @@ def main():
             check_one_level(skill_dir, refs)
             check_scripts(skill_dir)
             check_booklet_contract(skill_dir)
+            check_readme_counts(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:

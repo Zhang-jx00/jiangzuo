@@ -17,5 +17,6 @@ node_modules/
 .vscode/
 *.swp
 
-# 本技能运行产物不应进技能仓库
-docs/jiangzuo/
+# 本技能运行产物不应进技能仓库（例外：本仓库自己的常驻标准，用于自我约束）
+docs/jiangzuo/*
+!docs/jiangzuo/constitution.md
