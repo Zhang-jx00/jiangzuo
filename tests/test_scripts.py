@@ -23,8 +23,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
-SCRIPT_NAMES = ["audit_index.py", "evolve_report.py", "lookup.py", "new_doc.py",
-                "preflight.py", "project_scan.py", "ship_check.py",
+SCRIPT_NAMES = ["audit_index.py", "audit_map.py", "evolve_report.py", "lookup.py",
+                "new_doc.py", "preflight.py", "project_scan.py", "ship_check.py",
                 "validate_skill.py"]
 
 
@@ -416,6 +416,121 @@ class TestAuditIndex(unittest.TestCase):
             self.assertEqual("typescript", langs["main.ts"])
             self.assertEqual("java", langs["Service.java"])
             self.assertEqual("markdown", langs["docs/b.md"])
+
+
+class TestAuditMap(unittest.TestCase):
+    """R3：项目侦察与全仓地图——语言/入口/路由/鉴权边界/依赖，全部要能在磁盘上对上号。"""
+
+    FILES = {
+        "requirements.txt": "fastapi==0.110.0\nuvicorn[standard]\npython-jose==3.3.0\n",
+        "package.json": json.dumps({"name": "svc", "dependencies": {
+            "express": "^4.19.0", "mongoose": "^8.0.0"}}),
+        "package-lock.json": "{}",
+        "main.py": ("from fastapi import FastAPI\n"
+                    "app = FastAPI()\n"
+                    "if __name__ == '__main__':\n"
+                    "    import uvicorn\n"
+                    "    uvicorn.run(app, port=8000)\n"),
+        "routers/items.py": (
+            "from fastapi import APIRouter, Depends\n"
+            "router = APIRouter()\n"
+            "@router.get('/items')\n"
+            "def list_items():\n"
+            "    return []\n"
+            "@router.post('/items', dependencies=[Depends(verify_token)])\n"
+            "def create_item():\n"
+            "    return {}\n"),
+        "server.js": ("const express = require('express')\n"
+                      "const app = express()\n"
+                      "app.get('/health', (req, res) => res.end('ok'))\n"
+                      "app.listen(3000)\n"),
+        "routes/pay.js": ("const router = require('express').Router()\n"
+                          "router.post('/pay', requireAuth, (req, res) => {})\n"
+                          "module.exports = router\n"),
+        "UserController.java": ("@RestController\n"
+                                "public class UserController {\n"
+                                "    @PreAuthorize(\"isAuthenticated()\")\n"
+                                "    @GetMapping(\"/user/{id}\")\n"
+                                "    public String get(String id) { return id; }\n"
+                                "}\n"),
+    }
+
+    def _tree(self, root):
+        for rel, text in self.FILES.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+
+    def _map(self, root):
+        out = os.path.join(root, "_map.json")
+        r = run([os.path.join(SCRIPTS, "audit_map.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_map_detects_languages_and_entrypoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._map(tmp)
+            self.assertIn("python", data["languages"])
+            self.assertIn("javascript", data["languages"])
+            entries = set(e["path"] for e in data["entrypoints"])
+            self.assertIn("main.py", entries)
+            self.assertIn("server.js", entries)
+            self.assertGreaterEqual(data["languages"]["python"], 2)
+
+    def test_map_lists_routes_with_file_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._map(tmp)
+            got = dict(((r["path"], r["method"]), r) for r in data["routes"])
+            for key in (("/items", "GET"), ("/items", "POST"),
+                        ("/health", "GET"), ("/pay", "POST"), ("/user/{id}", "GET")):
+                self.assertIn(key, got, "路由漏识别：%s（已识别 %s）" % (key, sorted(got)))
+                rec = got[key]
+                self.assertTrue(rec["file"], "路由必须带文件")
+                self.assertGreater(rec["line"], 0, "路由必须带行号")
+
+    def test_map_marks_auth_boundary_and_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._map(tmp)
+            got = dict(((r["path"], r["method"]), r) for r in data["routes"])
+            self.assertTrue(got[("/items", "POST")]["auth"], "Depends(verify_token) 应算鉴权")
+            self.assertTrue(got[("/pay", "POST")]["auth"], "requireAuth 中间件应算鉴权")
+            self.assertTrue(got[("/user/{id}", "GET")]["auth"],
+                            "@PreAuthorize 在上一行也要认（Java 注解分行写是常态）")
+            self.assertFalse(got[("/items", "GET")]["auth"])
+            self.assertIn("/items", data["summary"]["unauthenticated_routes"])
+            self.assertTrue(data["auth_boundaries"], "鉴权边界要单独成表")
+
+    def test_map_lists_dependencies_and_lockfiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._map(tmp)
+            deps = dict((d["name"], d) for d in data["dependencies"])
+            self.assertIn("fastapi", deps)
+            self.assertIn("express", deps)
+            self.assertEqual("0.110.0", deps["fastapi"]["version"])
+            self.assertIn("package-lock.json", [os.path.basename(x) for x in data["lockfiles"]])
+
+    def test_map_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            first, _ = self._map(tmp)
+            second, _ = self._map(tmp)
+            self.assertEqual(first["map_sha1"], second["map_sha1"],
+                             "地图必须可复现，否则增量缓存与前后对比都不可信")
+
+    def test_map_consumes_index_and_rejects_absent_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = run([os.path.join(SCRIPTS, "audit_map.py"),
+                     os.path.join(tmp, "nope")])
+            self.assertEqual(r.returncode, 2, r.stdout)
+            self.assertIn("目录不存在", r.stdout)
 
 
 if __name__ == "__main__":
