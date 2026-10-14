@@ -66,25 +66,40 @@ def _fingerprint(rule_id, rel, text):
     return auditlib.sha1_hex(u"%s|%s|%s" % (rule_id, rel, norm[:200]))[:16]
 
 
-def coarse_screen(root, index, rules, max_bytes, peak=False):
-    """确定性粗筛：逐行流式匹配所有 sink/source 模式，只留"哪个文件命中了哪条规则"。
+def _bucket_by_lang(rules, field, want_masked):
+    """按语言分桶：每行只跑"这门语言可能命中"的少数模式。
 
-    这一层不做任何判断，目的就是把深挖范围从"全仓"缩到"候选文件"——
-    大仓扫描的内存与时间都跟这一步的取舍有关，所以禁止在这里读整仓内容。
-    两条流：**代码流**（跳过注释与三引号块）与**剥字符串流**（给标识符型规则用，
-    免得把"文档里谈 token 配额"的句子读成日志泄露）。
+    改之前是 每行 × 全部 55 条模式，光语言判断就占掉一半时间；
+    分桶后不相关语言的模式一条都不碰，**且一个文件若一条相关模式都没有，
+    连打开都不打开**。
     """
-    raw_sinks, mask_sinks = [], []
+    by_lang, wild = {}, []
     for rule in rules:
         if rule.get("kind") not in ("taint", "pattern"):
             continue
-        bucket = mask_sinks if rule.get("ignore_strings") else raw_sinks
-        for item in rule["sinks"]:
-            bucket.append((rule["id"], rule.get("languages") or [], item["_rx"]))
-    src_items = []
-    for rule in rules:
-        for item in rule.get("sources") or []:
-            src_items.append((rule["id"], item["_rx"]))
+        if bool(rule.get("ignore_strings")) != want_masked:
+            continue
+        pairs = [(rule["id"], item["_rx"]) for item in (rule.get(field) or [])]
+        if not pairs:
+            continue
+        langs = rule.get("languages") or []
+        if "*" in langs:
+            wild.extend(pairs)
+        for lang in langs:
+            if lang != "*":
+                by_lang.setdefault(lang, []).extend(pairs)
+    return by_lang, wild
+
+
+def coarse_screen(root, index, rules, max_bytes, peak=False):
+    """确定性粗筛：一次打开、一次逐行，同时产出原文流与剥字面量流的命中。
+
+    这一层不做任何判断，目的就是把深挖范围从"全仓"缩到"候选文件"——
+    大仓扫描的内存与时间都跟这一步的取舍有关，所以禁止在这里读整仓内容。
+    """
+    raw_by_lang, raw_wild = _bucket_by_lang(rules, "sinks", False)
+    mask_by_lang, mask_wild = _bucket_by_lang(rules, "sinks", True)
+    src_by_lang, src_wild = _bucket_by_lang(rules, "sources", False)
     hits, imports = {}, set()
     trace = None
     peak_kb = 0
@@ -95,28 +110,30 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
     for rec in index["files"]:
         if trace:
             peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
+        lang = rec["lang"]
+        raw_items = raw_by_lang.get(lang, []) + raw_wild
+        mask_items = mask_by_lang.get(lang, []) + mask_wild
+        src_items = src_by_lang.get(lang, []) + src_wild
+        if not (raw_items or mask_items or src_items):
+            continue          # 这门语言没有任何相关模式 → 不读这个文件
         rel = rec["path"]
         abs_path = os.path.join(root, rel.replace("/", os.sep))
-        per_rule = {}
-        src_per_rule = {}
-        for masked, items in ((False, raw_sinks), (True, mask_sinks)):
-            if not items:
-                continue
-            for lineno, text, _trunc in auditlib.iter_code_lines(
-                    abs_path, max_bytes=max_bytes, ignore_strings=masked):
-                if not masked:
-                    for m in IMPORT_RX.finditer(text):
-                        token = next((g for g in m.groups() if g), "")
-                        if token:
-                            imports.add(token.split(".")[0].lower())
-                    for rid, rx in src_items:
-                        if rx.search(text):
-                            src_per_rule.setdefault(rid, []).append(lineno)
-                for rid, rlangs, rx in items:
-                    if rlangs and "*" not in rlangs and rec["lang"] not in rlangs:
-                        continue
-                    if rx.search(text):
-                        per_rule.setdefault(rid, []).append(lineno)
+        per_rule, src_per_rule = {}, {}
+        for lineno, raw, masked, _trunc in auditlib.iter_code_lines(
+                abs_path, max_bytes=max_bytes, both=True):
+            for m in IMPORT_RX.finditer(raw):
+                token = next((g for g in m.groups() if g), "")
+                if token:
+                    imports.add(token.split(".")[0].lower())
+            for rid, rx in src_items:
+                if rx.search(raw):
+                    src_per_rule.setdefault(rid, []).append(lineno)
+            for rid, rx in raw_items:
+                if rx.search(raw):
+                    per_rule.setdefault(rid, []).append(lineno)
+            for rid, rx in mask_items:
+                if rx.search(masked):
+                    per_rule.setdefault(rid, []).append(lineno)
         if per_rule or src_per_rule:
             hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
     if trace:

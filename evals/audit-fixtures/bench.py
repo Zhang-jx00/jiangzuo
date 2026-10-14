@@ -134,7 +134,7 @@ def main():
         best["map"] = mp
         dt, pk, g = stage(lambda: audit_graph.build_graph(corpus, index=index,
                                                          map_data=mp, rules=rules))
-        rows.append(("图 build_graph", dt, pk))
+        rows.append(("图 build_graph（无门控对照）", dt, pk))
         best["graph_kb"] = pk
         dt, pk, hits = stage(lambda: audit_scan.coarse_screen(corpus, index, rules,
                                                              2 * 1024 * 1024))
@@ -151,21 +151,24 @@ def main():
         cur[1] = max(cur[1], pk)
     total_dt = agg["整链 audit_scan.run"][0]
     ms_file = total_dt * 1000.0 / max(1, n)
-    peak_mb = max(v[1] for v in agg.values()) / 1024.0
+    peak_mb = agg["整链 audit_scan.run"][1] / 1024.0
 
     print(u"# 审计链性能基准（%d 文件，重复 %d 次取均值/峰值）\n" % (n, args.repeat))
     print(u"| 阶段 | 秒 | 峰值内存 | 每文件 ms |")
     print(u"|---|---|---|---|")
-    for name in ("索引 build_index", "地图 build_map", "图 build_graph",
+    for name in ("索引 build_index", "地图 build_map", "图 build_graph（无门控对照）",
                  "粗筛 coarse_screen", "整链 audit_scan.run"):
         dt, pk = agg[name]
         print(u"| %s | %.2f | %d KB | %.3f |" % (name, dt, pk, dt * 1000.0 / max(1, n)))
-    print(u"\n- 整链每文件 **%.3f ms**（预算 ≤%.2f ms）｜ 全链峰值 **%.1f MB**（预算 ≤%.0f MB）"
+    st = full["stats"]
+    print(u"\n- 整链每文件 **%.3f ms**（预算 ≤%.2f ms）｜ 整链峰值 **%.1f MB**（预算 ≤%.0f MB）"
           % (ms_file, args.max_ms_per_file, peak_mb, args.max_mb))
-    print(u"- 发现数 %d ｜ 函数 %d ｜ 候选文件 %d ｜ 图峰值占整链 %.0f%%"
-          % (full["stats"]["findings"], full["stats"].get("flows", 0),
-             full["stats"]["candidates"],
-             100.0 * agg["图 build_graph"][1] / max(1, agg["整链 audit_scan.run"][1])))
+    print(u"- 整链内部：发现 %d ｜ 污点流 %d ｜ 粗筛命中文件 %d ｜ 图层实际解析 %d 个文件%s"
+          % (st["findings"], st.get("flows", 0), st["candidates"],
+             st.get("graph_parsed_files", 0),
+             u"（门控空转）" if st.get("graph_gated") else u""))
+    print(u"- 对照行的 31MB 是**无门控全仓解析**的旧行为，别拿它当占用；"
+          u"门控后的图成本已含在整链行里。")
     ok = ms_file <= args.max_ms_per_file and peak_mb <= args.max_mb
     print(u"\nRESULT: %s（%.3f ms/文件 / %.1f MB）"
           % (u"BENCH-OK" if ok else u"BENCH-FAIL", ms_file, peak_mb))

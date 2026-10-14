@@ -896,5 +896,62 @@ class TestAuditScan(unittest.TestCase):
                              "只应重算改动文件及其调用链邻居：%s" % inc["stats"])
 
 
+class TestAuditCostModel(unittest.TestCase):
+    """性能不是形容词，也不能靠"本机跑得快"证明——锁**工作量随候选数缩放**这条结构性质。
+
+    计时断言在 CI 上必然抖动（本会话就吃过一次：单跑一遍全阶段统一慢 3 倍，
+    而其中 build_index 我根本没碰）。所以这里断言的是"图层解析了几个文件"，
+    它和仓库大小无关、只和候选数有关，可复现、能红能绿。
+    """
+
+    def _corpus(self, root, clean_files, flows=0):
+        for i in range(clean_files):
+            path = os.path.join(root, ("app/mod_%04d.py" % i).replace("/", os.sep))
+            os.makedirs(os.path.dirname(path)) if not os.path.isdir(
+                os.path.dirname(path)) else None
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write("def handle_%d(payload):\n"
+                        "    total = 0\n"
+                        "    for key in payload:\n"
+                        "        total += len(str(key))\n"
+                        "    return total\n" % i)
+        for i in range(flows):
+            path = os.path.join(root, ("app/vuln_%03d.py" % i).replace("/", os.sep))
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write("from flask import request\nimport sqlite3\n\n\n"
+                        "@app.route('/x%d')\ndef h%d():\n"
+                        "    q = request.args['q']\n"
+                        "    con = sqlite3.connect('db.sqlite')\n"
+                        "    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}')"
+                        ".fetchall()\n" % (i, i))
+
+    def _stats(self, root):
+        out = os.path.join(root, "_f.json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)["stats"]
+
+    def test_clean_repo_pays_zero_graph_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._corpus(tmp, 200)
+            stats = self._stats(tmp)
+            self.assertEqual(200, stats["files_total"])
+            self.assertEqual(0, stats["graph_parsed_files"],
+                             "干净仓库里图层仍在全仓解析＝门控失效")
+            self.assertTrue(stats["graph_gated"], u"应记录「图层被粗筛门控空转」")
+
+    def test_graph_work_scales_with_candidates_not_repo_size(self):
+        small, big = None, None
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            self._corpus(a, 60, flows=3)
+            self._corpus(b, 240, flows=3)
+            small, big = self._stats(a), self._stats(b)
+        self.assertGreaterEqual(big["flows"], 3, "仓库放大后植入的漏洞必须仍被检出")
+        self.assertEqual(small["graph_parsed_files"], big["graph_parsed_files"],
+                         "图层解析的文件数只该跟候选走：仓库×4 它就×4 = 门控没起作用")
+        self.assertLess(big["graph_parsed_files"], big["files_total"] // 4)
+
+
 if __name__ == "__main__":
     unittest.main()
