@@ -284,7 +284,10 @@ class TestRouting(unittest.TestCase):
              ("技术选型决策记录", "design"), ("线上事故止血复盘", "incident"),
              ("交付报告文档同步", "docs-delivery"), ("协调其他技能分包商", "skill-orchestration"),
              ("接口契约字段命名", "api-design"), ("给技能加规则删规则", "self-evolution"),
-             ("配色视觉排版走查", "ui-design")]
+             ("配色视觉排版走查", "ui-design"),
+             ("整个项目有没有安全漏洞", "security-audit"),
+             ("全项目体检出报告", "security-audit"),
+             ("依赖漏洞排序", "security-audit")]
 
     def test_natural_phrases_route_top1(self):
         misses = []

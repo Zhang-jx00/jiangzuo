@@ -5,7 +5,7 @@ when_to_use: 用户说「帮我做个…」「加个功能」「改个样式」�
 license: MIT
 metadata:
   display_name: 将作
-  version: 0.19.0
+  version: 0.20.0
   last-reviewed: 2026-10-14
   short-description: 资深全栈软件工程搭档：先读懂、再想清、后动手、必验证、留文档
 ---
@@ -116,6 +116,7 @@ metadata:
 | 写后端接口与业务逻辑 | references/backend.md |
 | 数据库设计、迁移、数据变更 | references/database.md |
 | 涉及登录/权限/支付/外部输入 | references/security.md |
+| 全项目体检、漏洞审计 | references/security-audit.md |
 | 修 bug、排查报错 | references/debugging.md |
 | 线上故障、紧急止血 | references/incident.md |
 | 补测试、写测试、测试先行 | references/testing.md |
@@ -202,9 +203,9 @@ metadata:
 
 1. **自净**：删除本次临时探针与副本，`git status` 里不该出现任何试验残留
 2. 按 docs-delivery.md 确认文档同步，并输出交付报告（templates/delivery-report.md）：改了什么 / 为什么 / 怎么验证的 / 剩余风险（+ 复用阶梯停在第几级）
-3. 过**交付闸门**：`python scripts/ship_check.py --level <级别>`（测试 / preflight / 报告四问＋阶梯 / 残留 / 常驻标准一次核完；无 Python 时按 code-review.md 人工过同等条目）
+3. 过**交付闸门**：`python scripts/ship_check.py --level <级别>`（测试/报告四问＋阶梯/残留/常驻标准一次核完；无 Python 时按 code-review.md 人工过同等条目）
 4. 有新教训 → 回写 learnings.md
 
 ## 兼容性说明
 
-- 脚本仅用 Python 3.8+ 标准库，跨平台、只读项目、不联网；没有 Python 时按各分册人工清单执行，效果等价。
+- 脚本仅用 Python 3.8+ 标准库，只读、不联网；没有 Python 时按各分册人工清单执行，效果等价。
