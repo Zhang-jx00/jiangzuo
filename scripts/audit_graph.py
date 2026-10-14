@@ -430,9 +430,51 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                                           "rule_id": rule["id"]})
 
 
+def _stream_lines(root, rec, limit):
+    return auditlib.iter_code_lines(
+        os.path.join(root, rec["path"].replace("/", os.sep)), max_bytes=limit)
+
+
+def _collect_calls(root, rec, limit):
+    names = set()
+    for _n, text, _t in _stream_lines(root, rec, limit):
+        for m in CALL_RX.finditer(text):
+            names.add(m.group(1))
+    return names
+
+
+def _def_names(root, rec, limit):
+    """只扫 def 行拿函数名：不切函数体、不留行。
+
+    图层要跨文件解析调用，得先知道"这个名字在哪个文件被定义"；
+    但为这件事把全仓函数体都留在内存里，就是基准实测的 32MB/96% 峰值来源。
+    """
+    rx = DEF_PATTERNS.get(rec["lang"])
+    out = set()
+    if not rx:
+        return out
+    for _n, text, _t in _stream_lines(root, rec, limit):
+        m = rx.search(text)
+        if not m:
+            continue
+        groups = m.groupdict()
+        for key in ("name", "name2", "name3"):
+            if groups.get(key):
+                out.add(groups[key])
+                break
+    return out
+
+
 def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
-                max_passes=None):
+                max_passes=None, candidates=None):
+    """candidates：粗筛给出的候选文件集合。
+
+    给了就**门控**——粗筛没有候选 → 图层直接空转返回；有候选 → 只全量解析
+    "候选文件 ∪ 被候选文件调用的定义文件"。不给则维持旧行为（全仓解析）。
+    这是把"贵层由便宜层驱动"落到结构上：干净仓库扫描的图层成本应接近 0。
+    """
     root = os.path.abspath(root)
+    limit = max_bytes or auditlib.DEFAULT_MAX_FILE_BYTES
     if index is None:
         index = auditlib.build_index(root)
     if map_data is None:
@@ -442,14 +484,33 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
         if problems:
             raise ValueError(u"规则库有问题，拒绝出图：%s" % u"；".join(problems[:3]))
 
+    source_recs = [r for r in index["files"] if r["lang"] in DEF_PATTERNS]
+    by_path = dict((r["path"], r) for r in source_recs)
+    gated_skip = False
+    if candidates is None:
+        parse_set = set(by_path)
+    else:
+        cand = set(candidates) & set(by_path)
+        if not cand:
+            parse_set, gated_skip = set(), True
+        else:
+            called = set()
+            for rel in sorted(cand):
+                called |= _collect_calls(root, by_path[rel], limit)
+            parse_set = set(cand)
+            for rec in source_recs:
+                if rec["path"] in parse_set:
+                    continue
+                if _def_names(root, rec, limit) & called:
+                    parse_set.add(rec["path"])
+
     all_funcs = []
     per_file = {}
-    for rec in index["files"]:
-        if rec["lang"] not in DEF_PATTERNS:
+    for rec in source_recs:
+        if rec["path"] not in parse_set:
             continue
         abs_path = os.path.join(root, rec["path"].replace("/", os.sep))
-        lines = list(auditlib.iter_lines(abs_path, max_bytes=max_bytes
-                                         or auditlib.DEFAULT_MAX_FILE_BYTES))
+        lines = list(auditlib.iter_lines(abs_path, max_bytes=limit))
         if not lines:
             continue
         funcs = add_module_scope(parse_functions(rec["lang"], rec["path"], lines),
@@ -518,7 +579,9 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
                   "flows": len(out_flows), "reachable_flows": sum(
                       1 for f in out_flows if f["reachable"]),
                   "roots": len(roots), "reached": len(reached),
-                  "passes": stats["passes"], **stats},
+                  "passes": stats["passes"],
+                  "parsed_files": len(per_file),
+                  "gated_by_candidates": gated_skip, **stats},
     }
     return payload
 

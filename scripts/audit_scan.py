@@ -117,7 +117,7 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
                         continue
                     if rx.search(text):
                         per_rule.setdefault(rid, []).append(lineno)
-        if per_rule:
+        if per_rule or src_per_rule:
             hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
     if trace:
         peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
@@ -632,6 +632,7 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     findings.extend(auth_gap_findings(map_data, rules))
     findings.extend(dependency_findings(map_data, rules, imports))
 
+    graph_parsed, graph_gated = 0, False
     need_graph = True
     if cache and not set(dirty) and cache.get("flows") is not None:
         need_graph = False
@@ -641,7 +642,11 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
             flows = json.load(f).get("flows", [])
         need_graph = False
     else:
-        graph = audit_graph.build_graph(root, index=index, map_data=map_data, rules=rules)
+        graph = audit_graph.build_graph(root, index=index, map_data=map_data,
+                                        rules=rules,
+                                        candidates=set(r for r, i in hits.items() if i["sinks"]))
+        graph_parsed = graph["stats"].get("parsed_files", 0)
+        graph_gated = bool(graph["stats"].get("gated_by_candidates"))
         flows = graph["flows"]
     findings.extend(flow_findings({"flows": flows}))
 
@@ -658,7 +663,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         f["verification"] = result
         verified.append(grade(f, result))
     verified = rank_dependencies(verified)
-    stats = {"files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
+    stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
+             "files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
              "recomputed_files": len(scan_index["files"]),
              "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
              "flows": len(flows), "elapsed_sec": round(time.time() - t0, 2),

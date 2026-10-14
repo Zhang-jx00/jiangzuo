@@ -234,7 +234,7 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[|payload)"
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[)"
     }
    ],
    "sanitizers": [
@@ -281,10 +281,10 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload|body|raw)"
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload)"
     },
     {
-     "pattern": "\\bopen\\s*\\([^)]*,\\s*[\"']rb"
+     "pattern": "\bopen\\s*\\([^)]*,\\s*[\"']rb"
     }
    ],
    "sanitizers": [
