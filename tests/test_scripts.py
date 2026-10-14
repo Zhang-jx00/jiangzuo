@@ -23,9 +23,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
-SCRIPT_NAMES = ["audit_index.py", "audit_map.py", "audit_rules.py", "evolve_report.py",
-                "lookup.py", "new_doc.py", "preflight.py", "project_scan.py",
-                "ship_check.py", "validate_skill.py"]
+SCRIPT_NAMES = ["audit_graph.py", "audit_index.py", "audit_map.py", "audit_rules.py",
+                "evolve_report.py", "lookup.py", "new_doc.py", "preflight.py",
+                "project_scan.py", "ship_check.py", "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -616,6 +616,112 @@ class TestAuditRules(unittest.TestCase):
             r = self._run_rules("--validate", "--add", bad)
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("psychic", r.stdout)
+
+
+class TestAuditGraph(unittest.TestCase):
+    """R5：跨文件调用图 + source→sink 污点分析（升级清单第 4 项）。
+
+    这一层是"从正则到有证据"的分水岭：测试重点不只是命中，
+    更要求**不命中时说得清为什么不命中**（净化了 / 不可达 / 常量）。
+    """
+
+    def _mk(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+
+    def _graph(self, root, files):
+        self._mk(root, files)
+        out = os.path.join(root, "_graph.json")
+        r = run([os.path.join(SCRIPTS, "audit_graph.py"), root, "--out", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_same_function_taint_becomes_evidence_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"app.py": (
+                "from flask import request, Flask\n"
+                "import sqlite3\n"
+                "app = Flask(__name__)\n\n"
+                "@app.route(\"/search\")\n"
+                "def search():\n"
+                "    q = request.args[\"q\"]\n"
+                "    con = sqlite3.connect(\"db.sqlite\")\n"
+                "    con.execute(f\"SELECT * FROM t WHERE c LIKE {q}\")\n"
+                "    return \"ok\"\n")})
+            sql = [f for f in data["flows"] if f["rule_id"] == "JZ-SQLI-001"]
+            self.assertEqual(1, len(sql), "flows=%s" % data["flows"])
+            hops = sql[0]["path"]
+            self.assertGreaterEqual(len(hops), 2, "source 与 sink 至少两跳")
+            self.assertEqual("app.py", hops[0]["file"])
+            self.assertTrue(all(h["line"] > 0 for h in hops), "每一跳都要带行号")
+            self.assertTrue(sql[0]["reachable"], "路由处理函数应判为可达")
+
+    def test_sanitizer_breaks_the_flow_and_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"app.py": (
+                "from flask import request, Flask\n"
+                "import sqlite3\n"
+                "app = Flask(__name__)\n\n"
+                "@app.route(\"/byid\")\n"
+                "def byid():\n"
+                "    q = int(request.args[\"id\"])\n"
+                "    con = sqlite3.connect(\"db.sqlite\")\n"
+                "    con.execute(f\"SELECT * FROM t WHERE id={q}\")\n"
+                "    return \"ok\"\n")})
+            sql = [f for f in data["flows"] if f["rule_id"] == "JZ-SQLI-001"]
+            self.assertEqual([], sql, "int() 净化后不得再报污点流")
+            self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1,
+                                    "净化点要被记下来，不能当没发生过")
+
+    def test_taint_crosses_file_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {
+                "web/handlers.py": (
+                    "from flask import request\n\n\n"
+                    "@app.route(\"/report\")\n"
+                    "def handle():\n"
+                    "    name = request.args[\"name\"]\n"
+                    "    return render(name)\n"),
+                "services/report.py": (
+                    "import sqlite3\n\n\n"
+                    "def render(value):\n"
+                    "    con = sqlite3.connect(\"x.db\")\n"
+                    "    return con.execute(f\"SELECT {value} FROM t\").fetchall()\n")})
+            sql = [f for f in data["flows"] if f["rule_id"] == "JZ-SQLI-001"]
+            self.assertEqual(1, len(sql), "跨文件污点没接上：%s" % data["flows"])
+            files = set(h["file"] for h in sql[0]["path"])
+            self.assertEqual(2, len(files), "证据链应跨两个文件：%s" % sql[0]["path"])
+            self.assertEqual("interprocedural", sql[0]["depth"])
+
+    def test_unreachable_sink_is_marked_not_exploitable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"legacy/tool.py": (
+                "import os\n"
+                "from flask import request\n\n\n"
+                "def top(user_input):\n"
+                "    os.system(\"ls \" + user_input)\n\n\n"
+                "def entry_unused():\n"
+                "    top(request.args[\"d\"])\n")})
+            cmd = [f for f in data["flows"] if f["rule_id"] == "JZ-CMDI-001"]
+            self.assertEqual(1, len(cmd), "污点流应成立：%s" % data["flows"])
+            self.assertFalse(cmd[0]["reachable"], "没有任何入口能走到，就不该说可利用")
+            self.assertIn("可达", cmd[0]["unreachable_reason"] or "")
+
+    def test_constant_sink_does_not_produce_a_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"app.py": (
+                "import sqlite3\n"
+                "con = sqlite3.connect(\"db.sqlite\")\n"
+                "con.execute(\"SELECT 1\")\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                 if f["rule_id"].startswith("JZ-SQLI")],
+                             "写死的 SQL 没有外部输入，不该报污点")
 
 
 if __name__ == "__main__":
