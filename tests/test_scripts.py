@@ -23,9 +23,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
-SCRIPT_NAMES = ["audit_index.py", "audit_map.py", "evolve_report.py", "lookup.py",
-                "new_doc.py", "preflight.py", "project_scan.py", "ship_check.py",
-                "validate_skill.py"]
+SCRIPT_NAMES = ["audit_index.py", "audit_map.py", "audit_rules.py", "evolve_report.py",
+                "lookup.py", "new_doc.py", "preflight.py", "project_scan.py",
+                "ship_check.py", "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -531,6 +531,91 @@ class TestAuditMap(unittest.TestCase):
                      os.path.join(tmp, "nope")])
             self.assertEqual(r.returncode, 2, r.stdout)
             self.assertIn("目录不存在", r.stdout)
+
+
+class TestAuditRules(unittest.TestCase):
+    """R4：声明式规则引擎——规则是数据，能被加载、校验、合并、算出版本号。"""
+
+    def _run_rules(self, *extra):
+        return run([os.path.join(SCRIPTS, "audit_rules.py")] + list(extra))
+
+    def test_builtin_rules_load_and_validate(self):
+        r = self._run_rules("--validate")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("RESULT: RULES-OK", r.stdout)
+        m = re.search(r"规则\s*(\d+)\s*条", r.stdout)
+        self.assertTrue(m, "没报规则条数：%s" % r.stdout)
+        self.assertGreaterEqual(int(m.group(1)), 20,
+                               "内置规则少于 20 条，覆盖不了注入/越权/密钥/弱加密四类")
+
+    def test_every_rule_carries_report_fields(self):
+        """报告八栏（位置/CWE/数据流/利用条件/置信度/严重度/修复示例/复测点）
+        里 CWE、修复、复测三项由规则供给——缺一条就不算合格的规则。"""
+        out = os.path.join(tempfile.mkdtemp(), "rules.json")
+        r = self._run_rules("--validate", "--json", out)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        bad = []
+        for rule in data["rules"]:
+            for field in ("id", "title", "severity", "cwe", "languages", "fix", "retest"):
+                if not rule.get(field):
+                    bad.append("%s 缺 %s" % (rule.get("id", "?"), field))
+            if rule["severity"] not in ("critical", "high", "medium", "low", "info"):
+                bad.append("%s 严重度非法：%s" % (rule["id"], rule["severity"]))
+        self.assertEqual([], bad)
+
+    def test_malformed_rule_is_named_and_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "bad.json")
+            with io.open(bad, "w", encoding="utf-8") as f:
+                json.dump({"rules": [{"id": "JZ-BAD-001", "title": "缺字段的规则",
+                                      "severity": "catastrophic", "languages": ["python"],
+                                      "kind": "taint", "sink": [{"pattern": "x"}]}]},
+                          f, ensure_ascii=False)
+            r = self._run_rules("--validate", "--add", bad)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("JZ-BAD-001", r.stdout)
+
+    def test_user_rule_overrides_same_id_without_dupes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = self._run_rules("--validate", "--json",
+                                   os.path.join(tmp, "base.json"))
+            self.assertEqual(base.returncode, 0, base.stdout)
+            with io.open(os.path.join(tmp, "base.json"), encoding="utf-8") as f:
+                builtin = json.load(f)
+            target = builtin["rules"][0]["id"]
+            override = os.path.join(tmp, "user.json")
+            with io.open(override, "w", encoding="utf-8") as f:
+                json.dump({"rules": [{"id": target, "title": "用户改写",
+                                      "severity": "critical", "kind": "pattern",
+                                      "languages": ["python"], "cwe": ["CWE-1234"],
+                                      "sinks": [{"pattern": "placeholder_ok"}],
+                                      "fix": "改法", "retest": "复测点"}]},
+                          f, ensure_ascii=False)
+            r = self._run_rules("--validate", "--add", override,
+                                "--json", os.path.join(tmp, "merged.json"))
+            self.assertEqual(r.returncode, 0, r.stdout)
+            with io.open(os.path.join(tmp, "merged.json"), encoding="utf-8") as f:
+                merged = json.load(f)
+            ids = [x["id"] for x in merged["rules"]]
+            self.assertEqual(len(ids), len(set(ids)), "同 id 必须去重，不能出现两条")
+            got = [x for x in merged["rules"] if x["id"] == target][0]
+            self.assertEqual("用户改写", got["title"], "用户规则应覆盖内置同 id 规则")
+            self.assertNotEqual(builtin["rules_version"], merged["rules_version"],
+                                "规则内容变了而版本号不变，增量缓存就是假的")
+
+    def test_unknown_rule_kind_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "k.json")
+            with io.open(bad, "w", encoding="utf-8") as f:
+                json.dump({"rules": [{"id": "JZ-KIND-001", "title": "t",
+                                      "severity": "high", "kind": "psychic",
+                                      "languages": ["python"], "cwe": ["CWE-1"],
+                                      "fix": "f", "retest": "r"}]}, f)
+            r = self._run_rules("--validate", "--add", bad)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("psychic", r.stdout)
 
 
 if __name__ == "__main__":
