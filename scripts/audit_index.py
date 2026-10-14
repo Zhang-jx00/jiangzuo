@@ -99,7 +99,7 @@ def main():
         root, use_git=not args.no_git,
         max_file_bytes=args.max_file_kb * 1024,
         include_binary=args.include_binary,
-        extra_ignore=None, exclude=exclude)
+        extra_ignore=None, exclude=exclude, extra_patterns=args.ignore or None)
     data["counts"]["max_file_kb"] = args.max_file_kb
 
     if args.json_out:

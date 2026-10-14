@@ -71,18 +71,21 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
 
     这一层不做任何判断，目的就是把深挖范围从"全仓"缩到"候选文件"——
     大仓扫描的内存与时间都跟这一步的取舍有关，所以禁止在这里读整仓内容。
+    两条流：**代码流**（跳过注释与三引号块）与**剥字符串流**（给标识符型规则用，
+    免得把"文档里谈 token 配额"的句子读成日志泄露）。
     """
-    sink_items = []
+    raw_sinks, mask_sinks = [], []
     for rule in rules:
         if rule.get("kind") not in ("taint", "pattern"):
             continue
+        bucket = mask_sinks if rule.get("ignore_strings") else raw_sinks
         for item in rule["sinks"]:
-            sink_items.append((rule["id"], rule.get("languages") or [], item["_rx"]))
+            bucket.append((rule["id"], rule.get("languages") or [], item["_rx"]))
     src_items = []
     for rule in rules:
         for item in rule.get("sources") or []:
             src_items.append((rule["id"], item["_rx"]))
-    hits, imports, oversized = {}, set(), []
+    hits, imports = {}, set()
     trace = None
     peak_kb = 0
     if peak:
@@ -92,31 +95,34 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
     for rec in index["files"]:
         if trace:
             peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
-        langs = set()
         rel = rec["path"]
         abs_path = os.path.join(root, rel.replace("/", os.sep))
         per_rule = {}
         src_per_rule = {}
-        for lineno, text, _trunc in auditlib.iter_lines(abs_path, max_bytes=max_bytes):
-            for m in IMPORT_RX.finditer(text):
-                token = next((g for g in m.groups() if g), "")
-                if token:
-                    imports.add(token.split(".")[0].lower())
-            for rid, rlangs, rx in sink_items:
-                if rlangs and "*" not in rlangs and rec["lang"] not in rlangs:
-                    continue
-                if rx.search(text):
-                    per_rule.setdefault(rid, []).append(lineno)
-            for rid, rx in src_items:
-                if rx.search(text):
-                    src_per_rule.setdefault(rid, []).append(lineno)
+        for masked, items in ((False, raw_sinks), (True, mask_sinks)):
+            if not items:
+                continue
+            for lineno, text, _trunc in auditlib.iter_code_lines(
+                    abs_path, max_bytes=max_bytes, ignore_strings=masked):
+                if not masked:
+                    for m in IMPORT_RX.finditer(text):
+                        token = next((g for g in m.groups() if g), "")
+                        if token:
+                            imports.add(token.split(".")[0].lower())
+                    for rid, rx in src_items:
+                        if rx.search(text):
+                            src_per_rule.setdefault(rid, []).append(lineno)
+                for rid, rlangs, rx in items:
+                    if rlangs and "*" not in rlangs and rec["lang"] not in rlangs:
+                        continue
+                    if rx.search(text):
+                        per_rule.setdefault(rid, []).append(lineno)
         if per_rule:
             hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
-        langs = None
     if trace:
         peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
         trace.stop()
-    return hits, imports, peak_kb, oversized
+    return hits, imports, peak_kb, []
 
 
 def _window_lines(all_lines, center, span):
@@ -131,19 +137,27 @@ def deep_pattern_findings(root, index, rules, hits, max_bytes):
     """对候选文件做语义深挖：pattern 规则的邻近行核（unless_present）与证据装配。"""
     by_id = {r["id"]: r for r in rules}
     findings = []
+    streams = {}
     for rel, info in sorted(hits.items()):
         rec = [f for f in index["files"] if f["path"] == rel]
         if not rec:
             continue
         abs_path = os.path.join(root, rel.replace("/", os.sep))
-        lines = list(auditlib.iter_lines(abs_path, max_bytes=max_bytes))
-        text_by_line = dict((n, t) for n, t, _x in lines)
         for rid, linenos in sorted(info["sinks"].items()):
             rule = by_id.get(rid)
             if not rule or rule.get("kind") != "pattern":
                 continue
+            masked = bool(rule.get("ignore_strings"))
+            skey = (rel, masked)
+            if skey not in streams:
+                streams[skey] = list(auditlib.iter_code_lines(
+                    abs_path, max_bytes=max_bytes, ignore_strings=masked))
+            lines = streams[skey]
+            text_by_line = dict((n, t) for n, t, _x in lines)
             for lineno in linenos:
                 text = text_by_line.get(lineno, "")
+                if not text:
+                    continue      # 注释/文档块/已被剥掉的行不算命中
                 sink_rx = None
                 for item in rule["sinks"]:
                     if item["_rx"].search(text):
@@ -161,6 +175,7 @@ def deep_pattern_findings(root, index, rules, hits, max_bytes):
                     continue
                 findings.append({
                     "rule_id": rid, "kind": "pattern", "title": rule["title"],
+                    "masked": masked,
                     "severity": rule["severity"], "cwe": rule.get("cwe", []),
                     "owasp": rule.get("owasp", []), "file": rel, "line": lineno,
                     "sink_text": auditlib.redact(text.strip())[:200],
@@ -267,9 +282,12 @@ def verify(root, finding, map_data, all_lines_cache):
     if not result["path_exists"]:
         reasons.append(u"报告里的文件在磁盘上不存在（行 %s）" % finding["line"])
         return False, result, reasons
-    if rel not in all_lines_cache:
-        all_lines_cache[rel] = list(auditlib.iter_lines(abs_path))
-    lines = all_lines_cache[rel]
+    masked = bool(finding.get("masked"))
+    skey = (rel, masked)
+    if skey not in all_lines_cache:
+        all_lines_cache[skey] = list(auditlib.iter_code_lines(abs_path,
+                                                             ignore_strings=masked))
+    lines = all_lines_cache[skey]
     text_by_line = dict((n, t) for n, t, _x in lines)
     line_text = text_by_line.get(finding["line"], "")
     if not line_text.strip() and finding["kind"] != "dependency":
@@ -555,10 +573,11 @@ def to_sarif(payload, skill_version):
 
 def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         map_path=None, graph_path=None, user_rules=None, cache_dir=None,
-        incremental=False, max_file_kb=2048, report_memory=False, version="0.18.0"):
+        incremental=False, max_file_kb=2048, report_memory=False,
+        ignore_patterns=None, version="0.18.0"):
     root = os.path.abspath(root)
     max_bytes = max_file_kb * 1024
-    rules, problems, _notes = audit_rules.load_rules(user_rules or [])
+    rules, problems, _notes, _off = audit_rules.load_rules(user_rules or [])
     if problems:
         raise ValueError(u"规则库有问题，拒绝扫描：" + u"；".join(problems[:5]))
     rules_version = audit_rules.rules_version(rules)
@@ -573,7 +592,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         exclude.append(auditlib.norm_rel(cache_file, root))
 
     index = auditlib.load_index(index_path) if index_path else auditlib.build_index(
-        root, max_file_bytes=max_bytes, exclude=exclude)
+        root, max_file_bytes=max_bytes, exclude=exclude,
+        extra_patterns=ignore_patterns or None)
     map_data = None
     if map_path:
         with io.open(map_path, "r", encoding="utf-8") as f:
@@ -688,6 +708,8 @@ def main():
     ap.add_argument("--cache", default=None, help=u"缓存目录（默认关闭，需显式指定）")
     ap.add_argument("--incremental", action="store_true", help=u"配合 --cache 只重算变更文件")
     ap.add_argument("--max-file-kb", type=int, default=2048)
+    ap.add_argument("--ignore", action="append", default=[],
+                    help=u"追加忽略模式，可多次（如 --ignore 'tests/fixtures/**' 排除自造夹具）")
     ap.add_argument("--report-memory", action="store_true", help=u"粗筛阶段用 tracemalloc 测峰值")
     ap.add_argument("--strict", action="store_true", help=u"critical/high 存在时退出码 1")
     ap.add_argument("--version", default="0.18.0", help=u"写进 SARIF 的工具版本")
@@ -703,7 +725,8 @@ def main():
                       map_path=args.map_in, graph_path=args.graph,
                       user_rules=args.rules_in, cache_dir=args.cache,
                       incremental=args.incremental, max_file_kb=args.max_file_kb,
-                      report_memory=args.report_memory)
+                      report_memory=args.report_memory,
+                      ignore_patterns=args.ignore or None)
     except ValueError as exc:
         print(u"错误：%s" % exc, file=sys.stderr)
         return 1

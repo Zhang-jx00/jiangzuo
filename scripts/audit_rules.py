@@ -104,8 +104,12 @@ def validate_rule(rule, source, problems, compiled):
     return entry
 
 
-def load_rules(extra_paths=None, problems=None):
-    """内置目录 + 用户文件 → 按 id 去重合并（用户后到，覆盖同名内置）。"""
+def load_rules(extra_paths=None, problems=None, include_disabled=False):
+    """内置目录 + 用户文件 → 按 id 去重合并（用户后到，覆盖同名内置）。
+
+    `enabled: false` 的规则不进活动集（实测误报率高的规则要被数据停用，
+    不是靠人记得"别用那条"），--enable-all 可强行带回。
+    """
     problems = problems if problems is not None else []
     soft_notes = []
     compiled = []
@@ -146,10 +150,21 @@ def load_rules(extra_paths=None, problems=None):
             else:
                 order.append(rid)
                 raw_by_id[rid] = (rule, name)
+    active = []
+    skipped = []
     for rid in order:
         rule, name = raw_by_id[rid]
-        validate_rule(rule, name, problems, compiled)
-    return compiled, problems, soft_notes
+        holder = []
+        validate_rule_into(rule, name, problems, holder)
+        if rule.get("enabled") is False and not include_disabled:
+            skipped.append((rid, holder))
+            continue
+        active.extend(holder)
+    return active, problems, soft_notes, skipped
+
+
+def validate_rule_into(rule, source, problems, compiled):
+    return validate_rule(rule, source, problems, compiled)
 
 
 def rules_version(rules):
@@ -189,6 +204,8 @@ def main():
     ap.add_argument("--json", dest="json_out", default=None, help=u"导出合并后的规则集")
     ap.add_argument("--list", action="store_true", help=u"按严重度列出规则")
     ap.add_argument("--dir", default=None, help=u"改用别的规则目录（调试用）")
+    ap.add_argument("--enable-all", action="store_true",
+                    help=u"连 enabled:false 的规则一起加载（默认按数据停用）")
     args = ap.parse_args()
 
     if args.dir:
@@ -196,7 +213,8 @@ def main():
         RULES_DIR = os.path.abspath(args.dir)
 
     problems = []
-    rules, problems, soft_notes = load_rules(args.add, problems)
+    rules, problems, soft_notes, disabled = load_rules(args.add, problems,
+                                                       include_disabled=args.enable_all)
     version = rules_version(rules)
     by_sev = {}
     by_kind = {}
@@ -221,8 +239,9 @@ def main():
 
     builtin_files = len([f for f in os.listdir(RULES_DIR) if f.endswith(".json")]) \
         if os.path.isdir(RULES_DIR) else 0
-    print(u"规则 %d 条（来源：内置规则文件 %d 个 + 用户文件 %d 个）｜ 类型分布 %s ｜ 严重度分布 %s"
-          % (len(rules), builtin_files, len(args.add),
+    print(u"规则 %d 条（来源：内置规则文件 %d 个 + 用户文件 %d 个；数据停用 %d 条）"
+          u"｜ 类型分布 %s ｜ 严重度分布 %s"
+          % (len(rules), builtin_files, len(args.add), len(disabled),
              ", ".join("%s=%d" % kv for kv in sorted(by_kind.items())),
              ", ".join("%s=%d" % (k, by_sev[k]) for k in SEVERITIES if k in by_sev)))
     print(u"rules_version=%s" % version[:12])

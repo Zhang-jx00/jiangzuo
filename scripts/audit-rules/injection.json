@@ -8,23 +8,47 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.6,
-   "languages": ["python"],
-   "cwe": ["CWE-89"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "python"
+   ],
+   "cwe": [
+    "CWE-89"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "\\b(?:execute|executemany|raw|query|text)\\s*\\(\\s*f[\"']"},
-    {"pattern": "\\b(?:execute|executemany|raw|query)\\s*\\([^)\\n]*(?:%\\s*\\(|%\\s*[\"']|\\.format\\s*\\(|\\+\\s*[A-Za-z_(]|\\bjoin\\s*\\()"},
-    {"pattern": "\\b(?:cursor|db|session|engine)\\s*\\.\\s*(?:execute|query)\\s*\\([^)\\n]*[\"'][^)\"']*[\"']\\s*\\+"}
+    {
+     "pattern": "\\b(?:execute|executemany|raw|query|text)\\s*\\(\\s*f[\"']"
+    },
+    {
+     "pattern": "\\b(?:execute|executemany|raw|query)\\s*\\([^)\\n]*(?:%\\s*\\(|%\\s*[\"']|\\.format\\s*\\(|\\+\\s*[A-Za-z_(]|\\bjoin\\s*\\()"
+    },
+    {
+     "pattern": "\\b(?:cursor|db|session|engine)\\s*\\.\\s*(?:execute|query)\\s*\\([^)\\n]*[\"'][^)\"']*[\"']\\s*\\+"
+    }
    ],
    "sources": [
-    {"pattern": "\\brequest\\.(?:args|form|json|values|query_string|data)\\b"},
-    {"pattern": "\\b(?:req\\.(?:body|query|params)|params\\[|argv|user_input|payload)\\b"},
-    {"pattern": "\\binput\\s*\\("}
+    {
+     "pattern": "\\brequest\\.(?:args|form|json|values|query_string|data)\\b"
+    },
+    {
+     "pattern": "\\b(?:req\\.(?:body|query|params)|params\\[|argv|user_input|payload)\\b"
+    },
+    {
+     "pattern": "\\binput\\s*\\("
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\b(?:execute|executemany)\\s*\\([^)]*,\\s*[\\[(]"},
-    {"pattern": "\\b(?:parametrize|bindparam)\\b"},
-    {"pattern": "\\b(?:int|float)\\s*\\("}
+    {
+     "pattern": "\\b(?:execute|executemany)\\s*\\([^)]*,\\s*[\\[(]"
+    },
+    {
+     "pattern": "\\b(?:parametrize|bindparam)\\b"
+    },
+    {
+     "pattern": "\\b(?:int|float)\\s*\\("
+    }
    ],
    "fix": "改成参数化查询：cursor.execute(\"SELECT * FROM t WHERE id=%s\", (user_id,))。拼接表名/列名/排序字段时改用白名单映射表——参数化管不了这些位置。",
    "retest": "给该参数传 1' OR '1'='1 与 1'; DROP TABLE--，确认返回 400/空结果而不是全表数据或 500；对照修复前后的 SQL 日志确认值进了占位符。"
@@ -35,20 +59,39 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.6,
-   "languages": ["javascript", "typescript"],
-   "cwe": ["CWE-89"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "javascript",
+    "typescript"
+   ],
+   "cwe": [
+    "CWE-89"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "[^\\w.](?:query|raw|execute)\\s*\\(\\s*[`\"'][^`\"']*\\$\\{"},
-    {"pattern": "\\b(?:query|raw|execute)\\s*\\([^)\\n]*(?:\\+\\s*[A-Za-z_(]|\\bconcat\\s*\\(|\\.join\\s*\\()"}
+    {
+     "pattern": "\\b(?:query|raw|execute)\\s*\\(\\s*[`\\\"'][^`\\\"']*\\$\\{"
+    },
+    {
+     "pattern": "\\b(?:query|raw|execute)\\s*\\([^)\\n]*(?:\\+\\s*[A-Za-z_(]|\\bconcat\\s*\\(|\\.join\\s*\\()"
+    }
    ],
    "sources": [
-    {"pattern": "\\breq\\.(?:body|query|params)\\b"},
-    {"pattern": "\\b(?:params|payload|input|body)\\["}
+    {
+     "pattern": "\\breq\\.(?:body|query|params)\\b"
+    },
+    {
+     "pattern": "\\b(?:params|payload|input|body)\\["
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\$\\d+\\b"},
-    {"pattern": "\\bescapeIdentifier\\b|\\bNumber\\s*\\(|\\bparseInt\\s*\\("}
+    {
+     "pattern": "\\$\\d+\\b"
+    },
+    {
+     "pattern": "\\bescapeIdentifier\\b|\\bNumber\\s*\\(|\\bparseInt\\s*\\("
+    }
    ],
    "fix": "用参数化：db.query('SELECT * FROM t WHERE id = $1', [id]) 或 db.query('... WHERE id = ?', [id])；动态列名走白名单。",
    "retest": "输入 ' OR 1=1 -- 确认查不到别人的数据；把值改到参数数组里，观察 SQL 是否仍含插值。"
@@ -59,19 +102,38 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.55,
-   "languages": ["java", "php", "ruby", "go"],
-   "cwe": ["CWE-89"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "java",
+    "php",
+    "ruby",
+    "go"
+   ],
+   "cwe": [
+    "CWE-89"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "\\b(?:createQuery|createNativeQuery|prepareStatement|executeQuery)\\s*\\([^)]*\\+"},
-    {"pattern": "(?:->query|::select|::raw|DB\\.Raw|db\\.Raw|mysql_query|mysqli_query)\\s*\\([^)]*(?:\\+|\\.\\s*[\"']|\\$\\{|%s)"},
-    {"pattern": "\\b(?:where|select|find_by_sql)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\+|#\\{)"}
+    {
+     "pattern": "\\b(?:createQuery|createNativeQuery|prepareStatement|executeQuery)\\s*\\([^)]*\\+"
+    },
+    {
+     "pattern": "(?:->query|::select|::raw|DB\\.Raw|db\\.Raw|mysql_query|mysqli_query)\\s*\\([^)]*(?:\\+|\\.\\s*[\"']|\\.\\s*\\$|\\$\\{|%s)"
+    },
+    {
+     "pattern": "\\b(?:where|select|find_by_sql)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\+|#\\{)"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.getParameter|\\$_(?:GET|POST|REQUEST)|params\\[|c\\.Param)\\b"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.getParameter|\\$_(?:GET|POST|REQUEST)|params\\[|c\\.Param)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\b(?:setString|setInt|bindValue)\\s*\\(|\\breal_escape_string\\b|\\bPreparedStatement\\b|\\$\\d"}
+    {
+     "pattern": "\\b(?:setString|setInt|bindValue)\\s*\\(|\\breal_escape_string\\b|\\bPreparedStatement\\b|\\$\\d"
+    }
    ],
    "fix": "改用 PreparedStatement / ORM 参数绑定：Java prepareStatement(sql) 后 setString(1, v)；PHP 用 PDO 预处理；Ruby 用 where(\"id = ?\", id)；Go 用 db.Query(\"... $1\", v)。",
    "retest": "注入串单引号：修复前会报数据库语法错（说明值拼进了语句），修复后应得到类型校验错误且不落库。"
@@ -82,23 +144,55 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.65,
-   "languages": ["python", "javascript", "typescript", "php", "ruby", "go", "java", "shell"],
-   "cwe": ["CWE-78", "CWE-77"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "php",
+    "ruby",
+    "go",
+    "java",
+    "shell"
+   ],
+   "cwe": [
+    "CWE-78",
+    "CWE-77"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "\\bos\\.system\\s*\\(|\\bos\\.popen\\s*\\(|\\bcommands\\.getoutput\\b"},
-    {"pattern": "\\bsubprocess\\.(?:run|call|check_output|Popen|check_call)\\s*\\([^)]*shell\\s*=\\s*True"},
-    {"pattern": "\\b(?:exec|execSync)\\s*\\([^)]*(?:\\+|\\$\\{)"},
-    {"pattern": "\\b(?:system|shell_exec|passthru|popen|proc_open)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\.|\\+)"},
-    {"pattern": "\\bRuntime\\.getRuntime\\(\\)\\.exec\\s*\\([^)]*\\+"},
-    {"pattern": "exec\\.Command\\s*\\(\\s*\"(?:sh|bash|cmd)\"[^)]*(?:\\+|%s|fmt\\.Sprint)"},
-    {"pattern": "`[^`]*#\\{"}
+    {
+     "pattern": "\\bos\\.system\\s*\\(|\\bos\\.popen\\s*\\(|\\bcommands\\.getoutput\\b"
+    },
+    {
+     "pattern": "\\bsubprocess\\.(?:run|call|check_output|Popen|check_call)\\s*\\([^)]*shell\\s*=\\s*True"
+    },
+    {
+     "pattern": "\\b(?:exec|execSync)\\s*\\([^)]*(?:\\+|\\$\\{)"
+    },
+    {
+     "pattern": "\\b(?:system|shell_exec|passthru|popen|proc_open)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\.|\\+)"
+    },
+    {
+     "pattern": "\\bRuntime\\.getRuntime\\(\\)\\.exec\\s*\\([^)]*\\+"
+    },
+    {
+     "pattern": "exec\\.Command\\s*\\(\\s*\"(?:sh|bash|cmd)\"[^)]*(?:\\+|%s|fmt\\.Sprint)"
+    },
+    {
+     "pattern": "`[^`]*#\\{"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.(?:args|form|json)|req\\.(?:body|query|params)|\\$_(?:GET|POST)|params\\[|argv)\\b"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.(?:args|form|json)|req\\.(?:body|query|params)|\\$_(?:GET|POST)|params\\[|argv)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\bshlex\\.quote\\b|\\bescapeshellarg\\b|\\bsubprocess\\.\\w+\\s*\\(\\s*\\["}
+    {
+     "pattern": "\\bshlex\\.quote\\b|\\bescapeshellarg\\b|\\bsubprocess\\.\\w+\\s*\\(\\s*\\["
+    }
    ],
    "fix": "不经过 shell：subprocess.run([\"convert\", src, dst], shell=False)；必须拼接时逐个参数 shlex.quote / escapeshellarg，命令名固定不来自输入。",
    "retest": "输入 a; id 与 a$(id)：修复前会额外执行命令（返回 uid 或生成副作用文件），修复后应把整串当文件名而报错。"
@@ -109,23 +203,48 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.6,
-   "languages": ["python", "javascript", "typescript", "php", "ruby"],
-   "cwe": ["CWE-95", "CWE-94"],
-   "owasp": ["A03:2021 注入", "A08:2021 软件与数据完整性失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "php",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-95",
+    "CWE-94"
+   ],
+   "owasp": [
+    "A03:2021 注入",
+    "A08:2021 软件与数据完整性失效"
+   ],
    "sinks": [
-    {"pattern": "\\beval\\s*\\(|\\bexec\\s*\\("},
-    {"pattern": "\\bnew\\s+Function\\s*\\(|\\bsetTimeout\\s*\\(\\s*[\"'`]|\\bsetInterval\\s*\\(\\s*[\"'`]"},
-    {"pattern": "\\b(?:create_function|preg_replace)\\s*\\("},
-    {"pattern": "\\b(?:instance_eval|module_eval|Kernel\\.eval)\\b"}
+    {
+     "pattern": "\\beval\\s*\\(|\\bexec\\s*\\("
+    },
+    {
+     "pattern": "\\bnew\\s+Function\\s*\\(|\\bsetTimeout\\s*\\(\\s*[\"'`]|\\bsetInterval\\s*\\(\\s*[\"'`]"
+    },
+    {
+     "pattern": "\\b(?:create_function|preg_replace)\\s*\\("
+    },
+    {
+     "pattern": "\\b(?:instance_eval|module_eval|Kernel\\.eval)\\b"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.|req\\.|\\$_|params\\[|payload)"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[|payload)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\bast\\.literal_eval\\b|\\bjson\\.loads\\b|\\bJSON\\.parse\\b"}
+    {
+     "pattern": "\\bast\\.literal_eval\\b|\\bjson\\.loads\\b|\\bJSON\\.parse\\b"
+    }
    ],
    "fix": "数据用 ast.literal_eval / json.loads 解析；需要表达式求值时写受限运算符白名单的小解释器，绝不调用语言级 eval。",
-   "retest": "提交 __import__('os').system('id') 类载荷应被拒绝；grep 复查代码里已无 eval 调用点。"
+   "retest": "提交 __import__('os').system('id') 类载荷应被拒绝；grep 复查代码里已无 eval 调用点。",
+   "ignore_strings": true
   },
   {
    "id": "JZ-DESER-001",
@@ -133,21 +252,45 @@
    "kind": "taint",
    "severity": "critical",
    "confidence_base": 0.6,
-   "languages": ["python", "java", "php", "ruby", "javascript"],
-   "cwe": ["CWE-502"],
-   "owasp": ["A08:2021 软件与数据完整性失效"],
+   "languages": [
+    "python",
+    "java",
+    "php",
+    "ruby",
+    "javascript"
+   ],
+   "cwe": [
+    "CWE-502"
+   ],
+   "owasp": [
+    "A08:2021 软件与数据完整性失效"
+   ],
    "sinks": [
-    {"pattern": "\\bpickle\\.loads?\\s*\\(|\\bmarshal\\.loads\\s*\\(|\\bshelve\\.open\\s*\\("},
-    {"pattern": "\\byaml\\.load\\s*\\((?![^)]*(?:SafeLoader|safe_load))"},
-    {"pattern": "\\bnew\\s+ObjectInputStream\\s*\\(|\\breadObject\\s*\\("},
-    {"pattern": "\\bunserialize\\s*\\(|\\bMarshal\\.load\\s*\\("}
+    {
+     "pattern": "\\bpickle\\.loads?\\s*\\(|\\bmarshal\\.loads\\s*\\(|\\bshelve\\.open\\s*\\("
+    },
+    {
+     "pattern": "\\byaml\\.load\\s*\\((?![^)]*(?:SafeLoader|safe_load))"
+    },
+    {
+     "pattern": "\\bnew\\s+ObjectInputStream\\s*\\(|\\breadObject\\s*\\("
+    },
+    {
+     "pattern": "\\bunserialize\\s*\\(|\\bMarshal\\.load\\s*\\("
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.|req\\.|\\$_|upload|body|raw)"},
-    {"pattern": "\\bopen\\s*\\([^)]*,\\s*[\"']rb"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload|body|raw)"
+    },
+    {
+     "pattern": "\\bopen\\s*\\([^)]*,\\s*[\"']rb"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\bsafe_load\\b|\\bSafeLoader\\b|\\bjson\\.loads\\b|\\bObjectInputFilter\\b"}
+    {
+     "pattern": "\\bsafe_load\\b|\\bSafeLoader\\b|\\bjson\\.loads\\b|\\bObjectInputFilter\\b"
+    }
    ],
    "fix": "外部数据只接受 JSON/msgpack 这类无执行能力的格式；YAML 用 yaml.safe_load；Java 上 ObjectInputFilter 或换掉序列化方案。",
    "retest": "构造 pickle 载荷（执行 touch 临时文件）确认不再执行；异常堆栈不回显给客户端。"
@@ -158,22 +301,51 @@
    "kind": "taint",
    "severity": "high",
    "confidence_base": 0.55,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-22", "CWE-73"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sinks": [
-    {"pattern": "\\b(?:io\\.)?open\\s*\\([^)]*(?:\\+|f[\"']|%s|\\bjoin\\s*\\(|request\\.|req\\.|filename)"},
-    {"pattern": "\\b(?:send_file|sendfile|res\\.download)\\s*\\([^)]*(?:\\+|\\$\\{|request\\.|req\\.|params)"},
-    {"pattern": "fs\\.readFile\\w*\\s*\\([^)]*(?:\\+|\\$\\{|req\\.)"},
-    {"pattern": "\\b(?:Files\\.(?:read|lines|copy)|new\\s+File\\s*\\(|os\\.Open)\\s*\\([^)]*(?:\\+|\\$\\{|%s)"},
-    {"pattern": "\\b(?:include|require)_?once?\\s*\\(\\s*\\$"}
+    {
+     "pattern": "\\b(?:io\\.)?open\\s*\\([^)]*(?:\\+|f[\"']|%s|\\bjoin\\s*\\(|request\\.|req\\.|filename)"
+    },
+    {
+     "pattern": "\\b(?:send_file|sendfile|res\\.download)\\s*\\([^)]*(?:\\+|\\$\\{|request\\.|req\\.|params)"
+    },
+    {
+     "pattern": "fs\\.readFile\\w*\\s*\\([^)]*(?:\\+|\\$\\{|req\\.)"
+    },
+    {
+     "pattern": "\\b(?:Files\\.(?:read|lines|copy)|new\\s+File\\s*\\(|os\\.Open)\\s*\\([^)]*(?:\\+|\\$\\{|%s)"
+    },
+    {
+     "pattern": "\\b(?:include|require)_?once?\\s*\\(\\s*\\$"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.(?:args|form|files)|req\\.(?:query|params|body|file)|\\$_(?:GET|POST|FILES)|params\\[)\\b"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.(?:args|form|files)|req\\.(?:query|params|body|file)|\\$_(?:GET|POST|FILES)|params\\[)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\bos\\.path\\.basename\\b|\\bbasename\\s*\\(|\\brealpath\\b|\\bPath\\s*\\.\\s*get\\b|\\buuid4\\b|\\ballowed_files\\b"},
-    {"pattern": "\\bstartswith\\s*\\([^)]*(?:ROOT|BASE|ALLOWED)"}
+    {
+     "pattern": "\\bos\\.path\\.basename\\b|\\bbasename\\s*\\(|\\brealpath\\b|\\bPath\\s*\\.\\s*get\\b|\\buuid4\\b|\\ballowed_files\\b"
+    },
+    {
+     "pattern": "\\bstartswith\\s*\\([^)]*(?:ROOT|BASE|ALLOWED)"
+    }
    ],
    "fix": "只取 basename 再拼到固定根目录；或 realpath 之后断言 startswith(允许目录)；落地文件名由服务端生成（uuid），不信任用户给的文件名。",
    "retest": "请求 ../../etc/passwd 与 ..%2f..%2fetc/passwd，应 400/404；响应里不得出现系统文件内容。"
@@ -184,20 +356,44 @@
    "kind": "taint",
    "severity": "high",
    "confidence_base": 0.5,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-918"],
-   "owasp": ["A10:2021 服务端请求伪造"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-918"
+   ],
+   "owasp": [
+    "A10:2021 服务端请求伪造"
+   ],
    "sinks": [
-    {"pattern": "\\brequests\\.(?:get|post|put|request)\\s*\\([^)]*(?:request\\.|\\+|f[\"'])"},
-    {"pattern": "\\burllib\\.request\\.urlopen\\s*\\([^)]*(?:request\\.|\\+|f[\"'])"},
-    {"pattern": "\\b(?:axios|fetch|got)\\s*\\([^)]*(?:req\\.|\\$\\{|url\\s*\\+)"},
-    {"pattern": "\\b(?:file_get_contents|curl_exec|curl_init)\\s*\\([^)]*\\$"}
+    {
+     "pattern": "\\brequests\\.(?:get|post|put|request)\\s*\\([^)]*(?:request\\.|\\+|f[\"'])"
+    },
+    {
+     "pattern": "\\burllib\\.request\\.urlopen\\s*\\([^)]*(?:request\\.|\\+|f[\"'])"
+    },
+    {
+     "pattern": "\\b(?:axios|fetch|got)\\s*\\([^)]*(?:req\\.|\\$\\{|url\\s*\\+)"
+    },
+    {
+     "pattern": "\\b(?:file_get_contents|curl_exec|curl_init)\\s*\\([^)]*\\$"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.\\w+|req\\.(?:query|body|params)|\\$_GET|webhook_url|callback)\\b"}
+    {
+     "pattern": "\\b(?:request\\.\\w+|req\\.(?:query|body|params)|\\$_GET|webhook_url|callback)\\b"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\ballow_list\\b|\\bALLOWED_HOSTS\\b|\\burlparse\\b[^\\n]*(?:netloc|hostname)\\s*(?:==|in|not in)"}
+    {
+     "pattern": "\\ballow_list\\b|\\bALLOWED_HOSTS\\b|\\burlparse\\b[^\\n]*(?:netloc|hostname)\\s*(?:==|in|not in)"
+    }
    ],
    "fix": "目标主机白名单（协议+端口一起校），解析后校验 IP 不在 127/8、10/8、172.16/12、192.168/16、169.254.169.254、::1；禁用重定向或逐跳重新校验。",
    "retest": "传 http://127.0.0.1:PORT/ 与 http://169.254.169.254/latest/meta-data/ 应被拒；抓包确认无出站连接；再试 DNS 重绑定用例。"
@@ -208,19 +404,41 @@
    "kind": "taint",
    "severity": "medium",
    "confidence_base": 0.5,
-   "languages": ["python", "javascript", "typescript", "java", "php", "ruby", "go"],
-   "cwe": ["CWE-601"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "ruby",
+    "go"
+   ],
+   "cwe": [
+    "CWE-601"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sinks": [
-    {"pattern": "\\b(?:redirect\\s*\\(|res\\.redirect\\s*\\(|header\\s*\\(\\s*[\"']Location)"},
-    {"pattern": "\\b(?:next|return_url|redirect_uri)\\s*=\\s*(?:request\\.|req\\.|\\$_GET)"}
+    {
+     "pattern": "\\b(?:redirect\\s*\\(|res\\.redirect\\s*\\(|header\\s*\\(\\s*[\"']Location)"
+    },
+    {
+     "pattern": "\\b(?:next|return_url|redirect_uri)\\s*=\\s*(?:request\\.|req\\.|\\$_GET)"
+    }
    ],
    "sources": [
-    {"pattern": "(?:next|redirect|url|return|target|dest)"}
+    {
+     "pattern": "(?:next|redirect|url|return|target|dest)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\ballow_hosts\\b|\\bINTERNAL_HOSTS\\b|startswith\\s*\\(\\s*[\"']/"},
-    {"pattern": "urlparse\\s*\\([^)]*\\)\\.netloc\\s*(?:==|in|not in)"}
+    {
+     "pattern": "\\ballow_hosts\\b|\\bINTERNAL_HOSTS\\b|startswith\\s*\\(\\s*[\"']/"
+    },
+    {
+     "pattern": "urlparse\\s*\\([^)]*\\)\\.netloc\\s*(?:==|in|not in)"
+    }
    ],
    "fix": "只允许站内相对路径（以 / 开头且第二个字符不是 /），或维护目标主机白名单；把 redirect 参数与当前用户绑定校验。",
    "retest": "?next=//evil.example.com 与 ?next=https://evil.example.com 应回到首页或 400，不得跳出本站域名。"
@@ -231,21 +449,39 @@
    "kind": "taint",
    "severity": "high",
    "confidence_base": 0.55,
-   "languages": ["python", "javascript", "ruby"],
-   "cwe": ["CWE-1336", "CWE-94"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "python",
+    "javascript",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-1336",
+    "CWE-94"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "\\brender_template_string\\s*\\(|\\bEnvironment\\s*\\([^)]*\\)\\.from_string"},
-    {"pattern": "\\bTemplate\\s*\\([^)]*\\)\\s*\\.?render"}
+    {
+     "pattern": "\\brender_template_string\\s*\\(|\\bEnvironment\\s*\\([^)]*\\)\\.from_string"
+    },
+    {
+     "pattern": "\\bTemplate\\s*\\([^)]*\\)\\s*\\.?render"
+    }
    ],
    "sources": [
-    {"pattern": "\\b(?:request\\.|req\\.|params\\[)"}
+    {
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|params\\[)"
+    }
    ],
    "sanitizers": [
-    {"pattern": "\\bselect_autoescape\\b|autoescape\\s*=\\s*True|\\bSandboxedEnvironment\\b"}
+    {
+     "pattern": "\\bselect_autoescape\\b|autoescape\\s*=\\s*True|\\bSandboxedEnvironment\\b"
+    }
    ],
    "fix": "把用户输入当数据传进固定模板 render_template(\"x.html\", name=user_input)，不用用户字符串当模板本体；必须动态模板时用 SandboxedEnvironment。",
-   "retest": "输入 {{7*7}} 与 {{config}}，页面应原样显示文本，而不是 49 或配置对象。"
+   "retest": "输入 {{7*7}} 与 {{config}}，页面应原样显示文本，而不是 49 或配置对象。",
+   "ignore_strings": true
   }
  ]
 }

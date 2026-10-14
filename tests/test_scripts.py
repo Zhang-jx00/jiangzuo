@@ -418,6 +418,18 @@ class TestAuditIndex(unittest.TestCase):
             self.assertEqual("java", langs["Service.java"])
             self.assertEqual("markdown", langs["docs/b.md"])
 
+    def test_cli_ignore_pattern_actually_takes_effect(self):
+        """红测：--ignore 声明了却没接线，会静默扫全部文件——
+        这类"写了不用"的缺陷本仓库犯过一次（BOOKLET_ALIASES 定义了从未参与打分）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            base, _ = self._index(tmp)
+            self.assertIn("docs/b.md", set(f["path"] for f in base["files"]))
+            data, _ = self._index(tmp, ["--ignore", "docs/*"])
+            paths = set(f["path"] for f in data["files"])
+            self.assertNotIn("docs/b.md", paths, "--ignore 没生效")
+            self.assertIn("app.py", paths, "--ignore 不该把无关文件一起排掉")
+
 
 class TestAuditMap(unittest.TestCase):
     """R3：项目侦察与全仓地图——语言/入口/路由/鉴权边界/依赖，全部要能在磁盘上对上号。"""

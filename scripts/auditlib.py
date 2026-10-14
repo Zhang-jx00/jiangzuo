@@ -314,7 +314,8 @@ def iter_files(root):
 
 
 def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
-                include_binary=False, extra_ignore=None, exclude=None):
+                include_binary=False, extra_ignore=None, exclude=None,
+                extra_patterns=None):
     """产出可复现的文件清单。git 可用时用 git 的忽略判定（语义最准），
     否则用内置 .gitignore 解析器；两条路径都再过一遍内置依赖目录黑名单。
 
@@ -324,6 +325,8 @@ def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
     root = os.path.abspath(root)
     skip_set = set(exclude or ())
     rules = collect_ignore_files(root, extra_ignore)
+    for pat in (extra_patterns or []):
+        rules.add_pattern(pat, source="cli")
     rel_paths = None
     generator = "gitignore-parser"
     if use_git and os.path.isdir(os.path.join(root, ".git")):
@@ -422,6 +425,82 @@ def iter_lines(path, max_bytes=DEFAULT_MAX_FILE_BYTES, max_line=DEFAULT_MAX_LINE
                     yield i, line, False
     except OSError:
         return
+
+
+DOCSTRING_DELIMS = ('"""', "'''")
+COMMENT_PREFIXES = ("#", "//", "*", "/*")
+STRING_SPAN_RX = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"")
+
+
+def iter_code_lines(path, max_bytes=None, ignore_strings=False):
+    """**只产出可执行代码行**：跳过注释行与三引号块，可选把单行字符串字面量剥掉。
+
+    为什么必须有这一层（v0.18 自扫实测）：把漏洞样例当字符串写进测试夹具、
+    在文档里谈论 token 配额，都会被纯文本正则当成代码命中——本仓库 0 个真漏洞
+    却报了 12 条，全部来自这类噪声。没有这一层，误报率就只能靠嘴说。
+
+    ignore_strings=True 时把 '...' / "..." 的内容剥成空串再产出，
+    供 `ignore_strings` 规则使用（日志脱敏、调试开关、弱哈希这类"标识符型"规则）。
+    """
+    limit = DEFAULT_MAX_FILE_BYTES if max_bytes is None else max_bytes
+    if file_size(path) > limit:
+        return
+    block = None
+    try:
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            for i, raw in enumerate(f, 1):
+                stripped = raw.strip()
+                if block:
+                    if block in raw:
+                        block = None
+                    continue
+                if stripped.startswith(COMMENT_PREFIXES):
+                    continue
+                for delim in DOCSTRING_DELIMS:
+                    if stripped.startswith(delim) and stripped.count(delim) == 1:
+                        block = delim
+                        break
+                if block:
+                    continue
+                line = STRING_SPAN_RX.sub(lambda m: m.group(0)[0] + m.group(0)[-1],
+                                          raw) if ignore_strings else raw
+                if len(line) > DEFAULT_MAX_LINE_BYTES:
+                    yield i, line[:DEFAULT_MAX_LINE_BYTES], True
+                else:
+                    yield i, line, False
+    except OSError:
+        return
+
+
+def match_in_string(line, pos):
+    """判断某个匹配位置是否落在字符串字面量**内部**。
+
+    存在的理由：测试夹具与代码生成器会把漏洞写法当字符串写下来，
+    数据流引擎照单全收就会在干净仓库里造出一堆"critical"。
+    真正的 sink 调用形如 `os.system("ls " + x)`——匹配点在任何引号之前；
+    而 `    "os.system(...)"` 的匹配点落在引号里，那不是代码。
+    """
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch in "\"'":
+            j = i + 1
+            while j < n:
+                if line[j] == "\\":
+                    j += 2
+                    continue
+                if line[j] == ch:
+                    break
+                j += 1
+            if i < pos <= j:
+                return True
+            i = j + 1
+            continue
+        if ch == "#" or line[i:i + 2] == "//":
+            break
+        i += 1
+    return False
 
 
 # ---------------------------------------------------------------- 脱敏

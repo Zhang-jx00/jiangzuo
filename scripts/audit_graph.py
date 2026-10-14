@@ -41,7 +41,7 @@ DEF_PATTERNS = {
     "ruby": re.compile(r"^\s*def\s+(?P<name>\w+[?!]?)(?:\s*\((?P<params>[^)]*)\))?"),
     "javascript": re.compile(r"(?:function\s+(?P<name>\w+)\s*\((?P<params>[^)]*)\)"
                              r"|const\s+(?P<name2>\w+)\s*=\s*(?:async\s*)?\((?P<params2>[^)]*)\)\s*=>"
-                             r"|(?P<name3>\w+)\s*\((?P<params3>[^)]*)\)\s*(?:async\s*)?\{)"),
+                             r"|(?P<name3>\w+)\s*\((?P<params3>[^)]*)\)\s*(?:=>\s*)?\{)"),
     "java": re.compile(r"(?:public|private|protected|static|final|synchronized)"
                        r"[\w<>\[\],\s]*\s+(?P<name>\w+)\s*\((?P<params>[^)]*)\)"
                        r"[^;{]*\{"),
@@ -184,6 +184,24 @@ def function_for_route(funcs, route_line):
     return min(cands, key=lambda f: f["start"]) if cands else None
 
 
+def add_module_scope(funcs, rel, lang, lines):
+    """把没被任何函数包裹的行合成一个 {module} 作用域。
+
+    PHP/Node 的过程式脚本顶层就是一条 source→sink（验收夹具实测因此漏检）；
+    不补这一档，整份文件都不进数据流。
+    """
+    covered = set()
+    for fn in funcs:
+        for ln in range(fn["start"], fn["end"] + 1):
+            covered.add(ln)
+    rest = [(n, t, x) for n, t, x in lines if n not in covered]
+    if len(rest) >= 3:
+        funcs.append({"name": "{module}", "file": rel, "lang": lang,
+                      "start": rest[0][0], "end": rest[-1][0], "params": [],
+                      "body": rest, "indent": 0})
+    return funcs
+
+
 def collect_edges(funcs, name_index):
     """调用图：函数 → 该函数里出现的被调名（解析到候选定义）。"""
     edges = {}
@@ -286,6 +304,19 @@ class Flow(object):
         }
 
 
+def _first_code_match(items, text):
+    """返回第一个**落在代码里**（不在字符串字面量内）的命中项。
+
+    没有这一道，测试夹具里当字符串写的 `os.system(...)` 会被当成真漏洞——
+    自扫本仓库实测：14 条发现全部来自夹具/生成器字符串，全是误报。
+    """
+    for item in items:
+        m = item["_rx"].search(text)
+        if m and not auditlib.match_in_string(text, m.start()):
+            return item
+    return None
+
+
 def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
     """函数内污点传播 + 出参传递登记。tainted_params[(file,name)] = set(参数名)。"""
     key = (fn["file"], fn["name"])
@@ -302,9 +333,12 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
         sinks, sources, sanits = rule["sinks"], rule["sources"], rule["sanitizers"]
         arx = ASSIGN_RX.get(fn["lang"])
         for lineno, text, _trunc in fn["body"]:
-            src_hit = any(s["_rx"].search(text) for s in sources)
-            sink_hit = any(s["_rx"].search(text) for s in sinks)
-            san_hit = any(s["_rx"].search(text) for s in sanits)
+            src_item = _first_code_match(sources, text)
+            sink_item = _first_code_match(sinks, text)
+            san_item = _first_code_match(sanits, text)
+            src_hit = bool(src_item)
+            sink_hit = bool(sink_item)
+            san_hit = bool(san_item)
             if src_hit:
                 target = None
                 if arx:
@@ -315,8 +349,7 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                 if san_hit:
                     blocked.append({"rule_id": rule["id"], "file": fn["file"],
                                     "line": lineno,
-                                    "sanitizer": [s["pattern"] for s in sanits
-                                                  if s["_rx"].search(text)][0],
+                                    "sanitizer": san_item["pattern"],
                                     "text": auditlib.redact(text.strip())[:160]})
                     stats["blocked_by_sanitizer"] += 1
                     if target and target in tainted:
@@ -354,6 +387,19 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                 if carriers:
                     hops = tainted[carriers[0]] + [
                         {"file": fn["file"], "line": lineno, "kind": "sink", "text": text}]
+                    # 同函数内、source 与 sink 之间出现过净化/守卫 → 判为已净化，不报流
+                    same_file = [h["line"] for h in hops if h["file"] == fn["file"]]
+                    lo = min(same_file or [lineno])
+                    guard = [s for s in sanits
+                             for ln, t, _x in fn["body"]
+                             if lo <= ln <= lineno and _first_code_match([s], t)]
+                    if guard:
+                        blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                        "line": guard[0]["pattern"],
+                                        "sanitizer": guard[0]["pattern"],
+                                        "text": u"source 与 sink 之间出现净化/守卫"})
+                        stats["blocked_by_sanitizer"] += 1
+                        continue
                     if len(hops) > MAX_PATH_HOPS:
                         hops = hops[:MAX_PATH_HOPS - 1] + hops[-1:]
                     yield Flow(rule, fn, hops, [])
@@ -392,7 +438,7 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
     if map_data is None:
         map_data = audit_map.build_map(root, index=index)
     if rules is None:
-        rules, problems, _notes = audit_rules.load_rules([])
+        rules, problems, _notes, _off = audit_rules.load_rules([])
         if problems:
             raise ValueError(u"规则库有问题，拒绝出图：%s" % u"；".join(problems[:3]))
 
@@ -406,7 +452,8 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
                                          or auditlib.DEFAULT_MAX_FILE_BYTES))
         if not lines:
             continue
-        funcs = parse_functions(rec["lang"], rec["path"], lines)
+        funcs = add_module_scope(parse_functions(rec["lang"], rec["path"], lines),
+                                 rec["path"], rec["lang"], lines)
         for fn in funcs:
             fn["file_rec"] = rec
         all_funcs.extend(funcs)
@@ -500,7 +547,7 @@ def main():
             map_data = json.load(f)
     rules = None
     if args.rules_in:
-        rules, problems, _notes = audit_rules.load_rules(args.rules_in)
+        rules, problems, _notes, _off = audit_rules.load_rules(args.rules_in)
         if problems:
             for p in problems:
                 print(u"  ✘ %s" % p, file=sys.stderr)
