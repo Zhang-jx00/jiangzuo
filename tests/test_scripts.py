@@ -24,8 +24,9 @@ SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
 SCRIPT_NAMES = ["audit_graph.py", "audit_index.py", "audit_map.py", "audit_rules.py",
-                "evolve_report.py", "lookup.py", "new_doc.py", "preflight.py",
-                "project_scan.py", "ship_check.py", "validate_skill.py"]
+                "audit_scan.py", "evolve_report.py", "lookup.py", "new_doc.py",
+                "preflight.py", "project_scan.py", "ship_check.py",
+                "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -722,6 +723,162 @@ class TestAuditGraph(unittest.TestCase):
             self.assertEqual([], [f for f in data["flows"]
                                  if f["rule_id"].startswith("JZ-SQLI")],
                              "写死的 SQL 没有外部输入，不该报污点")
+
+
+class TestAuditScan(unittest.TestCase):
+    """R6–R8：调度层 + 反幻觉验证 + 分级报告 + 缓存增量（升级清单 6/7/8/9/10 项）。"""
+
+    def _mk(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+
+    def _scan(self, root, extra=None):
+        out = os.path.join(root, "_findings.json")
+        cmd = [os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out]
+        cmd += extra or []
+        r = run(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    VULN_APP = {
+        "requirements.txt": "fastapi==0.110.0\npyyaml==5.3\n",
+        "main.py": (
+            "from fastapi import FastAPI\nfrom flask import request\nimport sqlite3\n"
+            "app = FastAPI()\n\n"
+            "@app.get(\"/search\")\n"
+            "def search():\n"
+            "    q = request.args[\"q\"]\n"
+            "    con = sqlite3.connect(\"db.sqlite\")\n"
+            "    return con.execute(f\"SELECT * FROM t WHERE c LIKE {q}\").fetchall()\n\n"
+            "@app.get(\"/admin/users\")\n"
+            "def admin_list():\n"
+            "    return []\n"),
+        "settings.py": "DEBUG = True\nHASH = \"md5\"\n\n"
+                       "def pw_hash(password):\n    import hashlib\n"
+                       "    return hashlib.md5(password.encode()).hexdigest()\n",
+        "loader.py": "import yaml\n\n\ndef load(text):\n    return yaml.load(text)\n",
+    }
+
+    def test_scan_reports_taint_pattern_and_authgap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._mk(tmp, self.VULN_APP)
+            data, stdout = self._scan(tmp)
+            kinds = set(f["rule_id"] for f in data["findings"])
+            self.assertIn("JZ-SQLI-001", kinds, "污点流没进报告：%s" % kinds)
+            self.assertIn("JZ-AUTHGAP-001", kinds, "敏感路由鉴权缺口没进报告：%s" % kinds)
+            self.assertIn("JZ-CRYPTO-001", kinds, "弱哈希没进报告：%s" % kinds)
+            self.assertIn("RESULT: SCAN-OK", stdout)
+
+    def test_verifier_drops_hallucinated_location(self):
+        """反幻觉验证的"能不能红"校准：喂一条指向不存在文件/行的假发现，必须被丢掉并计数。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._mk(tmp, self.VULN_APP)
+            fake = {"schema": "jiangzuo-audit-graph/1", "index_sha1": "", "map_sha1": "",
+                    "rules_version": "", "functions": [], "blocked": [],
+                    "stats": {"sources": 0, "blocked_by_sanitizer": 0,
+                              "sink_without_taint": 0, "passes": 1},
+                    "flows": [{"rule_id": "JZ-SQLI-001", "title": "假的",
+                               "severity": "critical", "confidence_base": 0.9,
+                               "cwe": ["CWE-89"], "owasp": [], "file": "does/not_exist.py",
+                               "line": 9999, "sink_text": "con.execute(f\"SELECT {q}\")",
+                               "path": [{"file": "does/not_exist.py", "line": 9999,
+                                         "kind": "source", "text": "q = request.args['q']"}],
+                               "sanitizers_seen": [], "depth": "function-local",
+                               "reachable": True, "unreachable_reason": "",
+                               "fix": "f", "retest": "r"}]}
+            gpath = os.path.join(tmp, "_fake_graph.json")
+            with io.open(gpath, "w", encoding="utf-8") as f:
+                json.dump(fake, f, ensure_ascii=False)
+            data, _ = self._scan(tmp, ["--graph", gpath])
+            ghost = [f for f in data["findings"] if f["file"] == "does/not_exist.py"]
+            self.assertEqual([], ghost, "验证环节没拦住编造的位置")
+            self.assertGreaterEqual(data["stats"]["dropped_by_verifier"], 1,
+                                    "丢弃要计数，不能静默")
+            self.assertTrue(any("不存在" in d["reason"] or "行" in d["reason"]
+                                for d in data["dropped"]),
+                            "丢弃要给原因：%s" % data["dropped"])
+
+    def test_every_finding_carries_verification_and_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._mk(tmp, self.VULN_APP)
+            data, _ = self._scan(tmp)
+            self.assertTrue(data["findings"], "没有发现可检")
+            for f in data["findings"]:
+                self.assertTrue(os.path.isfile(os.path.join(tmp, f["file"].replace("/", os.sep))),
+                                "报告里的文件必须真实存在：%s" % f["file"])
+                self.assertGreater(f["line"], 0)
+                for k in ("path_exists", "sink_still_matches", "input_controllable",
+                          "sanitizer_absent", "sink_reachable"):
+                    self.assertIn(k, f["verification"], "%s 缺核验项 %s" % (f["rule_id"], k))
+                self.assertIn(f["confidence"]["label"], (u"高", u"中", u"低"))
+                self.assertIn(f["severity"], ("critical", "high", "medium", "low", "info"))
+                self.assertTrue(f["fix"] and f["retest"], "缺修复示例或复测点")
+
+    def test_dependency_ranked_by_actual_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._mk(tmp, self.VULN_APP)
+            data, _ = self._scan(tmp)
+            dep = [f for f in data["findings"] if f["rule_id"] == "JZ-DEP-002"]
+            self.assertEqual(1, len(dep), "pyyaml 5.3 应命中依赖建议：%s" %
+                             [f["rule_id"] for f in data["findings"]])
+            self.assertTrue(dep[0]["called"], "loader.py 里 import yaml，应判为被实际调用")
+            self.assertEqual(0, dep[0]["rank"], "被调用的依赖要排在最前")
+
+    def test_sarif_export_structure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._mk(tmp, self.VULN_APP)
+            sarif = os.path.join(tmp, "_out.sarif")
+            self._scan(tmp, ["--sarif", sarif])
+            with io.open(sarif, "r", encoding="utf-8") as f:
+                doc = json.load(f)
+            self.assertEqual("2.1.0", doc["version"])
+            self.assertIn("$schema", doc)
+            run0 = doc["runs"][0]
+            self.assertIn("driver", run0["tool"])
+            self.assertTrue(run0["tool"]["driver"]["rules"])
+            self.assertTrue(run0["results"])
+            res = run0["results"][0]
+            self.assertIn("ruleId", res)
+            self.assertIn("level", res)
+            self.assertIn("message", res)
+            loc = res["locations"][0]["physicalLocation"]
+            self.assertIn("artifactLocation", loc)
+            self.assertIn("startLine", loc["region"])
+            self.assertNotIn("\r", json.dumps(doc))
+
+    def test_cache_incremental_equals_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = os.path.join(tmp, "_cache")
+            self._mk(tmp, self.VULN_APP)
+            full, _ = self._scan(tmp, ["--cache", cache])
+            self.assertGreaterEqual(full["stats"]["files_cached"], 1,
+                                    "第一次跑就该把结果写进缓存")
+            again, _ = self._scan(tmp, ["--cache", cache, "--incremental"])
+            self.assertEqual(0, again["stats"]["recomputed_files"],
+                             "没改任何东西时增量为零重算")
+            self.assertEqual([f["rule_id"] for f in full["findings"]],
+                             [f["rule_id"] for f in again["findings"]],
+                             "增量结论必须与全量一致")
+            # 改一个文件：增量应只重算它（及调用链下游），结论与新全量一致
+            self._mk(tmp, {"loader.py": "import yaml\n\n\ndef load(text):\n"
+                                        "    return yaml.safe_load(text)\n"})
+            inc, _ = self._scan(tmp, ["--cache", cache, "--incremental"])
+            fresh, _ = self._scan(tmp)
+            self.assertEqual([f["rule_id"] for f in fresh["findings"]],
+                             [f["rule_id"] for f in inc["findings"]],
+                             "改动后增量与全量结论不一致")
+            self.assertLessEqual(inc["stats"]["recomputed_files"],
+                                 full["stats"]["files_total"])
+            self.assertIn("JZ-DEP-002", [f["rule_id"] for f in inc["findings"]],
+                          "requirements.txt 没改，依赖结论不该在增量里蒸发")
+            self.assertEqual(1, inc["stats"]["recomputed_files"],
+                             "只应重算改动文件及其调用链邻居：%s" % inc["stats"])
 
 
 if __name__ == "__main__":

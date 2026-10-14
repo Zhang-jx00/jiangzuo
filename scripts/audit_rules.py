@@ -153,20 +153,14 @@ def load_rules(extra_paths=None, problems=None):
 
 
 def rules_version(rules):
-    """规则集版本：id + 严重度 + 所有模式原文 + kind；解析器版本也进键。"""
+    """规则集版本：**整条规则的原文**（含 advisory/alias/fix/retest 等全部字段）+ 解析器版本。
+
+    早先只哈希 id/severity/模式原文，结果加了一条 module_alias（会改变判定结果）
+    版本号却纹丝不动——缓存就会拿旧结论糊新规则。规则的任何一处变更都必须作废缓存。
+    """
     parts = []
-    for r in sorted(rules, key=lambda x: x.get("id", "")):
-        pats = []
-        for field in ("sinks", "sources", "sanitizers", "unless_present"):
-            for item in r.get(field) or []:
-                pats.append("%s:%s" % (field, item.get("pattern")))
-        if r.get("sensitive_path"):
-            pats.append("path:" + r["sensitive_path"])
-        adv = r.get("advisory") or {}
-        if adv:
-            pats.append("adv:%s@<%s" % (adv.get("name"), adv.get("vulnerable_below")))
-        parts.append("|".join([r.get("id", ""), r.get("kind", ""),
-                               r.get("severity", "")] + sorted(pats)))
+    for rec in sorted(export_rules(rules), key=lambda x: x.get("id", "")):
+        parts.append(json.dumps(rec, sort_keys=True, ensure_ascii=False))
     return auditlib.sha1_hex(u"\n".join(parts) + "|parser=" + auditlib.LIB_VERSION)
 
 

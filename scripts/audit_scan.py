@@ -1,0 +1,734 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""扫描调度 · 反幻觉验证 · 分级报告 —— 将作 (jiangzuo) 审计链第 ⑤⑥⑦ 环
+
+一条命令跑完整链：索引 → 地图 → **确定性粗筛** → 只对候选文件做**语义深挖** →
+**独立验证环节**（核验位置为真、净化未生效、输入可控、sink 可达）→
+置信度×严重度分级 → Markdown/JSON/SARIF 报告（指纹去重）→ 可选缓存增量。
+
+用法:
+    python audit_scan.py [项目目录] [--json findings.json] [--md report.md]
+                         [--sarif out.sarif] [--index idx.json] [--map map.json]
+                         [--graph graph.json] [--rules user.json]... [--cache DIR]
+                         [--incremental] [--max-file-kb N] [--strict] [--report-memory]
+
+会做：全仓只读扫描；粗筛流式逐行（不整仓载入）；深挖只碰候选文件；
+      每条发现在报告前重新打开文件核对行号与 sink 模式；命中行**先脱敏**再进报告；
+      同一问题按指纹（规则+文件+归一化 sink 文本）去重。
+不会做：改被扫项目的任何文件（缓存目录是工具产物，且默认关闭，需 --cache 显式指定）；
+      输出修复补丁（只给修复示例与复测点，改不改由人决定）；
+      保证零误报——核验只保证"位置和证据是真的"，业务逻辑漏洞仍要人判。
+
+验证环节是**红旗自查的机器版补充**，不是替代：它拦的是"agent 报了个不存在的文件行号"，
+`code-review.md` 的自疑循环拦的是"我以为它是对的"。
+
+仅使用 Python 标准库（3.8+），不联网、只读项目。
+"""
+import argparse
+import io
+import json
+import os
+import re
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import audit_graph   # noqa: E402
+import auditlib      # noqa: E402
+import audit_map     # noqa: E402
+import audit_rules   # noqa: E402
+
+FINDINGS_SCHEMA = "jiangzuo-audit-findings/1"
+SARIF_VERSION = "2.1.0"
+SARIF_URI = "https://json.schemastore.org/sarif-2.1.0.json"
+TOOL_NAME = "jiangzuo-audit"
+SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+SARIF_LEVEL = {"critical": "error", "high": "error", "medium": "warning",
+               "low": "warning", "info": "note"}
+CONF_BONUS = {"sink_verified": 0.2, "interprocedural": 0.15,
+              "reachable": 0.15, "unreachable": -0.25, "dep_called": 0.1}
+CONF_LABELS = ((0.75, u"高"), (0.5, u"中"), (0.0, u"低"))
+IMPORT_RX = re.compile(r"^\s*(?:import|from)\s+([\w\.]+)|require\(\s*[\"']([^\"'@/]+)"
+                       r"|use\s+([a-z0-9_\.]+)|^\s*gem\s+[\"'](\w+)")
+VERIFICATION_NOTE = u"核验五项：位置存在 / sink 仍匹配 / 输入可控 / 净化未生效 / 可达"
+
+
+def _norm_version(text):
+    parts = []
+    for chunk in re.split(r"[.\-+]", str(text or "")):
+        m = re.match(r"^(\d+)", chunk)
+        parts.append(int(m.group(1)) if m else 0)
+    return tuple(parts or [0])
+
+
+def _fingerprint(rule_id, rel, text):
+    norm = re.sub(r"\s+", "", re.sub(r"[0-9a-fA-F]{6,}", "*", text or ""))
+    return auditlib.sha1_hex(u"%s|%s|%s" % (rule_id, rel, norm[:200]))[:16]
+
+
+def coarse_screen(root, index, rules, max_bytes, peak=False):
+    """确定性粗筛：逐行流式匹配所有 sink/source 模式，只留"哪个文件命中了哪条规则"。
+
+    这一层不做任何判断，目的就是把深挖范围从"全仓"缩到"候选文件"——
+    大仓扫描的内存与时间都跟这一步的取舍有关，所以禁止在这里读整仓内容。
+    """
+    sink_items = []
+    for rule in rules:
+        if rule.get("kind") not in ("taint", "pattern"):
+            continue
+        for item in rule["sinks"]:
+            sink_items.append((rule["id"], rule.get("languages") or [], item["_rx"]))
+    src_items = []
+    for rule in rules:
+        for item in rule.get("sources") or []:
+            src_items.append((rule["id"], item["_rx"]))
+    hits, imports, oversized = {}, set(), []
+    trace = None
+    peak_kb = 0
+    if peak:
+        import tracemalloc
+        tracemalloc.start()
+        trace = tracemalloc
+    for rec in index["files"]:
+        if trace:
+            peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
+        langs = set()
+        rel = rec["path"]
+        abs_path = os.path.join(root, rel.replace("/", os.sep))
+        per_rule = {}
+        src_per_rule = {}
+        for lineno, text, _trunc in auditlib.iter_lines(abs_path, max_bytes=max_bytes):
+            for m in IMPORT_RX.finditer(text):
+                token = next((g for g in m.groups() if g), "")
+                if token:
+                    imports.add(token.split(".")[0].lower())
+            for rid, rlangs, rx in sink_items:
+                if rlangs and "*" not in rlangs and rec["lang"] not in rlangs:
+                    continue
+                if rx.search(text):
+                    per_rule.setdefault(rid, []).append(lineno)
+            for rid, rx in src_items:
+                if rx.search(text):
+                    src_per_rule.setdefault(rid, []).append(lineno)
+        if per_rule:
+            hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
+        langs = None
+    if trace:
+        peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
+        trace.stop()
+    return hits, imports, peak_kb, oversized
+
+
+def _window_lines(all_lines, center, span):
+    out = []
+    for lineno, text, _t in all_lines:
+        if abs(lineno - center) <= span:
+            out.append(text)
+    return u"\n".join(out)
+
+
+def deep_pattern_findings(root, index, rules, hits, max_bytes):
+    """对候选文件做语义深挖：pattern 规则的邻近行核（unless_present）与证据装配。"""
+    by_id = {r["id"]: r for r in rules}
+    findings = []
+    for rel, info in sorted(hits.items()):
+        rec = [f for f in index["files"] if f["path"] == rel]
+        if not rec:
+            continue
+        abs_path = os.path.join(root, rel.replace("/", os.sep))
+        lines = list(auditlib.iter_lines(abs_path, max_bytes=max_bytes))
+        text_by_line = dict((n, t) for n, t, _x in lines)
+        for rid, linenos in sorted(info["sinks"].items()):
+            rule = by_id.get(rid)
+            if not rule or rule.get("kind") != "pattern":
+                continue
+            for lineno in linenos:
+                text = text_by_line.get(lineno, "")
+                sink_rx = None
+                for item in rule["sinks"]:
+                    if item["_rx"].search(text):
+                        sink_rx = item["pattern"]
+                        break
+                if sink_rx is None:
+                    continue
+                blocked = False
+                for item in rule.get("unless_present") or []:
+                    near = _window_lines(lines, lineno, item.get("window", 2))
+                    if item["_rx"].search(text if item.get("window", 2) == 0 else near):
+                        blocked = True
+                        break
+                if blocked:
+                    continue
+                findings.append({
+                    "rule_id": rid, "kind": "pattern", "title": rule["title"],
+                    "severity": rule["severity"], "cwe": rule.get("cwe", []),
+                    "owasp": rule.get("owasp", []), "file": rel, "line": lineno,
+                    "sink_text": auditlib.redact(text.strip())[:200],
+                    "sink_pattern": sink_rx,
+                    "path": [{"file": rel, "line": lineno, "kind": "sink",
+                              "text": auditlib.redact(text.strip())[:200]}],
+                    "sanitizers_seen": [], "depth": "pattern-only",
+                    "confidence_base": rule.get("confidence_base", 0.5),
+                    "fix": rule.get("fix", ""), "retest": rule.get("retest", ""),
+                    "note": rule.get("note", ""),
+                })
+    return findings
+
+
+def auth_gap_findings(map_data, rules):
+    by_id = {r["id"]: r for r in rules if r.get("kind") == "auth_gap"}
+    out = []
+    for rule_id, rule in by_id.items():
+        rx = rule.get("_path_rx")
+        if not rx:
+            continue
+        for route in map_data.get("routes", []):
+            if route.get("auth"):
+                continue
+            if not rx.search(route.get("path", "")):
+                continue
+            out.append({
+                "rule_id": rule_id, "kind": "auth_gap", "title": rule["title"],
+                "severity": rule["severity"], "cwe": rule.get("cwe", []),
+                "owasp": rule.get("owasp", []), "file": route["file"],
+                "line": route["line"],
+                "sink_text": u"%s %s（本文件内未见鉴权标记）" % (route["method"], route["path"]),
+                "sink_pattern": rule.get("sensitive_path", ""),
+                "path": [{"file": route["file"], "line": route["line"], "kind": "route",
+                          "text": u"%s %s" % (route["method"], route["path"])}],
+                "sanitizers_seen": [], "depth": "map-driven",
+                "confidence_base": rule.get("confidence_base", 0.4),
+                "fix": rule.get("fix", ""), "retest": rule.get("retest", ""),
+                "note": rule.get("note", ""),
+            })
+    return out
+
+
+def dependency_findings(map_data, rules, imports):
+    out = []
+    deps = map_data.get("dependencies", [])
+    for rule in rules:
+        if rule.get("kind") != "dependency":
+            continue
+        adv = rule.get("advisory") or {}
+        name = (adv.get("name") or "").lower()
+        limit = adv.get("vulnerable_below") or ""
+        if not name or not limit:
+            continue
+        for dep in deps:
+            dname = (dep.get("name") or "").lower()
+            if dname != name and not dname.endswith("/" + name):
+                continue
+            ver = re.sub(r"^[\^~>=<\"]+|[^0-9A-Za-z.\-]+$", "", str(dep.get("version") or ""))
+            if not ver or _norm_version(ver) >= _norm_version(limit):
+                continue
+            called = any(a in imports or a.replace("-", "_") in imports
+                         for a in [name] + [str(x).lower() for x
+                                            in (adv.get("module_alias") or [])])
+            out.append({
+                "rule_id": rule["id"], "kind": "dependency", "title": rule["title"],
+                "severity": rule["severity"], "cwe": rule.get("cwe", []),
+                "owasp": rule.get("owasp", []),
+                "file": dep.get("manifest", ""), "line": 1,
+                "sink_text": u"%s==%s（建议 < %s 已修复 / %s）"
+                             % (dep.get("name"), ver, limit, adv.get("cve", "")),
+                "sink_pattern": "dependency:%s" % name,
+                "path": [{"file": dep.get("manifest", ""), "line": 1, "kind": "manifest",
+                          "text": u"%s = %s" % (dep.get("name"), ver)}],
+                "sanitizers_seen": [], "depth": "manifest-only",
+                "confidence_base": rule.get("confidence_base", 0.7),
+                "fix": rule.get("fix", ""), "retest": rule.get("retest", ""),
+                "note": rule.get("note", ""), "called": called,
+                "dep_name": dep.get("name"), "dep_version": ver,
+            })
+    return out
+
+
+def flow_findings(graph):
+    out = []
+    for flow in graph.get("flows", []):
+        flow = dict(flow)
+        flow["kind"] = "taint"
+        flow["sink_pattern"] = ""
+        flow.setdefault("called", None)
+        flow["note"] = flow.get("unreachable_reason", "")
+        out.append(flow)
+    return out
+
+
+def verify(root, finding, map_data, all_lines_cache):
+    """独立验证环节：五项核验，编造的位置直接丢弃，其余按结果降级。"""
+    rel = finding["file"]
+    abs_path = os.path.join(root, rel.replace("/", os.sep))
+    result = {"path_exists": os.path.isfile(abs_path),
+              "sink_still_matches": False, "input_controllable": False,
+              "sanitizer_absent": True, "sink_reachable": True}
+    reasons = []
+    if not result["path_exists"]:
+        reasons.append(u"报告里的文件在磁盘上不存在（行 %s）" % finding["line"])
+        return False, result, reasons
+    if rel not in all_lines_cache:
+        all_lines_cache[rel] = list(auditlib.iter_lines(abs_path))
+    lines = all_lines_cache[rel]
+    text_by_line = dict((n, t) for n, t, _x in lines)
+    line_text = text_by_line.get(finding["line"], "")
+    if not line_text.strip() and finding["kind"] != "dependency":
+        reasons.append(u"行 %s 是空行或超出文件长度" % finding["line"])
+        return False, result, reasons
+    rx = None
+    if finding.get("sink_pattern"):
+        try:
+            rx = re.compile(finding["sink_pattern"])
+        except re.error:
+            rx = None
+    if finding["kind"] in ("dependency", "auth_gap"):
+        result["sink_still_matches"] = True
+    elif finding["kind"] == "taint":
+        # 污点流的 sink 证据不带单条模式（规则有多种命中方式），
+        # 改用更强的一条：当前行原文必须仍等于当初记录的 sink 行原文
+        stored = None
+        for hop in reversed(finding.get("path", [])):
+            if hop.get("kind") == "sink":
+                stored = hop.get("text", "")
+                break
+        cur = auditlib.redact(line_text.strip())[:200]
+        result["sink_still_matches"] = stored is not None and \
+            auditlib.redact(stored.strip())[:200] == cur
+        if stored is None:
+            reasons.append(u"证据链里没有 sink 跳，无法核对位置")
+            return False, result, reasons
+        if not result["sink_still_matches"]:
+            reasons.append(u"行 %s 的内容与记录时的 sink 证据不一致（编造或代码已变）"
+                           % finding["line"])
+            return False, result, reasons
+    elif rx is not None:
+        result["sink_still_matches"] = bool(rx.search(line_text))
+        if not result["sink_still_matches"]:
+            reasons.append(u"行 %s 现在的内容已不匹配 sink 模式（代码变了或位置记错）"
+                           % finding["line"])
+            return False, result, reasons
+    else:
+        result["sink_still_matches"] = True
+    kinds = set(h.get("kind") for h in finding.get("path", []))
+    if finding["kind"] == "taint":
+        result["input_controllable"] = "source" in kinds
+        if not result["input_controllable"]:
+            reasons.append(u"证据链里没有 source 跳")
+    elif finding["kind"] == "auth_gap":
+        result["input_controllable"] = True
+    elif finding["kind"] == "dependency":
+        result["input_controllable"] = bool(finding.get("called"))
+    else:
+        result["input_controllable"] = True
+    if finding["kind"] == "pattern" and finding.get("sink_pattern"):
+        result["sanitizer_absent"] = True   # pattern 的邻近净化检查已在深挖阶段做过
+    if finding.get("sanitizers_seen"):
+        result["sanitizer_absent"] = False
+        reasons.append(u"链路上有净化点：%s" % ", ".join(finding["sanitizers_seen"]))
+    if finding["kind"] == "taint" and finding.get("reachable") is False:
+        result["sink_reachable"] = False
+        reasons.append(u"sink 从入口/路由不可达（不可利用）")
+    keep = result["path_exists"] and result["sink_still_matches"]
+    return keep, result, reasons
+
+
+def grade(finding, result):
+    value = float(finding.get("confidence_base", 0.5))
+    if result["sink_still_matches"]:
+        value += CONF_BONUS["sink_verified"]
+    if finding.get("depth") == "interprocedural":
+        value += CONF_BONUS["interprocedural"]
+    if finding.get("kind") == "taint":
+        value += CONF_BONUS["reachable"] if result["sink_reachable"] else CONF_BONUS["unreachable"]
+    if finding.get("kind") == "dependency" and finding.get("called"):
+        value += CONF_BONUS["dep_called"]
+    if not result["input_controllable"]:
+        value -= 0.15
+    if not result["sanitizer_absent"]:
+        value -= 0.2
+    value = max(0.05, min(0.95, value))
+    label = CONF_LABELS[-1][1]
+    for threshold, name in CONF_LABELS:
+        if value >= threshold:
+            label = name
+            break
+    finding["confidence"] = {"value": round(value, 2), "label": label}
+    finding["exploitable"] = bool(result["sink_reachable"])
+    return finding
+
+
+def rank_dependencies(findings):
+    deps = [f for f in findings if f["kind"] == "dependency"]
+    deps.sort(key=lambda f: (not f.get("called"), SEV_ORDER.get(f["severity"], 4),
+                             f["rule_id"]))
+    for i, f in enumerate(deps):
+        f["rank"] = i
+    for f in findings:
+        if f["kind"] != "dependency":
+            f.setdefault("rank", None)
+    return findings
+
+
+def load_cache(path, rules_version):
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with io.open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if data.get("rules_version") != rules_version or \
+            data.get("lib_version") != auditlib.LIB_VERSION:
+        return None      # 规则或解析器变了 → 整个缓存作废（自动失效，不靠人记得清）
+    return data
+
+
+def save_cache(path, data):
+    if not path:
+        return
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    with io.open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, sort_keys=True))
+
+
+def build_report_payload(root, index, map_data, graph, rules, findings, dropped,
+                         blocked, stats):
+    findings.sort(key=lambda f: (SEV_ORDER.get(f["severity"], 4),
+                                 -f["confidence"]["value"], f["file"], f["line"],
+                                 f["rule_id"]))
+    for i, f in enumerate(findings):
+        f["order"] = i + 1
+        f["id"] = _fingerprint(f["rule_id"], f["file"], f["sink_text"])
+    seen = {}
+    deduped = []
+    for f in findings:
+        key = f["id"]
+        if key in seen:
+            seen[key]["duplicates"] = seen[key].get("duplicates", 0) + 1
+            continue
+        seen[key] = f
+        deduped.append(f)
+    stats["findings"] = len(deduped)
+    stats["dropped_by_verifier"] = len(dropped)
+    stats["by_severity"] = {}
+    for f in deduped:
+        stats["by_severity"][f["severity"]] = stats["by_severity"].get(f["severity"], 0) + 1
+    return {"schema": FINDINGS_SCHEMA, "tool": TOOL_NAME,
+            "index_sha1": index.get("index_sha1", ""),
+            "map_sha1": map_data.get("map_sha1", ""),
+            "rules_version": audit_rules.rules_version(rules),
+            "scanned_root": os.path.basename(root),
+            "stats": stats, "findings": deduped, "dropped": dropped,
+            "blocked_by_sanitizer": blocked,
+            "coverage": {
+                "languages": map_data.get("languages", {}),
+                "frameworks": map_data.get("frameworks", []),
+                "skipped_files": index["counts"]["binary"] + index["counts"]["oversize"],
+                "limits": [u"正则级分析，无 AST；同名函数按名字解析可能串味",
+                           u"模块级代码不参与数据流", u"鉴权/越权类结论依赖地图，"
+                           u"全局中间件与网关看不见",
+                           u"依赖建议集为样例基线，不等于 advisory feed",
+                           u"核验只保证位置与证据真实，不保证业务判断正确"],
+                "verification": VERIFICATION_NOTE}}
+
+
+def report_md(payload, root):
+    s = payload["stats"]
+    lines = [u"# 全项目审计报告（将作审计链）", u"",
+             u"> 根目录：`%s` ｜ 索引 `%s` ｜ 地图 `%s` ｜ 规则 `%s`"
+             % (payload["scanned_root"], payload["index_sha1"][:12],
+                payload["map_sha1"][:12], payload["rules_version"][:12]),
+             u"",
+             u"| 结论 | 数 |", u"|---|---|",
+             u"| 确认发现（去重后） | %d |" % s["findings"],
+             u"| 验证环节丢弃（位置对不上） | %d |" % s["dropped_by_verifier"],
+             u"| 净化断链（已排除） | %d |" % len(payload["blocked_by_sanitizer"]),
+             u"| 扫描文件 | %d（重算 %d / 复用缓存 %d） |" % (
+                 s.get("files_total", 0), s.get("recomputed_files", s.get("files_total", 0)),
+                 s.get("cache_hit_files", 0)),
+             u"| 粗筛候选文件 | %d（深挖只碰这些） |" % s.get("candidates", 0),
+             u"| 严重度分布 | %s |" % u"、".join(
+                 "%s=%d" % (k, v) for k, v in sorted(
+                     s.get("by_severity", {}).items(), key=lambda kv: SEV_ORDER[kv[0]])),
+             u""]
+    if s.get("peak_memory_kb"):
+        lines.append(u"| 粗筛峰值内存 | %d KB（tracemalloc 实测） |" % s["peak_memory_kb"])
+        lines.append(u"")
+    for f in payload["findings"]:
+        v = f["verification"]
+        lines += [u"## %d. [%s/%s 置信%s] %s — `%s:%d`" % (
+            f["order"], f["severity"], f["kind"], f["confidence"]["label"],
+            f["title"], f["file"], f["line"]), u"",
+            u"- **位置**：`%s:%d`" % (f["file"], f["line"]),
+            u"- **命中**：%s" % (f["sink_text"] or u"—"),
+            u"- **CWE/OWASP**：%s / %s" % (u"、".join(f.get("cwe", [])) or u"—",
+                                          u"、".join(f.get("owasp", [])) or u"—"),
+            u"- **数据流**（%s）：" % f.get("depth", ""),]
+        for hop in f.get("path", []):
+            lines.append(u"  - `%s:%d` %s：%s" % (hop["file"], hop["line"], hop["kind"],
+                                                  hop["text"][:120]))
+        lines += [u"- **利用条件**：%s" % (u"可达（从入口/路由走得到）" if f["exploitable"]
+                                          else u"不可达 — " + (f.get("note") or u"证据链上函数从入口不可达")),
+                  u"- **置信度**：%s（%.2f）｜ **核验**：路径%s sink%s 输入%s 净化%s 可达%s" % (
+                      f["confidence"]["label"], f["confidence"]["value"],
+                      u"✓" if v["path_exists"] else u"✗",
+                      u"✓" if v["sink_still_matches"] else u"✗",
+                      u"✓" if v["input_controllable"] else u"✗",
+                      u"未生效✓" if v["sanitizer_absent"] else u"存在✗",
+                      u"✓" if v["sink_reachable"] else u"✗"),
+                  u"- **修复示例**：%s" % (f.get("fix") or u"—"),
+                  u"- **复测点**：%s" % (f.get("retest") or u"—"),
+                  u"- **指纹**：`%s`%s" % (f["id"], u"（重复 %d 处已合并）"
+                                          % f["duplicates"] if f.get("duplicates") else u""),
+                  u""]
+    if payload["dropped"]:
+        lines += [u"## 验证环节丢弃（不粉饰）", u""]
+        for d in payload["dropped"]:
+            lines.append(u"- `%s:%s` %s → %s" % (d.get("file"), d.get("line"),
+                                                 d.get("rule_id"), d.get("reason")))
+        lines.append(u"")
+    lines += [u"## 覆盖度与已知限制", u""]
+    for lim in payload["coverage"]["limits"]:
+        lines.append(u"- %s" % lim)
+    lines.append(u"- 跳过的文件（二进制/超限）：%d 个" % payload["coverage"]["skipped_files"])
+    lines.append(u"- 核验口径：%s" % payload["coverage"]["verification"])
+    lines.append(u"")
+    lines.append(u"RESULT: SCAN-OK（%d 条发现，其中不可达 %d 条已单独标注）" % (
+        s["findings"], sum(1 for f in payload["findings"] if not f["exploitable"])))
+    return u"\n".join(lines) + u"\n"
+
+
+def to_sarif(payload, skill_version):
+    used = {}
+    results = []
+    for f in payload["findings"]:
+        if f["rule_id"] not in used:
+            used[f["rule_id"]] = len(used)
+        idx = used[f["rule_id"]]
+        results.append({
+            "ruleId": f["rule_id"], "ruleIndex": idx,
+            "level": SARIF_LEVEL.get(f["severity"], "warning"),
+            "message": {"text": u"%s — %s" % (f["title"], f["sink_text"] or u"")[:500]},
+            "locations": [{"physicalLocation": {
+                "artifactLocation": {"uri": f["file"], "uriBaseId": "%SRCROOT%"},
+                "region": {"startLine": max(1, int(f["line"]))}}}],
+            "partialFingerprints": {"primaryLocationLineHash": f["id"]},
+            "codeFlows": [{"threadFlows": [{"locations": [
+                {"location": {"physicalLocation": {
+                    "artifactLocation": {"uri": hop["file"], "uriBaseId": "%SRCROOT%"},
+                    "region": {"startLine": max(1, int(hop["line"]))},
+                    "conceptualName": hop.get("kind", "")},
+                    "message": {"text": hop.get("text", "")[:200]}}}
+                for hop in f.get("path", [])]}]}] if f.get("path") else [],
+            "properties": {"severity": f["severity"],
+                           "confidence": f["confidence"]["value"],
+                           "confidenceLabel": f["confidence"]["label"],
+                           "exploitable": f["exploitable"], "kind": f["kind"],
+                           "cwe": f.get("cwe", []), "owasp": f.get("owasp", []),
+                           "fix": f.get("fix", ""), "retest": f.get("retest", "")},
+        })
+    rules_out = []
+    for rule in payload.get("_rules", []):
+        if rule["id"] not in used:
+            continue
+        rules_out.append({
+            "id": rule["id"],
+            "name": rule["title"],
+            "shortDescription": {"text": rule["title"]},
+            "fullDescription": {"text": rule.get("note") or rule["title"]},
+            "helpUri": "https://github.com/Zhang-jx00/jiangzuo",
+            "properties": {"tags": (rule.get("cwe", []) + rule.get("owasp", [])
+                                     + [rule.get("severity", "")])},
+            "defaultConfiguration": {"level": SARIF_LEVEL.get(rule.get("severity"), "warning")},
+        })
+    return {"$schema": SARIF_URI, "version": SARIF_VERSION,
+            "runs": [{"tool": {"driver": {
+                "name": TOOL_NAME, "version": skill_version,
+                "informationUri": "https://github.com/Zhang-jx00/jiangzuo",
+                "rules": rules_out}},
+                "results": results,
+                "columnKind": "utf16CodeUnits",
+                "originalUriBaseIds": {"%SRCROOT%": {"uri": "file:///"}}}]}
+
+
+def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
+        map_path=None, graph_path=None, user_rules=None, cache_dir=None,
+        incremental=False, max_file_kb=2048, report_memory=False, version="0.18.0"):
+    root = os.path.abspath(root)
+    max_bytes = max_file_kb * 1024
+    rules, problems, _notes = audit_rules.load_rules(user_rules or [])
+    if problems:
+        raise ValueError(u"规则库有问题，拒绝扫描：" + u"；".join(problems[:5]))
+    rules_version = audit_rules.rules_version(rules)
+    exclude = []
+    for out in (out_json, out_md, out_sarif):
+        if out:
+            ap_ = os.path.abspath(out)
+            if ap_.startswith(root + os.sep):
+                exclude.append(auditlib.norm_rel(ap_, root))
+    cache_file = os.path.join(cache_dir, "cache.json") if cache_dir else None
+    if cache_file and os.path.abspath(cache_file).startswith(root + os.sep):
+        exclude.append(auditlib.norm_rel(cache_file, root))
+
+    index = auditlib.load_index(index_path) if index_path else auditlib.build_index(
+        root, max_file_bytes=max_bytes, exclude=exclude)
+    map_data = None
+    if map_path:
+        with io.open(map_path, "r", encoding="utf-8") as f:
+            map_data = json.load(f)
+    if map_data is None:
+        map_data = audit_map.build_map(root, index=index, exclude=exclude)
+
+    cache = load_cache(cache_file, rules_version) if incremental else None
+    dirty, cache_hits = [], []
+    if cache:
+        by_path = dict((rec["path"], rec["sha1"]) for rec in index["files"])
+        for rel, entry in cache.get("files", {}).items():
+            if by_path.get(rel) == entry.get("sha1") and \
+                    entry.get("rules_version") == rules_version:
+                cache_hits.append(rel)
+            else:
+                dirty.append(rel)
+        known = set(by_path)
+        dirty = [r for r in dirty if r in known]
+        for rel in known - set(cache.get("files", {})):
+            dirty.append(rel)
+    else:
+        dirty = [rec["path"] for rec in index["files"]]
+
+    scan_index = {"files": [rec for rec in index["files"] if rec["path"] in set(dirty)],
+                  "counts": index["counts"], "index_sha1": index["index_sha1"]}
+    t0 = time.time()
+    hits, imports, peak_kb, _ = coarse_screen(root, scan_index, rules, max_bytes,
+                                              peak=report_memory)
+    findings = deep_pattern_findings(root, scan_index, rules, hits, max_bytes)
+    reused = []
+    if cache:
+        for rel in cache_hits:
+            reused.extend(cache["files"][rel].get("findings", []))
+    findings = reused + findings
+    findings.extend(auth_gap_findings(map_data, rules))
+    findings.extend(dependency_findings(map_data, rules, imports))
+
+    need_graph = True
+    if cache and not set(dirty) and cache.get("flows") is not None:
+        need_graph = False
+        flows = cache["flows"]
+    elif graph_path:
+        with io.open(graph_path, "r", encoding="utf-8") as f:
+            flows = json.load(f).get("flows", [])
+        need_graph = False
+    else:
+        graph = audit_graph.build_graph(root, index=index, map_data=map_data, rules=rules)
+        flows = graph["flows"]
+    findings.extend(flow_findings({"flows": flows}))
+
+    dropped = []
+    verified = []
+    line_cache = {}
+    for f in findings:
+        keep, result, reasons = verify(root, f, map_data, line_cache)
+        if not keep:
+            for reason in reasons:
+                dropped.append({"rule_id": f["rule_id"], "file": f["file"],
+                                "line": f.get("line"), "reason": reason})
+            continue
+        f["verification"] = result
+        verified.append(grade(f, result))
+    verified = rank_dependencies(verified)
+    stats = {"files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
+             "recomputed_files": len(scan_index["files"]),
+             "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
+             "flows": len(flows), "elapsed_sec": round(time.time() - t0, 2),
+             "peak_memory_kb": peak_kb}
+    payload = build_report_payload(root, index, map_data, None, rules, verified, dropped,
+                                   cache.get("blocked", []) if cache else [], stats)
+    payload["_rules"] = [{"id": r["id"], "title": r["title"], "note": r.get("note", ""),
+                          "cwe": r.get("cwe", []), "owasp": r.get("owasp", []),
+                          "severity": r["severity"]} for r in rules]
+    if cache_file:
+        entries = dict((rel, {"sha1": rec["sha1"], "rules_version": rules_version,
+                              "findings": [f for f in verified if f["file"] == rel]})
+                       for rec in index["files"] for rel in [rec["path"]])
+        save_cache(cache_file, {"rules_version": rules_version,
+                                "lib_version": auditlib.LIB_VERSION,
+                                "index_sha1": index["index_sha1"],
+                                "files": entries, "flows": flows,
+                                "blocked": payload["blocked_by_sanitizer"]})
+        payload["stats"]["cache_written"] = bool(cache_file)
+    if out_json:
+        d = os.path.dirname(os.path.abspath(out_json))
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(out_json, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n")
+    if out_md:
+        with io.open(out_md, "w", encoding="utf-8") as f:
+            f.write(report_md(payload, root))
+    if out_sarif:
+        with io.open(out_sarif, "w", encoding="utf-8") as f:
+            f.write(json.dumps(to_sarif(payload, version), ensure_ascii=False,
+                               indent=1) + "\n")
+    return payload
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=u"扫描调度与报告（将作）：粗筛→深挖→独立验证→分级→Markdown/JSON/SARIF。")
+    ap.add_argument("path", nargs="?", default=".")
+    ap.add_argument("--json", dest="json_out", default=None)
+    ap.add_argument("--md", dest="md_out", default=None)
+    ap.add_argument("--sarif", dest="sarif_out", default=None)
+    ap.add_argument("--index", default=None)
+    ap.add_argument("--map", dest="map_in", default=None)
+    ap.add_argument("--graph", default=None)
+    ap.add_argument("--rules", dest="rules_in", action="append", default=[])
+    ap.add_argument("--cache", default=None, help=u"缓存目录（默认关闭，需显式指定）")
+    ap.add_argument("--incremental", action="store_true", help=u"配合 --cache 只重算变更文件")
+    ap.add_argument("--max-file-kb", type=int, default=2048)
+    ap.add_argument("--report-memory", action="store_true", help=u"粗筛阶段用 tracemalloc 测峰值")
+    ap.add_argument("--strict", action="store_true", help=u"critical/high 存在时退出码 1")
+    ap.add_argument("--version", default="0.18.0", help=u"写进 SARIF 的工具版本")
+    args = ap.parse_args()
+
+    root = os.path.abspath(args.path)
+    if not os.path.isdir(root):
+        print(u"错误：目录不存在：%s" % args.path, file=sys.stderr)
+        return 2
+    try:
+        payload = run(root, out_json=args.json_out, out_md=args.md_out,
+                      out_sarif=args.sarif_out, index_path=args.index,
+                      map_path=args.map_in, graph_path=args.graph,
+                      user_rules=args.rules_in, cache_dir=args.cache,
+                      incremental=args.incremental, max_file_kb=args.max_file_kb,
+                      report_memory=args.report_memory)
+    except ValueError as exc:
+        print(u"错误：%s" % exc, file=sys.stderr)
+        return 1
+
+    s = payload["stats"]
+    print(u"扫描：%d 文件（候选 %d / 重算 %d / 缓存复用 %d）｜ 粗筛峰值 %s KB ｜ 用时 %.2fs"
+          % (s["files_total"], s["candidates"], s["recomputed_files"],
+             s["cache_hit_files"], s.get("peak_memory_kb") or u"未测", s["elapsed_sec"]))
+    dist = s.get("by_severity", {})
+    print(u"发现 %d 条（%s）｜ 验证丢弃 %d 条 ｜ 净化排除 %d 处"
+          % (s["findings"], u"、".join("%s=%d" % (k, dist[k])
+                                     for k in audit_rules.SEVERITIES if dist.get(k)) or u"无",
+             s["dropped_by_verifier"], len(payload["blocked_by_sanitizer"])))
+    for f in payload["findings"][:12]:
+        print(u"  %2d. [%s] %-14s 置信%s %-10s %s:%d"
+              % (f["order"], f["severity"], f["rule_id"], f["confidence"]["label"],
+                 f["kind"], f["file"], f["line"]))
+    if len(payload["findings"]) > 12:
+        print(u"  ……其余见报告")
+    print(u"RESULT: SCAN-OK（%d 条发现，%d 条被独立验证拦下）"
+          % (s["findings"], s["dropped_by_verifier"]))
+    if args.strict and (dist.get("critical") or dist.get("high")):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

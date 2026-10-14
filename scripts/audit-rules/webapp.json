@@ -8,17 +8,40 @@
    "kind": "pattern",
    "severity": "high",
    "confidence_base": 0.55,
-   "languages": ["javascript", "typescript", "vue", "python", "php", "ruby", "html"],
-   "cwe": ["CWE-79"],
-   "owasp": ["A03:2021 注入"],
+   "languages": [
+    "javascript",
+    "typescript",
+    "vue",
+    "python",
+    "php",
+    "ruby",
+    "html"
+   ],
+   "cwe": [
+    "CWE-79"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
    "sinks": [
-    {"pattern": "\\.innerHTML\\s*=|document\\.write\\s*\\(|insertAdjacentHTML\\s*\\("},
-    {"pattern": "dangerouslySetInnerHTML|v-html\\s*=|\\|\\s*safe\\b|\\{!!"},
-    {"pattern": "\\bMarkup\\s*\\(|\\bmark_safe\\s*\\("},
-    {"pattern": "<\\?php\\s*echo\\s+\\$_(?:GET|POST|REQUEST)"}
+    {
+     "pattern": "\\.innerHTML\\s*=|document\\.write\\s*\\(|insertAdjacentHTML\\s*\\("
+    },
+    {
+     "pattern": "dangerouslySetInnerHTML|v-html\\s*=|\\|\\s*safe\\b|\\{!!"
+    },
+    {
+     "pattern": "\\bMarkup\\s*\\(|\\bmark_safe\\s*\\("
+    },
+    {
+     "pattern": "<\\?php\\s*echo\\s+\\$_(?:GET|POST|REQUEST)"
+    }
    ],
    "unless_present": [
-    {"pattern": "escape\\s*\\(|DOMPurify|bleach|sanitize|autoescape|text/javascript", "window": 3}
+    {
+     "pattern": "escape\\s*\\(|DOMPurify|bleach|sanitize|autoescape|text/javascript",
+     "window": 3
+    }
    ],
    "fix": "走框架默认转义（Vue 用 {{ }}、React 用 {value}）；必须输出富文本时用净化库（DOMPurify/bleach）按标签白名单过滤，而不是自己写正则剥 script。",
    "retest": "在字段里存 <img src=x onerror=alert(1)>，打开页面应看到文本或被净化，不应弹窗；同时确认响应头 CSP 是否兜底。"
@@ -29,16 +52,41 @@
    "kind": "pattern",
    "severity": "critical",
    "confidence_base": 0.7,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby", "yaml", "json", "shell"],
-   "cwe": ["CWE-798", "CWE-259"],
-   "owasp": ["A07:2021 身份认证与认证失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby",
+    "yaml",
+    "json",
+    "shell"
+   ],
+   "cwe": [
+    "CWE-798",
+    "CWE-259"
+   ],
+   "owasp": [
+    "A07:2021 身份认证与认证失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)(api[_-]?key|apikey|secret|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd)\\s*[:=]\\s*[\"'][^\"'\\s$]{8,}[\"']"},
-    {"pattern": "\\bAKIA[0-9A-Z]{16}\\b|\\bgh[pousr]_[A-Za-z0-9]{20,}\\b|-----BEGIN [A-Z ]*PRIVATE KEY-----"},
-    {"pattern": "\\b(?:mongodb(?:\\+srv)?|postgres(?:ql)?|mysql|redis|amqp)://[^\\s:@/]+:[^\\s@/]{4,}@"}
+    {
+     "pattern": "(?i)(api[_-]?key|apikey|secret|access[_-]?token|auth[_-]?token|private[_-]?key|password|passwd)\\s*[:=]\\s*[\"'][^\"'\\s$]{8,}[\"']"
+    },
+    {
+     "pattern": "\\bAKIA[0-9A-Z]{16}\\b|\\bgh[pousr]_[A-Za-z0-9]{20,}\\b|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    },
+    {
+     "pattern": "\\b(?:mongodb(?:\\+srv)?|postgres(?:ql)?|mysql|redis|amqp)://[^\\s:@/]+:[^\\s@/]{4,}@"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(your[_-]|xxx+|changeme|placeholder|example|dummy|sample|test_|os\\.environ|process\\.env|getenv|config\\(|<[^>]+>)", "window": 0}
+    {
+     "pattern": "(?i)(your[_-]|xxx+|changeme|placeholder|example|dummy|sample|test_|os\\.environ|process\\.env|getenv|config\\(|<[^>]+>)",
+     "window": 0
+    }
    ],
    "fix": "密钥从环境变量/密钥管理服务读取；提交前跑 preflight.py；已经进过 git 的密钥要**作废轮换**（只改代码不删历史等于没修）。",
    "retest": "轮换后旧密钥应立刻失效（用它调一次接口应 401）；grep 复查仓库与历史提交都找不到该串。"
@@ -49,16 +97,38 @@
    "kind": "pattern",
    "severity": "high",
    "confidence_base": 0.6,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-327", "CWE-328"],
-   "owasp": ["A02:2021 加密失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-327",
+    "CWE-328"
+   ],
+   "owasp": [
+    "A02:2021 加密失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)(md5|sha1)\\s*\\(?\\s*(?:\\.\\s*(?:new|digest|update|hexdigest))?[^\\n]{0,40}(password|passwd|pwd|口令|密码)"},
-    {"pattern": "(?i)(password|passwd|pwd)[^\\n]{0,40}\\b(?:md5|sha1)\\s*\\("},
-    {"pattern": "\\bhashlib\\.(?:md5|sha1)\\s*\\(|\\bcreateHash\\s*\\(\\s*[\"'](?:md5|sha1)"}
+    {
+     "pattern": "(?i)(md5|sha1)\\s*\\(?\\s*(?:\\.\\s*(?:new|digest|update|hexdigest))?[^\\n]{0,40}(password|passwd|pwd|口令|密码)"
+    },
+    {
+     "pattern": "(?i)(password|passwd|pwd)[^\\n]{0,40}\\b(?:md5|sha1)\\s*\\("
+    },
+    {
+     "pattern": "\\bhashlib\\.(?:md5|sha1)\\s*\\(|\\bcreateHash\\s*\\(\\s*[\"'](?:md5|sha1)"
+    }
    ],
    "unless_present": [
-    {"pattern": "bcrypt|argon2|scrypt|pbkdf2|password_hash\\s*\\(|\\bcheckpw\\b", "window": 4}
+    {
+     "pattern": "bcrypt|argon2|scrypt|pbkdf2|password_hash\\s*\\(|\\bcheckpw\\b",
+     "window": 4
+    }
    ],
    "fix": "口令用 bcrypt/argon2/scrypt/PBKDF2（自带盐与工作量参数）；MD5/SHA1 只能用于校验和，不能用于口令。存量哈希要么双写迁移要么强制改密。",
    "retest": "确认登录路径不再走 md5 分支；用一个旧格式哈希登录应触发重哈希（记录升级后的哈希前缀）。"
@@ -69,15 +139,35 @@
    "kind": "pattern",
    "severity": "medium",
    "confidence_base": 0.5,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-330", "CWE-338"],
-   "owasp": ["A02:2021 加密失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-330",
+    "CWE-338"
+   ],
+   "owasp": [
+    "A02:2021 加密失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)\\b(?:random\\.choice|random\\.randint|random\\.random|Math\\.random|mt_rand|rand\\s*\\()[^\\n]{0,60}(token|secret|code|otp|nonce|验证码|密码|passwd|password)"},
-    {"pattern": "(?i)(token|secret|otp|nonce)[^\\n]{0,60}\\b(?:random\\.choice|random\\.randint|Math\\.random|mt_rand)"}
+    {
+     "pattern": "(?i)\\b(?:random\\.choice|random\\.randint|random\\.random|Math\\.random|mt_rand|rand\\s*\\()[^\\n]{0,60}(token|secret|code|otp|nonce|验证码|密码|passwd|password)"
+    },
+    {
+     "pattern": "(?i)(token|secret|otp|nonce)[^\\n]{0,60}\\b(?:random\\.choice|random\\.randint|Math\\.random|mt_rand)"
+    }
    ],
    "unless_present": [
-    {"pattern": "secrets\\.|crypto\\.randomBytes|SecureRandom|random_bytes|os\\.urandom|rand\\.(?:Intn|Read)", "window": 2}
+    {
+     "pattern": "secrets\\.|crypto\\.randomBytes|SecureRandom|random_bytes|os\\.urandom|rand\\.(?:Intn|Read)",
+     "window": 2
+    }
    ],
    "fix": "令牌/验证码用 CSPRNG：Python secrets.token_urlsafe、Node crypto.randomBytes、Java SecureRandom、PHP random_bytes。Math.random 可预测，不能用于安全值。",
    "retest": "连续取两次样例值应看不出规律；把生成函数换成 Math.random 后立刻能被规则命中（红测）。"
@@ -88,14 +178,34 @@
    "kind": "pattern",
    "severity": "high",
    "confidence_base": 0.7,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "shell"],
-   "cwe": ["CWE-295"],
-   "owasp": ["A02:2021 加密失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "shell"
+   ],
+   "cwe": [
+    "CWE-295"
+   ],
+   "owasp": [
+    "A02:2021 加密失效"
+   ],
    "sinks": [
-    {"pattern": "verify\\s*=\\s*False|\\bCERT_NONE\\b|ssl\\._create_unverified|check_hostname\\s*=\\s*False"},
-    {"pattern": "rejectUnauthorized\\s*:\\s*false|strictSSL\\s*:\\s*false|insecure\\s*:\\s*true"},
-    {"pattern": "curl\\s+[^\\n]*-k\\b|--insecure\\b|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*0"},
-    {"pattern": "InsecureSkipVerify\\s*:\\s*true"}
+    {
+     "pattern": "verify\\s*=\\s*False|\\bCERT_NONE\\b|ssl\\._create_unverified|check_hostname\\s*=\\s*False"
+    },
+    {
+     "pattern": "rejectUnauthorized\\s*:\\s*false|strictSSL\\s*:\\s*false|insecure\\s*:\\s*true"
+    },
+    {
+     "pattern": "curl\\s+[^\\n]*-k\\b|--insecure\\b|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*0"
+    },
+    {
+     "pattern": "InsecureSkipVerify\\s*:\\s*true"
+    }
    ],
    "fix": "默认校验证书；自签场景用受控 CA bundle（verify=\"/path/ca.pem\"），不要用关掉校验图省事。测试环境例外要写清楚作用域，别泄漏到生产配置。",
    "retest": "用错误 CA 的服务端应握手失败；确认代码里不再出现 verify=False / InsecureSkipVerify。"
@@ -106,13 +216,32 @@
    "kind": "pattern",
    "severity": "medium",
    "confidence_base": 0.55,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby", "yaml"],
-   "cwe": ["CWE-942"],
-   "owasp": ["A05:2021 安全配置错误"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby",
+    "yaml"
+   ],
+   "cwe": [
+    "CWE-942"
+   ],
+   "owasp": [
+    "A05:2021 安全配置错误"
+   ],
    "sinks": [
-    {"pattern": "Access-Control-Allow-Origin[\"']?\\s*[:,=]\\s*[\"']\\*"},
-    {"pattern": "cors_all\\s*=\\s*True|CORSMiddleware[^\\n]*allow_origins\\s*=\\s*\\[\\s*[\"']\\*|app\\.use\\s*\\(\\s*cors\\s*\\(\\s*\\)"},
-    {"pattern": "Access-Control-Allow-Credentials[^\\n]*true[\\s\\S]{0,80}Allow-Origin[\"']?\\s*[:,=]\\s*[\"']\\*"}
+    {
+     "pattern": "Access-Control-Allow-Origin[\"']?\\s*[:,=]\\s*[\"']\\*"
+    },
+    {
+     "pattern": "cors_all\\s*=\\s*True|CORSMiddleware[^\\n]*allow_origins\\s*=\\s*\\[\\s*[\"']\\*|app\\.use\\s*\\(\\s*cors\\s*\\(\\s*\\)"
+    },
+    {
+     "pattern": "Access-Control-Allow-Credentials[^\\n]*true[\\s\\S]{0,80}Allow-Origin[\"']?\\s*[:,=]\\s*[\"']\\*"
+    }
    ],
    "fix": "按域名白名单配置来源；带凭证的请求必须显式列出来源，不能 * 与 credentials 并存。反射 Origin 等于对所有站点开放。",
    "retest": "用 curl -H 'Origin: https://evil.example' 观察响应头是否为白名单结果；带 cookie 的跨站请求应被拒。"
@@ -123,14 +252,36 @@
    "kind": "pattern",
    "severity": "medium",
    "confidence_base": 0.6,
-   "languages": ["python", "javascript", "php", "java", "ruby", "yaml", "ini", "shell"],
-   "cwe": ["CWE-489", "CWE-209"],
-   "owasp": ["A05:2021 安全配置错误"],
+   "languages": [
+    "python",
+    "javascript",
+    "php",
+    "java",
+    "ruby",
+    "yaml",
+    "ini",
+    "shell"
+   ],
+   "cwe": [
+    "CWE-489",
+    "CWE-209"
+   ],
+   "owasp": [
+    "A05:2021 安全配置错误"
+   ],
    "sinks": [
-    {"pattern": "debug\\s*=\\s*True|\\bFLASK_DEBUG\\s*[=:]\\s*1|app\\.run\\s*\\([^)]*debug\\s*=\\s*True"},
-    {"pattern": "display_errors\\s*=\\s*On|error_reporting\\s*\\(\\s*E_ALL\\b|show_error_msg\\s*=\\s*1"},
-    {"pattern": "DEBUG\\s+True|spring\\.devtools\\.restart\\.enabled\\s*=\\s*true|config\\.debug\\s*=\\s*true"},
-    {"pattern": "runserver\\s+--settings[^\\n]*dev"}
+    {
+     "pattern": "(?i)debug\\s*=\\s*True|\\bFLASK_DEBUG\\s*[=:]\\s*1|app\\.run\\s*\\([^)]*debug\\s*=\\s*True"
+    },
+    {
+     "pattern": "display_errors\\s*=\\s*On|error_reporting\\s*\\(\\s*E_ALL\\b|show_error_msg\\s*=\\s*1"
+    },
+    {
+     "pattern": "DEBUG\\s+True|spring\\.devtools\\.restart\\.enabled\\s*=\\s*true|config\\.debug\\s*=\\s*true"
+    },
+    {
+     "pattern": "runserver\\s+--settings[^\\n]*dev"
+    }
    ],
    "fix": "生产配置与开发配置分离，调试开关默认关；报错返回通用文案，堆栈只进服务端日志。",
    "retest": "人为触发一次 500，确认响应体不含堆栈/SQL/绝对路径；检查部署环境变量的实际取值。"
@@ -141,13 +292,31 @@
    "kind": "pattern",
    "severity": "low",
    "confidence_base": 0.45,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go"],
-   "cwe": ["CWE-209", "CWE-200"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go"
+   ],
+   "cwe": [
+    "CWE-209",
+    "CWE-200"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sinks": [
-    {"pattern": "return[^\\n]*str\\s*\\(\\s*(?:e|err|exception)\\b|res\\.(?:send|json)\\s*\\([^)]*err(?:or)?\\.message"},
-    {"pattern": "traceback\\.format_exc|print_exc\\s*\\(|\\becho\\s+\\$e\\b"},
-    {"pattern": "return[^\\n]*(?:sql|query)[^\\n]*\\+\\s*(?:e|err)\\b"}
+    {
+     "pattern": "return[^\\n]*str\\s*\\(\\s*(?:e|err|exception)\\b|res\\.(?:send|json)\\s*\\([^)]*err(?:or)?\\.message"
+    },
+    {
+     "pattern": "traceback\\.format_exc|print_exc\\s*\\(|\\becho\\s+\\$e\\b"
+    },
+    {
+     "pattern": "return[^\\n]*(?:sql|query)[^\\n]*\\+\\s*(?:e|err)\\b"
+    }
    ],
    "fix": "对外返回稳定错误码与可读文案，细节写服务端日志（带 request-id）；日志里同样不得含密钥与用户口令。",
    "retest": "构造非法输入触发异常，检查响应体只有 code/message；日志里能按 request-id 找到完整堆栈。"
@@ -158,9 +327,16 @@
    "kind": "auth_gap",
    "severity": "high",
    "confidence_base": 0.4,
-   "languages": ["*"],
-   "cwe": ["CWE-862", "CWE-306"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "*"
+   ],
+   "cwe": [
+    "CWE-862",
+    "CWE-306"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sensitive_path": "(?i)/(?:admin|manage|internal|config|user|account|profile|order|pay|payment|export|upload|delete|remove|admin-users|token|session)",
    "fix": "服务端加认证依赖/权限中间件；前端隐藏菜单不算鉴权。对象级权限检查做成统一依赖，不靠每个接口自觉。",
    "retest": "未登录直接 curl 该路径应 401/403；换一个用户的 id 应拿不到别人的数据（水平越权）。",
@@ -172,16 +348,38 @@
    "kind": "pattern",
    "severity": "high",
    "confidence_base": 0.4,
-   "languages": ["python", "javascript", "typescript", "java", "php", "ruby", "go"],
-   "cwe": ["CWE-639", "CWE-862"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "ruby",
+    "go"
+   ],
+   "cwe": [
+    "CWE-639",
+    "CWE-862"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)\\b(?:where|filter_by|filter|find|get|select)\\s*\\([^)]*\\bid\\s*=\\s*(?:%s|\\?|\\$\\d|:\\w+)[^)]*\\)"},
-    {"pattern": "(?i)\\b(?:SELECT)[^\\n]*\\bWHERE\\b[^\\n]*\\bid\\s*=\\s*(?:%s|\\?|\\$\\d)"},
-    {"pattern": "\\b(?:Model|db)\\.\\w+\\.\\s*(?:get|find)\\s*\\(\\s*(?:request\\.|req\\.|params\\[|\\$_GET)"}
+    {
+     "pattern": "(?i)\\b(?:where|filter_by|filter|find|get|select)\\s*\\([^)]*\\bid\\s*=\\s*(?:%s|\\?|\\$\\d|:\\w+)[^)]*\\)"
+    },
+    {
+     "pattern": "(?i)\\b(?:SELECT)[^\\n]*\\bWHERE\\b[^\\n]*\\bid\\s*=\\s*(?:%s|\\?|\\$\\d)"
+    },
+    {
+     "pattern": "\\b(?:Model|db)\\.\\w+\\.\\s*(?:get|find)\\s*\\(\\s*(?:request\\.|req\\.|params\\[|\\$_GET)"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(user_id|owner_id|author_id|tenant_id|account_id|current_user|g\\.user|session\\[)", "window": 6}
+    {
+     "pattern": "(?i)(user_id|owner_id|author_id|tenant_id|account_id|current_user|g\\.user|session\\[)",
+     "window": 6
+    }
    ],
    "fix": "查询条件带属主：WHERE id=%s AND user_id=%s；或统一走对象级权限检查依赖。改完用另一个账号的 id 复测。",
    "retest": "用 A 账号请求 B 的资源 id，应 404/403 而不是返回 B 的数据。",
@@ -193,15 +391,36 @@
    "kind": "pattern",
    "severity": "high",
    "confidence_base": 0.45,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-434", "CWE-20"],
-   "owasp": ["A04:2021 不安全设计", "A08:2021 软件与数据完整性失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-434",
+    "CWE-20"
+   ],
+   "owasp": [
+    "A04:2021 不安全设计",
+    "A08:2021 软件与数据完整性失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)\\b(?:save|write|store|move_uploaded_file|move)\\s*\\([^)]*(?:filename|file\\.name|originalname|\\$_FILES)"},
-    {"pattern": "(?i)content[_-]?type[^\\n]{0,40}(?:==|in|is)\\s*[\"']?(?:image|application)"}
+    {
+     "pattern": "(?i)\\b(?:save|write|store|move_uploaded_file|move)\\s*\\([^)]*(?:filename|file\\.name|originalname|\\$_FILES)"
+    },
+    {
+     "pattern": "(?i)content[_-]?type[^\\n]{0,40}(?:==|in|is)\\s*[\"']?(?:image|application)"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(MAX_CONTENT_LENGTH|allowed_ext|extension|whitelist|uuid|secure_filename|maxSize|size\\s*<)", "window": 8}
+    {
+     "pattern": "(?i)(MAX_CONTENT_LENGTH|allowed_ext|extension|whitelist|uuid|secure_filename|maxSize|size\\s*<)",
+     "window": 8
+    }
    ],
    "fix": "扩展名白名单 + 大小上限 + 服务端重命名（uuid）+ 存到不可执行目录；不信任 Content-Type（客户端可任意填写），要看内容魔数或重新编码。",
    "retest": "上传 rename.php/shell.jpg 双扩展名、超大文件、.php5 变体，应全部被拒且落地名不是用户给的名字。"
@@ -212,15 +431,34 @@
    "kind": "pattern",
    "severity": "medium",
    "confidence_base": 0.6,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-532"],
-   "owasp": ["A09:2021 日志与监控失效"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-532"
+   ],
+   "owasp": [
+    "A09:2021 日志与监控失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)\\b(?:print|log|logger\\.\\w+|console\\.\\w+|error_log|fmt\\.Print\\w*)\\s*\\([^)]*(password|passwd|token|secret|api_key|authorization|id_card|身份证|银行卡|手机号)"},
-    {"pattern": "(?i)\\b(?:print|log|console\\.log)\\s*\\(\\s*(?:request|req)\\.(?:body|form|json)\\s*\\)"}
+    {
+     "pattern": "(?i)\\b(?:print|log|logger\\.\\w+|console\\.\\w+|error_log|fmt\\.Print\\w*)\\s*\\([^)]*(password|passwd|token|secret|api_key|authorization|id_card|身份证|银行卡|手机号)"
+    },
+    {
+     "pattern": "(?i)\\b(?:print|log|console\\.log)\\s*\\(\\s*(?:request|req)\\.(?:body|form|json)\\s*\\)"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(mask|redact|desensitize|\\*\\*\\*|sanitize|truncate|hash)", "window": 2}
+    {
+     "pattern": "(?i)(mask|redact|desensitize|\\*\\*\\*|sanitize|truncate|hash)",
+     "window": 2
+    }
    ],
    "fix": "日志只打标识符（user_id、request-id）；敏感字段先脱敏（保留前后各 2 位）或直接不打。整包 body 打日志会把口令一起写进采集链路。",
    "retest": "走一次登录流程，grep 日志确认没有口令/token 明文；确认日志采集端也没有。"
@@ -231,16 +469,38 @@
    "kind": "pattern",
    "severity": "medium",
    "confidence_base": 0.5,
-   "languages": ["python", "javascript", "typescript", "java", "php", "go", "ruby"],
-   "cwe": ["CWE-1004", "CWE-614"],
-   "owasp": ["A05:2021 安全配置错误"],
+   "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "php",
+    "go",
+    "ruby"
+   ],
+   "cwe": [
+    "CWE-1004",
+    "CWE-614"
+   ],
+   "owasp": [
+    "A05:2021 安全配置错误"
+   ],
    "sinks": [
-    {"pattern": "set_cookie\\s*\\((?![^)]*httponly\\s*=\\s*True)(?![^)]*secure\\s*=\\s*True)"},
-    {"pattern": "document\\.cookie\\s*=[^\\n]{0,60}(token|session|jwt)"},
-    {"pattern": "Set-Cookie[^\\n]*(?:;\\s*)?(?:[^\\n]*)(?<!HttpOnly)(?<!Secure)(?<!SameSite=[LlSs])"}
+    {
+     "pattern": "set_cookie\\s*\\((?![^)]*httponly\\s*=\\s*True)(?![^)]*secure\\s*=\\s*True)"
+    },
+    {
+     "pattern": "document\\.cookie\\s*=[^\\n]{0,60}(token|session|jwt)"
+    },
+    {
+     "pattern": "Set-Cookie[^\\n]*(?:;\\s*)?(?:[^\\n]*)(?<!HttpOnly)(?<!Secure)(?<!SameSite=[LlSs])"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(httponly|secure\\s*=\\s*True|same_site)", "window": 0}
+    {
+     "pattern": "(?i)(httponly|secure\\s*=\\s*True|same_site)",
+     "window": 0
+    }
    ],
    "fix": "会话 Cookie 加 HttpOnly + Secure + SameSite=Lax/Strict；前端把 token 存 localStorage 且不设过期时间是常见误区，能用 HttpOnly Cookie 就别让 JS 读。",
    "retest": "浏览器 DevTools 看响应头三项齐全；构造 XSS 载荷确认拿不到会话 Cookie。"
@@ -251,15 +511,32 @@
    "kind": "pattern",
    "severity": "low",
    "confidence_base": 0.35,
-   "languages": ["python", "php", "ruby", "java", "html"],
-   "cwe": ["CWE-352"],
-   "owasp": ["A01:2021 访问控制失效"],
+   "languages": [
+    "python",
+    "php",
+    "ruby",
+    "java",
+    "html"
+   ],
+   "cwe": [
+    "CWE-352"
+   ],
+   "owasp": [
+    "A01:2021 访问控制失效"
+   ],
    "sinks": [
-    {"pattern": "(?i)@(?:app|route|blue|bp)\\.(?:post|put|patch|delete)\\s*\\("},
-    {"pattern": "<form[^>]+method\\s*=\\s*[\"']?post"}
+    {
+     "pattern": "(?i)@(?:app|route|blue|bp)\\.(?:post|put|patch|delete)\\s*\\("
+    },
+    {
+     "pattern": "<form[^>]+method\\s*=\\s*[\"']?post"
+    }
    ],
    "unless_present": [
-    {"pattern": "(?i)(csrf|csrftoken|synchronizer_token|same_site|X-Requested-With|authorization\\s*[:=])", "window": 6}
+    {
+     "pattern": "(?i)(csrf|csrftoken|synchronizer_token|same_site|X-Requested-With|authorization\\s*[:=])",
+     "window": 6
+    }
    ],
    "fix": "表单走 CSRF token（或 Cookie SameSite=Lax/Strict）；纯 Bearer token 的 SPA 可豁免，但要确认认证确实不依赖 Cookie。",
    "retest": "从别的站点发一个自动 POST，应 403；去掉 token 提交应失败而不是成功。",
@@ -271,10 +548,26 @@
    "kind": "dependency",
    "severity": "critical",
    "confidence_base": 0.8,
-   "languages": ["java"],
-   "cwe": ["CWE-502", "CWE-917"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "maven", "name": "log4j-core", "vulnerable_below": "2.17.1", "cve": "CVE-2021-44228"},
+   "languages": [
+    "java"
+   ],
+   "cwe": [
+    "CWE-502",
+    "CWE-917"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "maven",
+    "name": "log4j-core",
+    "vulnerable_below": "2.17.1",
+    "cve": "CVE-2021-44228",
+    "module_alias": [
+     "org.apache.logging.log4j",
+     "log4j"
+    ]
+   },
    "fix": "升级到 log4j-core >= 2.17.1；无法立即升级时移除 JndiLookup 类并设 log4j2.formatMsgNoLookups=true。",
    "retest": "确认版本已升；用 ${jndi:ldap://...} 探针日志不再触发外连。",
    "note": "内置建议集是样例基线（无网络、不等同 advisory feed），生产接入请用 npm audit / pip-audit / cargo audit 复核。"
@@ -285,10 +578,24 @@
    "kind": "dependency",
    "severity": "critical",
    "confidence_base": 0.75,
-   "languages": ["python"],
-   "cwe": ["CWE-502"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "pypi", "name": "pyyaml", "vulnerable_below": "5.4", "cve": "CVE-2020-14343"},
+   "languages": [
+    "python"
+   ],
+   "cwe": [
+    "CWE-502"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "pypi",
+    "name": "pyyaml",
+    "vulnerable_below": "5.4",
+    "cve": "CVE-2020-14343",
+    "module_alias": [
+     "yaml"
+    ]
+   },
    "fix": "升级到 PyYAML >= 5.4，并统一改用 yaml.safe_load。",
    "retest": "用 !!python/object/apply:os.system 载荷确认不再被反序列化执行。",
    "note": "样例基线，非完整 feed。"
@@ -299,10 +606,25 @@
    "kind": "dependency",
    "severity": "high",
    "confidence_base": 0.7,
-   "languages": ["javascript", "typescript"],
-   "cwe": ["CWE-77"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "npm", "name": "lodash", "vulnerable_below": "4.17.21", "cve": "CVE-2021-23337"},
+   "languages": [
+    "javascript",
+    "typescript"
+   ],
+   "cwe": [
+    "CWE-77"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "npm",
+    "name": "lodash",
+    "vulnerable_below": "4.17.21",
+    "cve": "CVE-2021-23337",
+    "module_alias": [
+     "lodash"
+    ]
+   },
    "fix": "升级 lodash >= 4.17.21；同时检查 template 的输入是否可控。",
    "retest": "npm ls lodash 确认解析后的版本；audit 报告里该条消失。",
    "note": "样例基线，非完整 feed。"
@@ -313,10 +635,25 @@
    "kind": "dependency",
    "severity": "high",
    "confidence_base": 0.7,
-   "languages": ["javascript", "typescript"],
-   "cwe": ["CWE-1321"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "npm", "name": "minimist", "vulnerable_below": "1.2.6", "cve": "CVE-2022-3517"},
+   "languages": [
+    "javascript",
+    "typescript"
+   ],
+   "cwe": [
+    "CWE-1321"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "npm",
+    "name": "minimist",
+    "vulnerable_below": "1.2.6",
+    "cve": "CVE-2022-3517",
+    "module_alias": [
+     "minimist"
+    ]
+   },
    "fix": "升级 minimist >= 1.2.6（通常随依赖树升级），用 npm audit fix 复核。",
    "retest": "npm ls minimist 检查实际解析版本，不只是 package.json 声明。",
    "note": "样例基线，非完整 feed。"
@@ -327,10 +664,24 @@
    "kind": "dependency",
    "severity": "medium",
    "confidence_base": 0.7,
-   "languages": ["python"],
-   "cwe": ["CWE-522"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "pypi", "name": "requests", "vulnerable_below": "2.31.0", "cve": "CVE-2023-32695"},
+   "languages": [
+    "python"
+   ],
+   "cwe": [
+    "CWE-522"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "pypi",
+    "name": "requests",
+    "vulnerable_below": "2.31.0",
+    "cve": "CVE-2023-32695",
+    "module_alias": [
+     "requests"
+    ]
+   },
    "fix": "升级 requests >= 2.31.0；重构前确认 .netrc 凭证不会随重定向跨协议发出。",
    "retest": "pip show requests 看版本；抓包确认重定向不带 Authorization。",
    "note": "样例基线，非完整 feed。"
@@ -341,10 +692,25 @@
    "kind": "dependency",
    "severity": "high",
    "confidence_base": 0.7,
-   "languages": ["python"],
-   "cwe": ["CWE-787"],
-   "owasp": ["A06:2021 易受攻击组件"],
-   "advisory": {"ecosystem": "pypi", "name": "pillow", "vulnerable_below": "10.1.0", "cve": "CVE-2023-4863"},
+   "languages": [
+    "python"
+   ],
+   "cwe": [
+    "CWE-787"
+   ],
+   "owasp": [
+    "A06:2021 易受攻击组件"
+   ],
+   "advisory": {
+    "ecosystem": "pypi",
+    "name": "pillow",
+    "vulnerable_below": "10.1.0",
+    "cve": "CVE-2023-4863",
+    "module_alias": [
+     "PIL",
+     "pillow"
+    ]
+   },
    "fix": "升级 Pillow >= 10.1.0；上传的图片处理链路优先升级这条。",
    "retest": "pip show pillow 确认版本；用已知 PoC webp 图片回归一次解析接口不崩。",
    "note": "样例基线，非完整 feed。"
