@@ -176,7 +176,8 @@ class TestShipCheck(unittest.TestCase):
     """
 
     REPORT_OK = (
-        "# 交付报告：demo\n\n## 改了什么\n新增 add()。\n\n## 为什么\n"
+        "# 交付报告：demo\n\n## 0. 主张\n在 1 万行数据下 add() 结果与旧实现逐字段一致。\n\n"
+        "## 改了什么\n新增 add()。\n\n## 为什么\n"
         "用户要加法。\n\n## 怎么验证的\npython -m unittest → OK\n\n"
         "## 剩余风险\n无。\n\n复用阶梯：停在 2——仓库已有 calc 模块，直接扩展。\n")
 

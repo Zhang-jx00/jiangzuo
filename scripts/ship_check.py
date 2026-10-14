@@ -13,7 +13,8 @@
   1. 测试通道：自动识别 pytest / unittest / npm / cargo / go / make 并**执行**；
      识别不到时 L2/L3 判失败（"没测过"不等于"测不了"），L1 降级为警告。
   2. 交付前静态检查：调用 preflight.py --all --strict（密钥/冲突标记/调试残留）。
-  3. 交付报告四问：改了什么 / 为什么 / 怎么验证 / 剩余风险，外加**复用阶梯停在第几级**。
+  3. 交付报告：**主张（可证伪的一句话）**+ 改了什么 / 为什么 / 怎么验证 / 剩余风险，
+     外加**复用阶梯停在第几级**。
   4. 自净：git 工作区里不该留探针与试验残留（_probe*、_verify*、*.log、*.tmp、*.bak、scratch/）。
   5. 项目常驻标准：docs/jiangzuo/constitution.md 存在且有内容（L2/L3 必备）。
 
@@ -42,6 +43,7 @@ PROBE_PATTERNS = (
 )
 
 REPORT_KEYS = (
+    ("主张（可证伪）", re.compile(r"主张|断言|CLAIM")),
     ("改了什么", re.compile(r"改了什么|变更内容|改动清单")),
     ("为什么", re.compile(r"为什么|理由|动机")),
     ("怎么验证的", re.compile(r"怎么验证|验证|测试证据")),

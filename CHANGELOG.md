@@ -2,6 +2,27 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.11.0] - 2026-10-14
+
+把"自己审自己"从心态变成可执行协议。源：addyosmani/agent-skills 的 `doubt-driven-development` 与 `code-simplification` 原文精读（溯源 research-notes #39）。
+
+### 新增
+
+- **自疑循环**（code-review.md）：CLAIM（一句**可证伪**的主张 + 为什么重要）→ EXTRACT（拆成可观测预测）→ DOUBT（专找未言明的假设 / 没处理的边界 / 隐藏耦合与共享状态，"假定作者过度自信"——包括你自己）→ RECONCILE（逐条跑命令对账）→ **STOP**（下一轮只剩琐碎发现即停；**满 3 轮交回用户，不自己死磕第 4 轮**）。
+- **发现分类按序取一**（同节表格）：契约误读 > 有效且可执行 > 有效但属取舍 > 噪音。先命中先归类——取舍类进 ADR/技术债而不是硬改，噪音记录后丢弃而不是逐条回应。
+- **交付报告 §0 主张**（delivery-report.md）：主张 / 为什么重要 / 推翻它需要什么 / 我实际跑了什么来推翻它。
+- **删除三查**（refactor-performance.md）：Chesterton 的篱笆（说不出它为什么存在就不要删，`git blame` / `git log -L` 查原始上下文）＋ **500 行阈值**（预计触及 >500 行先写 codemod，不手改，脚本要可重跑且不动测试期望）。
+
+### 变更
+
+- `ship_check.py` 的报告检查从"四问＋阶梯"扩为"**主张**＋四问＋阶梯"——缺可证伪主张直接 SHIP-BLOCKED。红/绿实测：报告无主张 → `✘ 交付报告 r.md 缺：主张（可证伪）`，exit 1；补上主张后 SHIP-OK。
+
+### 回归
+
+- 18 用例全绿（其中绿测夹具因新增字段先红一次，改夹具后复绿——证明这条要求真的在起作用，不是装饰）。
+- validate 10 项 0 错 0 警；preflight `--strict` 退出 0；`ship_check --level L1` SHIP-OK。
+- **入口正文零增长**（仍 5112 tokens）：本版全部改动落在分册与模板，没有挤占常驻上下文。
+
 ## [0.10.0] - 2026-10-14
 
 把"收尾五步"里能机械核对的部分做成一道**交付闸门**——对标 addyosmani/agent-skills 的 `definition-of-done.md` 与 mattpocock/skills 的"提交前必过 /code-review"（溯源 research-notes #37–#38）。
