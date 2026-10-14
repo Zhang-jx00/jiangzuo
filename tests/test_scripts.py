@@ -23,8 +23,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
-SCRIPT_NAMES = ["evolve_report.py", "lookup.py", "new_doc.py", "preflight.py",
-                "project_scan.py", "ship_check.py", "validate_skill.py"]
+SCRIPT_NAMES = ["audit_index.py", "evolve_report.py", "lookup.py", "new_doc.py",
+                "preflight.py", "project_scan.py", "ship_check.py",
+                "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -310,6 +311,111 @@ class TestRouting(unittest.TestCase):
             r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
             self.assertIn("未登记进 lookup 路由词表", r.stdout)
             self.assertIn("ghost-booklet.md", r.stdout)
+
+
+class TestAuditIndex(unittest.TestCase):
+    """R2：文件索引与忽略模块——稳定、可复现、跳过要留痕。"""
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        mode = "wb" if isinstance(text, bytes) else "w"
+        with io.open(path, mode, encoding=None if mode == "wb" else "utf-8") as f:
+            f.write(text)
+
+    def _tree(self, root):
+        self._write(root, ".gitignore",
+                    "# 注释\nbuild/\n*.log\n!keep.log\ndocs/*.tmp\n")
+        self._write(root, "src/.gitignore", "secret*\n")
+        self._write(root, "app.py", "print(1)\n")
+        self._write(root, "main.ts", "let a = 1\n")
+        self._write(root, "Service.java", "class Service {}\n")
+        self._write(root, "build/out.js", "junk\n")
+        self._write(root, "run.log", "junk\n")
+        self._write(root, "keep.log", "kept\n")
+        self._write(root, "docs/a.tmp", "junk\n")
+        self._write(root, "docs/b.md", "kept\n")
+        self._write(root, "src/secret_keys.py", "junk\n")
+        self._write(root, "src/util.py", "kept\n")
+
+    def _index(self, root, extra=None):
+        out = os.path.join(root, "_idx.json")
+        cmd = [os.path.join(SCRIPTS, "audit_index.py"), root,
+               "--no-git", "--json", out]
+        if extra:
+            cmd += extra
+        r = run(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_index_is_reproducible_and_sorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            first, _ = self._index(tmp)
+            second, _ = self._index(tmp)
+            self.assertEqual(first["index_sha1"], second["index_sha1"],
+                             "同一棵树两次索引必须逐字节可复现")
+            paths = [f["path"] for f in first["files"]]
+            self.assertEqual(paths, sorted(paths), "清单顺序必须稳定（按路径排序）")
+            self.assertIn("app.py", paths)
+
+    def test_index_honors_ignore_rules_with_negation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._index(tmp)
+            paths = set(f["path"] for f in data["files"])
+            for gone in ("build/out.js", "run.log", "docs/a.tmp", "src/secret_keys.py"):
+                self.assertNotIn(gone, paths, "%s 应被忽略规则排除" % gone)
+            for kept in ("keep.log", "docs/b.md", "src/util.py", ".gitignore"):
+                self.assertIn(kept, paths, "%s 不该被误伤（!keep.log 取反/普通文件）" % kept)
+
+    def test_index_records_skips_instead_of_silently_dropping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            self._write(tmp, "asset.bin", b"\x00\x01\x02binary")
+            self._write(tmp, "huge.py", "x = 1\n" * 400)  # >1KB
+            data, _ = self._index(tmp, ["--max-file-kb", "1"])
+            paths = set(f["path"] for f in data["files"])
+            self.assertNotIn("asset.bin", paths)
+            self.assertNotIn("huge.py", paths)
+            reasons = dict((s["path"], s["reason"]) for s in data["skipped"])
+            self.assertEqual("binary", reasons.get("asset.bin"))
+            self.assertEqual("oversize", reasons.get("huge.py"))
+
+    def test_index_emits_relative_posix_paths_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, stdout = self._index(tmp)
+            blob = json.dumps(data, ensure_ascii=False) + stdout
+            self.assertNotIn(os.path.abspath(tmp).replace("\\", "/"), blob,
+                             "报告不得泄露本机绝对路径（跨环境失效且可能含用户名）")
+            for rec in data["files"]:
+                self.assertNotIn("\\", rec["path"])
+
+    def test_index_hash_tracks_content_not_just_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            before, _ = self._index(tmp)
+            self._write(tmp, "app.py", "print(2)\n")
+            after, _ = self._index(tmp)
+            self.assertNotEqual(before["index_sha1"], after["index_sha1"],
+                                "内容哈希不进索引键，增量缓存就是假的")
+            changed = [f for f in after["files"] if f["path"] == "app.py"][0]
+            old = [f for f in before["files"] if f["path"] == "app.py"][0]
+            self.assertNotEqual(changed["sha1"], old["sha1"])
+
+    def test_index_maps_languages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            data, _ = self._index(tmp)
+            langs = dict((f["path"], f["lang"]) for f in data["files"])
+            self.assertEqual("python", langs["app.py"])
+            self.assertEqual("typescript", langs["main.ts"])
+            self.assertEqual("java", langs["Service.java"])
+            self.assertEqual("markdown", langs["docs/b.md"])
 
 
 if __name__ == "__main__":
