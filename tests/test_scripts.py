@@ -13,6 +13,7 @@ import glob
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -264,6 +265,51 @@ class TestShipCheck(unittest.TestCase):
             r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("交付报告", r.stdout)
+
+
+class TestRouting(unittest.TestCase):
+    """检索层是"响应成本"的第一道闸：自然短语必须能 top-1 命中正确分册。
+
+    回归背景：lookup 早期要求空格分开的同义词，agent 传"数据库迁移回滚"这类
+    自然短语直接无命中，只能整册载入——路由失败 = token 白花。
+    """
+
+    CASES = [("数据库迁移回滚", "database"), ("越权鉴权漏洞", "security"),
+             ("根因排查报错", "debugging"), ("接手陌生项目摸底", "onboarding"),
+             ("验收标准怎么写", "requirements"), ("代码审查清单", "code-review"),
+             ("慢查询性能优化", "refactor-performance"), ("上线部署检查", "devops"),
+             ("测试金字塔分层", "testing"), ("组件拆分页面状态", "frontend"),
+             ("技术选型决策记录", "design"), ("线上事故止血复盘", "incident"),
+             ("交付报告文档同步", "docs-delivery"), ("协调其他技能分包商", "skill-orchestration"),
+             ("接口契约字段命名", "api-design"), ("给技能加规则删规则", "self-evolution"),
+             ("配色视觉排版走查", "ui-design")]
+
+    def test_natural_phrases_route_top1(self):
+        misses = []
+        for phrase, expected in self.CASES:
+            r = run([os.path.join(SCRIPTS, "lookup.py"), phrase, "--top", "1"])
+            got = re.search(r"## (\S+?)\.md", r.stdout)
+            if not got or got.group(1) != expected:
+                misses.append("%s → 期望 %s，实得 %s" % (
+                    phrase, expected, got.group(1) if got else "无命中"))
+        self.assertEqual([], misses, "自然短语路由失败 %d/%d" % (len(misses), len(self.CASES)))
+
+    def test_validate_flags_unregistered_booklet(self):
+        """红测：新加一本没登记路由词表的分册，校验器必须点名。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "sk")
+            os.makedirs(os.path.join(skill, "references"))
+            os.makedirs(os.path.join(skill, "scripts"))
+            with io.open(os.path.join(skill, "scripts", "lookup.py"), "w", encoding="utf-8") as f:
+                f.write("BOOKLET_ALIASES = {\n    \"references/known.md\": \"已知 分册\",\n}\n")
+            for name in ("known.md", "ghost-booklet.md"):
+                with io.open(os.path.join(skill, "references", name), "w", encoding="utf-8") as f:
+                    f.write("---\nname: sk\ndescription: d\n---\n")
+            with io.open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
+            self.assertIn("未登记进 lookup 路由词表", r.stdout)
+            self.assertIn("ghost-booklet.md", r.stdout)
 
 
 if __name__ == "__main__":

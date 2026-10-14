@@ -20,3 +20,4 @@ node_modules/
 # 本技能运行产物不应进技能仓库（例外：本仓库自己的常驻标准，用于自我约束）
 docs/jiangzuo/*
 !docs/jiangzuo/constitution.md
+!docs/jiangzuo/evolution.md

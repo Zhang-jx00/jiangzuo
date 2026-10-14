@@ -13,6 +13,7 @@
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
   7. README 声明的脚本/模板/分册数量与磁盘实物一致（防文档滞后）
+  8. 每本分册都登记在 lookup.py 的 BOOKLET_ALIASES 路由词表里（防检索层漏配）
   7. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
 
 会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
@@ -297,6 +298,30 @@ def check_readme_counts(skill_dir):
         info("README 计数与实物一致（脚本/模板/分册 ✓）")
 
 
+def check_lookup_aliases(skill_dir):
+    """每本分册都必须登记进 lookup 的路由词表。
+
+    实测教训：BOOKLET_ALIASES 写了却从没被打分用过，新分册也没登记——
+    等于检索层看不见它。加了分册忘了登记，这种漂移只能靠机器拦。
+    """
+    lookup_py = os.path.join(skill_dir, "scripts", "lookup.py")
+    ref_dir = os.path.join(skill_dir, "references")
+    if not (os.path.isfile(lookup_py) and os.path.isdir(ref_dir)):
+        return
+    with io.open(lookup_py, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    if "BOOKLET_ALIASES" not in text:
+        warn("scripts/lookup.py 里没有 BOOKLET_ALIASES 路由词表")
+        return
+    missing = [n for n in sorted(os.listdir(ref_dir))
+               if n.endswith(".md") and ("references/" + n) not in text]
+    if missing:
+        warn("%d 本分册未登记进 lookup 路由词表：%s —— 检索层找不到它们，agent 只能整册读"
+             % (len(missing), ", ".join(missing)))
+    else:
+        info("分册全部登记进 lookup 路由词表 ✓")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -347,6 +372,7 @@ def main():
             check_scripts(skill_dir)
             check_booklet_contract(skill_dir)
             check_readme_counts(skill_dir)
+            check_lookup_aliases(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:
