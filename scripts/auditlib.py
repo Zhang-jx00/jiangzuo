@@ -326,17 +326,14 @@ def iter_files(root):
             yield norm_rel(full, root), full
 
 
-def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
-                include_binary=False, extra_ignore=None, exclude=None,
-                extra_patterns=None):
-    """产出可复现的文件清单。git 可用时用 git 的忽略判定（语义最准），
-    否则用内置 .gitignore 解析器；两条路径都再过一遍内置依赖目录黑名单。
+def list_scan_paths(root, use_git=True, extra_ignore=None, extra_patterns=None):
+    """忽略规则求值后的相对路径清单（POSIX 风格、已排序）。
 
-    exclude：本工具自己写出的产物（如 --json 输出文件） must not 进清单，
-    否则"扫第二次结果变了"会毁掉可复现性。
+    单独成函数是为了让"分步跑"（build_index → build_map → coarse）与
+    "单遍跑"（audit_scan.prescan）共用同一份文件口径——两处各走一遍目录，
+    结论就会对不上，而这类分叉最难查。
     """
     root = os.path.abspath(root)
-    skip_set = set(exclude or ())
     rules = collect_ignore_files(root, extra_ignore)
     for pat in (extra_patterns or []):
         rules.add_pattern(pat, source="cli")
@@ -349,7 +346,7 @@ def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
             generator = "git-ls-files"
             ignored = _git_list(root, "ignored")
             if ignored:
-                rules.sources.append("git 忽略判定（%d 个文件被 .gitignore 排除）"
+                rules.sources.append(u"git 忽略判定（%d 个文件被 .gitignore 排除）"
                                      % len(ignored))
     if rel_paths is None:
         rel_paths = []
@@ -357,6 +354,23 @@ def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
             if rules.is_ignored(rel):
                 continue
             rel_paths.append(rel)
+    return sorted(set(rel_paths)), rules, generator
+
+
+def build_index(root, use_git=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES,
+                include_binary=False, extra_ignore=None, exclude=None,
+                extra_patterns=None):
+    """产出可复现的文件清单。git 可用时用 git 的忽略判定（语义最准），
+    否则用内置 .gitignore 解析器；两条路径都再过一遍内置依赖目录黑名单。
+
+    exclude：本工具自己写出的产物（如 --json 输出文件） must not 进清单，
+    否则"扫第二次结果变了"会毁掉可复现性。
+    """
+    root = os.path.abspath(root)
+    skip_set = set(exclude or ())
+    rel_paths, rules, generator = list_scan_paths(
+        root, use_git=use_git, extra_ignore=extra_ignore,
+        extra_patterns=extra_patterns)
 
     files, skipped = [], []
     n_binary = n_oversize = n_hidden = 0
@@ -446,6 +460,33 @@ COMMENT_PREFIXES = ("#", "//", "*", "/*")
 STRING_SPAN_RX = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"")
 
 
+def code_lines(raw_iter):
+    """从"原始行迭代器"产出 (行号, 原文, 剥字面量版, 是否截断)。
+
+    单独拆出来是为了让**文件路径**和**已在内存里的文本**共用同一套过滤规则：
+    两遍实现迟早分叉，注释/文档块的边界条件就是分叉点。
+    """
+    block = None
+    for i, raw in enumerate(raw_iter, 1):
+        stripped = raw.strip()
+        if block:
+            if block in raw:
+                block = None
+            continue
+        if stripped.startswith(COMMENT_PREFIXES):
+            continue
+        for delim in DOCSTRING_DELIMS:
+            if stripped.startswith(delim) and stripped.count(delim) == 1:
+                block = delim
+                break
+        if block:
+            continue
+        masked = STRING_SPAN_RX.sub(
+            lambda m: m.group(0)[0] + m.group(0)[-1], raw)
+        truncated = len(raw) > DEFAULT_MAX_LINE_BYTES
+        yield i, raw, masked, truncated
+
+
 def iter_code_lines(path, max_bytes=None, ignore_strings=False, both=False):
     """**只产出可执行代码行**：跳过注释行与三引号块，可选把单行字符串字面量剥掉。
 
@@ -462,36 +503,16 @@ def iter_code_lines(path, max_bytes=None, ignore_strings=False, both=False):
     limit = DEFAULT_MAX_FILE_BYTES if max_bytes is None else max_bytes
     if file_size(path) > limit:
         return
-    block = None
     try:
         with io.open(path, "r", encoding="utf-8", errors="replace") as f:
-            for i, raw in enumerate(f, 1):
-                stripped = raw.strip()
-                if block:
-                    if block in raw:
-                        block = None
-                    continue
-                if stripped.startswith(COMMENT_PREFIXES):
-                    continue
-                for delim in DOCSTRING_DELIMS:
-                    if stripped.startswith(delim) and stripped.count(delim) == 1:
-                        block = delim
-                        break
-                if block:
-                    continue
-                masked = STRING_SPAN_RX.sub(
-                    lambda m: m.group(0)[0] + m.group(0)[-1], raw)
-                line = raw
-                truncated = False
-                if ignore_strings:
-                    line = masked
-                if len(line) > DEFAULT_MAX_LINE_BYTES:
+            for lineno, raw, masked, trunc in code_lines(f):
+                line = masked if ignore_strings else raw
+                if trunc:
                     line = line[:DEFAULT_MAX_LINE_BYTES]
-                    truncated = True
                 if both:
-                    yield i, raw, masked, truncated
+                    yield lineno, raw, masked, trunc
                 else:
-                    yield i, line, truncated
+                    yield lineno, line, trunc
     except OSError:
         return
 

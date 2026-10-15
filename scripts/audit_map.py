@@ -245,84 +245,100 @@ def detect_deps(root, rel, text):
     return deps
 
 
+def new_state():
+    return {"routes": [], "entrypoints": [], "auth_boundaries": [],
+            "dependencies": [], "env_vars": set(), "endpoints": set(),
+            "lockfiles": [], "manifests": [], "scanned": 0}
+
+
+def consume_file(state, root, rec, lines):
+    """把**一个文件**抽进地图状态。
+
+    单独成函数是为了让 `build_map` 与 `audit_scan.prescan` 共用同一份抽取规则——
+    两处各写一遍，迟早和粗筛对不上账（等价性测试就是拦这个的）。
+    """
+    rel, lang = rec["path"], rec["lang"]
+    base = os.path.basename(rel)
+    if base in project_scan.LOCKFILES:
+        state["lockfiles"].append(rel)
+    if base in project_scan.MANIFESTS or base.startswith("requirements"):
+        state["manifests"].append(rel)
+    if base.startswith(".env") and "example" not in base and "sample" not in base:
+        # 真实 .env 不进内容扫描（值可能含密钥），只登记存在性，交给 preflight/规则链
+        state["endpoints"].add("dotenv:%s" % rel)
+        return
+    if lang not in auditlib.SOURCE_LANGS and lang not in ("dotenv", "yaml", "ini",
+                                                          "json", "toml", "text"):
+        return
+    if not lines:
+        return
+    state["scanned"] += 1
+    if base in ENTRY_NAMES or len(rel.split("/")) <= 2:
+        reason = u"文件名即入口约定" if base in ENTRY_NAMES else ""
+        for call, why in ENTRY_CALLS:
+            for lineno, line, _t in lines:
+                if call in line:
+                    reason = why
+                    break
+            if reason:
+                break
+        if base in ENTRY_NAMES or reason:
+            state["entrypoints"].append({"path": rel, "lang": lang,
+                                         "reason": reason or u"文件名约定"})
+    if lang in auditlib.SOURCE_LANGS or lang == "vue":
+        state["routes"].extend(detect_routes(root, rel, lang, lines))
+    if base in project_scan.MANIFESTS or base.startswith("requirements"):
+        # 只有清单文件才整份拼文本（几十 KB 级）；源码一律逐行扫，
+        # 避免"为了抽依赖把每个源文件都拼成一个大字符串"这种内存自伤
+        state["dependencies"].extend(detect_deps(root, rel, "".join(
+            t for _n, t, _x in lines)))
+    if lang in auditlib.SOURCE_LANGS:
+        # 数据文件（json/yaml/md，包括本工具自己写出的地图）不参与
+        # 环境变量/连接点/鉴权边界抽取，否则第二次扫描会读到第一次的产物，
+        # 地图就会"越扫越脏"——可复现性是被这条毁掉的（测试实测出来）
+        for lineno, line, _t in lines:
+            for m in ENV_READ_RX.finditer(line):
+                name = m.group(1) or m.group(2) or m.group(3)
+                if name:
+                    state["env_vars"].add(name)
+            for m in ENDPOINT_RX.finditer(line):
+                host = _host_of(m.group(0))
+                if host and len(state["endpoints"]) < URL_VARS["max_items"]:
+                    state["endpoints"].add(host)
+            if AUTH_RX.search(line):
+                state["auth_boundaries"].append(
+                    {"file": rel, "line": lineno,
+                     "marker": auditlib.redact(line.strip())[:80]})
+                if len(state["auth_boundaries"]) > 400:
+                    break
+
+
 def build_map(root, index=None, use_git=True, max_file_kb=2048, exclude=None):
     root = os.path.abspath(root)
     if index is None:
         index = auditlib.build_index(root, use_git=use_git,
                                      max_file_bytes=max_file_kb * 1024,
                                      exclude=exclude)
+    state = new_state()
+    for rec in index["files"]:
+        abs_path = os.path.join(root, rec["path"].replace("/", os.sep))
+        consume_file(state, root, rec, list(auditlib.iter_lines(abs_path)))
+    return finalize_map(state, root, index)
+
+
+def finalize_map(state, root, index):
+    """把累积好的状态收口成地图。抽取在 consume_file，这里只排序、去重、算哈希。"""
     files = index["files"]
     langs = {}
     for rec in files:
         langs[rec["lang"]] = langs.get(rec["lang"], 0) + 1
-
-    routes, entrypoints, auth_boundaries, dependencies = [], [], [], []
-    env_vars, endpoints = set(), set()
-    lockfiles, manifests = [], []
-    scanned = 0
-    for rec in files:
-        rel, lang = rec["path"], rec["lang"]
-        base = os.path.basename(rel)
-        if base in project_scan.LOCKFILES:
-            lockfiles.append(rel)
-        if base in project_scan.MANIFESTS or base.startswith("requirements"):
-            manifests.append(rel)
-        if base.startswith(".env") and "example" not in base and "sample" not in base:
-            # 真实 .env 不进内容扫描（值可能含密钥），只登记存在性，交给 preflight/规则链
-            endpoints.add("dotenv:%s" % rel)
-            continue
-        if lang not in auditlib.SOURCE_LANGS and lang not in ("dotenv", "yaml", "ini",
-                                                             "json", "toml", "text"):
-            continue
-        abs_path = os.path.join(root, rel.replace("/", os.sep))
-        lines = list(auditlib.iter_lines(abs_path))
-        if not lines:
-            continue
-        scanned += 1
-        if base in ENTRY_NAMES or len(rel.split("/")) <= 2:
-            reason = "文件名即入口约定" if base in ENTRY_NAMES else ""
-            for call, why in ENTRY_CALLS:
-                for lineno, line, _t in lines:
-                    if call in line:
-                        reason = why
-                        break
-                if reason:
-                    break
-            if base in ENTRY_NAMES or reason:
-                entrypoints.append({"path": rel, "lang": lang, "reason": reason or "文件名约定"})
-        if lang in auditlib.SOURCE_LANGS or lang == "vue":
-            routes.extend(detect_routes(root, rel, lang, lines))
-        if base in project_scan.MANIFESTS or base.startswith("requirements"):
-            # 只有清单文件才整份拼文本（几十 KB 级）；源码一律逐行扫，
-            # 避免"为了抽依赖把每个源文件都拼成一个大字符串"这种内存自伤
-            dependencies.extend(detect_deps(root, rel, "".join(
-                t for _n, t, _x in lines)))
-        for lineno, line, _t in lines:
-            if lang not in auditlib.SOURCE_LANGS:
-                break   # 数据文件（json/yaml/md，包括本工具自己写出的地图）不参与
-                        # 环境变量/连接点/鉴权边界抽取，否则第二次扫描会读到第一次的产物，
-                        # 地图就会"越扫越脏"——可复现性是被这条毁掉的（测试实测出来）
-            for m in ENV_READ_RX.finditer(line):
-                name = m.group(1) or m.group(2) or m.group(3)
-                if name:
-                    env_vars.add(name)
-            for m in ENDPOINT_RX.finditer(line):
-                host = _host_of(m.group(0))
-                if host and len(endpoints) < URL_VARS["max_items"]:
-                    endpoints.add(host)
-            if AUTH_RX.search(line):
-                auth_boundaries.append({"file": rel, "line": lineno,
-                                        "marker": auditlib.redact(line.strip())[:80]})
-                if len(auth_boundaries) > 400:
-                    break
-
+    routes = state["routes"]
     dep_uniq = {}
-    for d in dependencies:
+    for d in state["dependencies"]:
         key = (d["name"], d["manifest"])
         if key not in dep_uniq:
             dep_uniq[key] = d
     dependencies = sorted(dep_uniq.values(), key=lambda d: (d["name"], d["manifest"]))
-
     unauth = sorted(set(r["path"] for r in routes if not r["auth"]))
     payload = {
         "schema": MAP_SCHEMA,
@@ -330,15 +346,16 @@ def build_map(root, index=None, use_git=True, max_file_kb=2048, exclude=None):
         "languages": dict(sorted(langs.items(), key=lambda kv: (-kv[1], kv[0]))),
         "frameworks": sorted(set(project_scan.detect_frameworks(
             _frameworks_text(root, [f["path"] for f in files])))),
-        "entrypoints": sorted(entrypoints, key=lambda e: e["path"]),
+        "entrypoints": sorted(state["entrypoints"], key=lambda e: e["path"]),
         "routes": sorted(routes, key=lambda r: (r["file"], r["line"], r["method"])),
-        "auth_boundaries": sorted(auth_boundaries, key=lambda a: (a["file"], a["line"]))[:400],
+        "auth_boundaries": sorted(state["auth_boundaries"],
+                                  key=lambda a: (a["file"], a["line"]))[:400],
         "dependencies": dependencies,
-        "manifests": sorted(set(manifests)),
-        "lockfiles": sorted(set(lockfiles)),
-        "env_vars": sorted(env_vars)[:200],
-        "external_endpoints": sorted(endpoints),
-        "scanned_files": scanned,
+        "manifests": sorted(set(state["manifests"])),
+        "lockfiles": sorted(set(state["lockfiles"])),
+        "env_vars": sorted(state["env_vars"])[:200],
+        "external_endpoints": sorted(state["endpoints"]),
+        "scanned_files": state["scanned"],
     }
     payload["summary"] = {
         "routes_total": len(payload["routes"]),

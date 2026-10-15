@@ -953,5 +953,68 @@ class TestAuditCostModel(unittest.TestCase):
         self.assertLess(big["graph_parsed_files"], big["files_total"] // 4)
 
 
+class TestAuditFusion(unittest.TestCase):
+    """单遍前端（prescan）与分步前端必须给出**逐字节一致**的结论，否则融合就是漂移。"""
+
+    FILES = {
+        "requirements.txt": "flask==2.3.3\npyyaml==5.3\n",
+        "main.py": ("from flask import request, Flask\n"
+                    "import sqlite3\n"
+                    "app = Flask(__name__)\n\n\n"
+                    "@app.route('/search')\n"
+                    "def search():\n"
+                    "    q = request.args['q']\n"
+                    "    con = sqlite3.connect('db.sqlite')\n"
+                    "    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}')"
+                    ".fetchall()\n\n\n"
+                    "@app.route('/admin/users')\n"
+                    "def admin_users():\n"
+                    "    return []\n"),
+        "loader.py": "import yaml\n\n\ndef load(text):\n    return yaml.safe_load(text)\n",
+        "legacy.php": ("<?php\n"
+                       "$conn = mysqli_connect('localhost', 'u', 'p', 'db');\n"
+                       "$res = mysqli_query($conn, 'SELECT * FROM posts WHERE id = ' "
+                       ". $_GET['id']);\n"),
+    }
+
+    def _run_path(self, root, out_dir, extra):
+        # 产物写到被扫目录**之外**：否则上一次的输出会进下一次的索引，
+        # 两次运行的 index_sha1 天然不同——那是测试自己制造的污染，不是产品的错。
+        out = os.path.join(out_dir, "f%s.json" % ("".join(extra) or "x"))
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out] + extra)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_fused_equals_staged(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as out:
+            for rel, text in self.FILES.items():
+                path = os.path.join(tmp, rel.replace("/", os.sep))
+                with io.open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            fused = self._run_path(tmp, out, [])
+            staged = self._run_path(tmp, out, ["--staged"])
+            key = lambda p: [(f["rule_id"], f["file"], f["line"]) for f in p["findings"]]
+            self.assertTrue(key(fused), "两条路径都没查出东西＝这条锁是空的")
+            self.assertEqual(key(staged), key(fused),
+                             "单遍前端与分步前端的发现清单不一致")
+            self.assertEqual(fused["index_sha1"], staged["index_sha1"],
+                             "同一份文件两种走法算出的索引指纹不同＝忽略规则或口径分叉了")
+            self.assertEqual(fused["map_sha1"], staged["map_sha1"],
+                             "地图不一致：prescan 少抽了某个字段")
+            self.assertEqual(fused["stats"]["files_total"],
+                             staged["stats"]["files_total"])
+
+    def test_fused_is_the_default_and_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, text in self.FILES.items():
+                with io.open(os.path.join(tmp, rel.replace("/", os.sep)), "w",
+                             encoding="utf-8") as f:
+                    f.write(text)
+            r = run([os.path.join(SCRIPTS, "audit_scan.py"), tmp, "--help"])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("--staged", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

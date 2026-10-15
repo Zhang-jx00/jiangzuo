@@ -91,15 +91,49 @@ def _bucket_by_lang(rules, field, want_masked):
     return by_lang, wild
 
 
+def _build_buckets(rules):
+    return {"raw": _bucket_by_lang(rules, "sinks", False),
+            "mask": _bucket_by_lang(rules, "sinks", True),
+            "src": _bucket_by_lang(rules, "sources", False)}
+
+
+def _bucket_items(buckets, lang):
+    raw_by, raw_wild = buckets["raw"]
+    mask_by, mask_wild = buckets["mask"]
+    src_by, src_wild = buckets["src"]
+    return (raw_by.get(lang, []) + raw_wild,
+            mask_by.get(lang, []) + mask_wild,
+            src_by.get(lang, []) + src_wild)
+
+
+def _match_code_lines(buckets, lang, code_lines, imports, per_rule, src_per_rule):
+    """对一文件的代码行跑三种桶。coarse_screen（分步）与 prescan（单遍）共用这一份，
+    否则两条路径的命中口径会悄悄分叉——那比慢更糟。"""
+    raw_items, mask_items, src_items = _bucket_items(buckets, lang)
+    for lineno, raw, masked, _trunc in code_lines:
+        for m in IMPORT_RX.finditer(raw):
+            token = next((g for g in m.groups() if g), "")
+            if token:
+                imports.add(token.split(".")[0].lower())
+        for rid, rx in src_items:
+            if rx.search(raw):
+                src_per_rule.setdefault(rid, []).append(lineno)
+        for rid, rx in raw_items:
+            if rx.search(raw):
+                per_rule.setdefault(rid, []).append(lineno)
+        for rid, rx in mask_items:
+            if rx.search(masked):
+                per_rule.setdefault(rid, []).append(lineno)
+    return bool(raw_items or mask_items or src_items)
+
+
 def coarse_screen(root, index, rules, max_bytes, peak=False):
-    """确定性粗筛：一次打开、一次逐行，同时产出原文流与剥字面量流的命中。
+    """确定性粗筛（分步路径）：按语言分桶匹配 sink/source，只留命中位置。
 
     这一层不做任何判断，目的就是把深挖范围从"全仓"缩到"候选文件"——
     大仓扫描的内存与时间都跟这一步的取舍有关，所以禁止在这里读整仓内容。
     """
-    raw_by_lang, raw_wild = _bucket_by_lang(rules, "sinks", False)
-    mask_by_lang, mask_wild = _bucket_by_lang(rules, "sinks", True)
-    src_by_lang, src_wild = _bucket_by_lang(rules, "sources", False)
+    buckets = _build_buckets(rules)
     hits, imports = {}, set()
     trace = None
     peak_kb = 0
@@ -110,36 +144,107 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
     for rec in index["files"]:
         if trace:
             peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
-        lang = rec["lang"]
-        raw_items = raw_by_lang.get(lang, []) + raw_wild
-        mask_items = mask_by_lang.get(lang, []) + mask_wild
-        src_items = src_by_lang.get(lang, []) + src_wild
-        if not (raw_items or mask_items or src_items):
-            continue          # 这门语言没有任何相关模式 → 不读这个文件
         rel = rec["path"]
         abs_path = os.path.join(root, rel.replace("/", os.sep))
         per_rule, src_per_rule = {}, {}
-        for lineno, raw, masked, _trunc in auditlib.iter_code_lines(
-                abs_path, max_bytes=max_bytes, both=True):
-            for m in IMPORT_RX.finditer(raw):
-                token = next((g for g in m.groups() if g), "")
-                if token:
-                    imports.add(token.split(".")[0].lower())
-            for rid, rx in src_items:
-                if rx.search(raw):
-                    src_per_rule.setdefault(rid, []).append(lineno)
-            for rid, rx in raw_items:
-                if rx.search(raw):
-                    per_rule.setdefault(rid, []).append(lineno)
-            for rid, rx in mask_items:
-                if rx.search(masked):
-                    per_rule.setdefault(rid, []).append(lineno)
+        if not any(_bucket_items(buckets, rec["lang"])):
+            continue      # 这门语言没有任何相关模式 → 连文件都不打开
+        _match_code_lines(buckets, rec["lang"],
+                          auditlib.iter_code_lines(abs_path, max_bytes=max_bytes,
+                                                   both=True),
+                          imports, per_rule, src_per_rule)
         if per_rule or src_per_rule:
             hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
     if trace:
         peak_kb = max(peak_kb, trace.get_traced_memory()[1] // 1024)
         trace.stop()
     return hits, imports, peak_kb, []
+
+
+def prescan(root, rules, max_bytes, use_git=True, exclude=None, extra_patterns=None,
+            measure=False):
+    """**单遍前端**：一次打开、一次逐行，同时产出索引记录、地图状态与粗筛命中。
+
+    分步路径（build_index → build_map → coarse_screen）要把全仓读三遍、逐行循环跑三遍；
+    基准实测这三遍占掉整链约 65% 的时间。这里合并成一遍：
+    字节读进来算 sha1 与二进制判定 → 解码成行 → 地图抽取吃全行、粗筛吃代码行。
+    内存仍是逐文件释放（一次只持有一个文件的内容），不是把仓库读进内存。
+    """
+    root = os.path.abspath(root)
+    paths, rules_obj, generator = auditlib.list_scan_paths(
+        root, use_git=use_git, extra_patterns=extra_patterns)
+    skip_set = set(exclude or ())
+    buckets = _build_buckets(rules)
+    state = audit_map.new_state()
+    index_files, skipped, hits = [], [], {}
+    imports = set()
+    n_binary = n_oversize = n_hidden = 0
+    peak_kb = 0
+    if measure:
+        import tracemalloc
+        tracemalloc.start()
+    for rel in paths:
+        if measure:
+            peak_kb = max(peak_kb, tracemalloc.get_traced_memory()[1] // 1024)
+        if rel in skip_set or auditlib._builtin_pruned(rel):
+            continue
+        if rules_obj.is_ignored(rel):
+            continue
+        base = os.path.basename(rel)
+        if base.startswith(".") and base not in auditlib.DOTFILE_KEEP \
+                and not base.startswith(".env"):
+            n_hidden += 1
+            continue
+        abs_path = os.path.join(root, rel.replace("/", os.sep))
+        if not os.path.isfile(abs_path) or os.path.islink(abs_path):
+            continue
+        try:
+            with io.open(abs_path, "rb") as fh:
+                data = fh.read(max_bytes + 1)
+        except OSError:
+            skipped.append({"path": rel, "reason": "unreadable", "bytes": 0})
+            continue
+        size = len(data)
+        if size > max_bytes:
+            n_oversize += 1
+            skipped.append({"path": rel, "reason": "oversize", "bytes": size})
+            continue
+        binary = auditlib.NUL_BYTE in data[:8192]
+        if binary:
+            n_binary += 1
+            skipped.append({"path": rel, "reason": "binary", "bytes": size})
+            continue
+        rec = {"path": rel, "bytes": size,
+               "sha1": auditlib.sha1_hex(data), "lang": auditlib.lang_of(rel)}
+        index_files.append(rec)
+        raw_lines = data.decode("utf-8", "replace").splitlines(keepends=True)
+        audit_map.consume_file(state, root, rec,
+                               [(i, l, False) for i, l in enumerate(raw_lines, 1)])
+        raw_items, mask_items, src_items = _bucket_items(buckets, rec["lang"])
+        if raw_items or mask_items or src_items:
+            per_rule, src_per_rule = {}, {}
+            _match_code_lines(buckets, rec["lang"],
+                              auditlib.code_lines(raw_lines), imports,
+                              per_rule, src_per_rule)
+            if per_rule or src_per_rule:
+                hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
+    counts = {"files": len(index_files), "binary": n_binary, "oversize": n_oversize,
+              "hidden": n_hidden, "skipped_listed": len(skipped),
+              "total_bytes": sum(r["bytes"] for r in index_files)}
+    by_lang = {}
+    for rec in index_files:
+        by_lang[rec["lang"]] = by_lang.get(rec["lang"], 0) + 1
+    index = {"schema": auditlib.INDEX_SCHEMA, "generator": generator,
+             "ignore_sources": rules_obj.sources, "max_file_bytes": max_bytes,
+             "files": index_files, "skipped": skipped[:auditlib.SKIP_LIST_CAP],
+             "skipped_truncated": max(0, len(skipped) - auditlib.SKIP_LIST_CAP),
+             "counts": counts, "by_lang": by_lang}
+    index["index_sha1"] = auditlib.sha1_hex(json.dumps(
+        {"files": index_files, "counts": counts}, sort_keys=True, ensure_ascii=False))
+    if measure:
+        peak_kb = max(peak_kb, tracemalloc.get_traced_memory()[1] // 1024)
+        tracemalloc.stop()
+    return index, audit_map.finalize_map(state, root, index), hits, imports, peak_kb
 
 
 def _window_lines(all_lines, center, span):
@@ -591,7 +696,7 @@ def to_sarif(payload, skill_version):
 def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         map_path=None, graph_path=None, user_rules=None, cache_dir=None,
         incremental=False, max_file_kb=2048, report_memory=False,
-        ignore_patterns=None, version="0.18.0"):
+        ignore_patterns=None, fused=True, version="0.22.0"):
     root = os.path.abspath(root)
     max_bytes = max_file_kb * 1024
     rules, problems, _notes, _off = audit_rules.load_rules(user_rules or [])
@@ -608,38 +713,50 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     if cache_file and os.path.abspath(cache_file).startswith(root + os.sep):
         exclude.append(auditlib.norm_rel(cache_file, root))
 
-    index = auditlib.load_index(index_path) if index_path else auditlib.build_index(
-        root, max_file_bytes=max_bytes, exclude=exclude,
-        extra_patterns=ignore_patterns or None)
-    map_data = None
-    if map_path:
-        with io.open(map_path, "r", encoding="utf-8") as f:
-            map_data = json.load(f)
-    if map_data is None:
-        map_data = audit_map.build_map(root, index=index, exclude=exclude)
-
-    cache = load_cache(cache_file, rules_version) if incremental else None
-    dirty, cache_hits = [], []
-    if cache:
-        by_path = dict((rec["path"], rec["sha1"]) for rec in index["files"])
-        for rel, entry in cache.get("files", {}).items():
-            if by_path.get(rel) == entry.get("sha1") and \
-                    entry.get("rules_version") == rules_version:
-                cache_hits.append(rel)
-            else:
-                dirty.append(rel)
-        known = set(by_path)
-        dirty = [r for r in dirty if r in known]
-        for rel in known - set(cache.get("files", {})):
-            dirty.append(rel)
-    else:
-        dirty = [rec["path"] for rec in index["files"]]
-
-    scan_index = {"files": [rec for rec in index["files"] if rec["path"] in set(dirty)],
-                  "counts": index["counts"], "index_sha1": index["index_sha1"]}
     t0 = time.time()
-    hits, imports, peak_kb, _ = coarse_screen(root, scan_index, rules, max_bytes,
-                                              peak=report_memory)
+    cache = load_cache(cache_file, rules_version) if incremental else None
+    # 单遍前端（prescan）一次打开同时出索引、地图与粗筛命中；
+    # 走缓存增量时仍用分步路径——它要按文件粒度复用，融合在那条路上没有收益。
+    use_fused = bool(fused) and not index_path and not map_path and cache is None
+    if use_fused:
+        index, map_data, hits, imports, peak_kb = prescan(
+            root, rules, max_bytes, exclude=exclude,
+            extra_patterns=ignore_patterns or None, measure=report_memory)
+        scan_index = index
+        dirty = [rec["path"] for rec in index["files"]]
+        cache_hits = []
+    else:
+        index = auditlib.load_index(index_path) if index_path else auditlib.build_index(
+            root, max_file_bytes=max_bytes, exclude=exclude,
+            extra_patterns=ignore_patterns or None)
+        map_data = None
+        if map_path:
+            with io.open(map_path, "r", encoding="utf-8") as f:
+                map_data = json.load(f)
+        if map_data is None:
+            map_data = audit_map.build_map(root, index=index, exclude=exclude)
+
+        dirty, cache_hits = [], []
+        if cache:
+            by_path = dict((rec["path"], rec["sha1"]) for rec in index["files"])
+            for rel, entry in cache.get("files", {}).items():
+                if by_path.get(rel) == entry.get("sha1") and \
+                        entry.get("rules_version") == rules_version:
+                    cache_hits.append(rel)
+                else:
+                    dirty.append(rel)
+            known = set(by_path)
+            dirty = [r for r in dirty if r in known]
+            for rel in known - set(cache.get("files", {})):
+                dirty.append(rel)
+        else:
+            dirty = [rec["path"] for rec in index["files"]]
+
+        scan_index = {"files": [rec for rec in index["files"]
+                                if rec["path"] in set(dirty)],
+                      "counts": index["counts"], "index_sha1": index["index_sha1"]}
+        hits, imports, peak_kb, _ = coarse_screen(root, scan_index, rules, max_bytes,
+                                                  peak=report_memory)
     findings = deep_pattern_findings(root, scan_index, rules, hits, max_bytes)
     reused = []
     if cache:
@@ -734,6 +851,8 @@ def main():
     ap.add_argument("--ignore", action="append", default=[],
                     help=u"追加忽略模式，可多次（如 --ignore 'tests/fixtures/**' 排除自造夹具）")
     ap.add_argument("--report-memory", action="store_true", help=u"粗筛阶段用 tracemalloc 测峰值")
+    ap.add_argument("--staged", action="store_true",
+                    help=u"走分步前端（索引→地图→粗筛三遍），用于与单遍融合版对照取证")
     ap.add_argument("--strict", action="store_true", help=u"critical/high 存在时退出码 1")
     ap.add_argument("--version", default="0.18.0", help=u"写进 SARIF 的工具版本")
     args = ap.parse_args()
@@ -749,7 +868,7 @@ def main():
                       user_rules=args.rules_in, cache_dir=args.cache,
                       incremental=args.incremental, max_file_kb=args.max_file_kb,
                       report_memory=args.report_memory,
-                      ignore_patterns=args.ignore or None)
+                      ignore_patterns=args.ignore or None, fused=not args.staged)
     except ValueError as exc:
         print(u"错误：%s" % exc, file=sys.stderr)
         return 1
