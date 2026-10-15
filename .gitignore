@@ -21,3 +21,6 @@ node_modules/
 docs/jiangzuo/*
 !docs/jiangzuo/constitution.md
 !docs/jiangzuo/evolution.md
+# 交付报告也是交付物，不是运行产物。2026-10-15 复核时发现这条被上面那条整块挡住了：
+# ship_check 连续几轮报"交付报告齐全"，而两份报告其实**从未入库**——闸门自己假绿。
+!docs/jiangzuo/reports/

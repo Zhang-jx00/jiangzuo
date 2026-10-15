@@ -295,3 +295,71 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   authbypass（真正注入在仓库根 `login.php`，不在模块目录）、bac（越权要"缺少检查"判据）、
   brute/captcha（缺失型：限流、令牌一次性）、javascript（客户端判定当权限）、
   cryptography（ECB/自拼 XOR 未建规则）。
+
+## v0.36.1 D4 复核（交付前把全套闸门重跑一遍，果然捞出一条）
+
+复跑环境：同一台机器、离线、无其他负载；工作树 = `dc12e54` + 本轮 v0.36.1 改动。
+
+| 闸门 | 命令 | 本轮实测 |
+|---|---|---|
+| 回归 | `python -m unittest discover -s tests` | **121 tests OK**（89.8s，无 ResourceWarning） |
+| 结构 | `python scripts/validate_skill.py` | 12 信息 / 0 警告 / 0 错误；正文 ~5000 tokens（预算 5000 ✓） |
+| 变更自查 | `python scripts/preflight.py` | `RESULT: PASS（0 发现）` |
+| 交付闸门 | `python scripts/ship_check.py --level L1` | `SHIP-OK`（6 通过 / 0 警告 / 0 未过） |
+| 规则校验 | `python scripts/audit_rules.py --validate` | 31 条 RULES-OK，`rules_version=79133eec5b23`，**stderr 干净** |
+| 自建靶场 | `gen_corpus.py` + `score.py` | 高危 16/16、误报 0/18、安全样本 0/15、SARIF 结构自检通过 |
+| 性能 | `bench.py --files 1500 --repeat 3` | **5.544 ms/文件**（预算 ≤8.0）、峰值 4.2 MB |
+| 第三方 | 重扫 DVWA/flask/requests | DVWA 60 条·结论 59·拦下 15；flask 13·结论 1·不适用 29；requests 4·结论 0 |
+| 本仓库自扫 | `audit_scan.py .` | findings 3 ｜ **结论 0** ｜ 另计 3（都在 `tests/test_scripts.py`）｜ 2 条候选被独立验证拦下 |
+| 靶场分母 | `dvwa_coverage.py` | **11/19 = 57.9%**，MISS 8 个模块同上 |
+
+- **捞到的那条**：`JZ-WEAKID-001` 第 4 条 sink 把 `(?i)` 写在分支中间，Python 只发
+  `DeprecationWarning`，**`--validate` 照样绿**——一个"下一版解释器就 SyntaxError"的写法
+  通过了自己的闸门。已改成单个开头 `(?i)`（改前 13 条样本 A/B 等价核对，差异 0/13），
+  并把 `_compile_list()` 的编译包进 `simplefilter("error", DeprecationWarning)`，
+  从此这类写法直接判错。新锁做四变异校准（退回裸 compile / error→ignore / 过度拦截 / 记录不 continue），四条全红。
+  **教训**：跑闸门要连 stderr 一起看。警告不是"无所谓"，是"还没炸"。
+- **捞到的第二条更难看**：0.36.0 / 0.35.0 / 0.34.1 的日期写成 `2026-10-16`，
+  本机 `date` 实测 **2026-10-15 19:39**——写的是明天。四道闸门全绿，因为**没有一道闸看日期**。
+  这条属于"数字/时间戳只能从真实输出抄"那类纪律的**执行漏洞**：纪律写在长期记忆和分册里，
+  判据没落地，所以照样复发。现在 `validate_skill.py` 有判据了（晚于今天就 err），
+  并用真实 CHANGELOG 复现过一次当场报错，另做两个变异校准（放行 / 把今天也算未来）都是红。
+- **捞到的第三条在自家统计字段**：本仓库自扫报 `invalid_suppressions = 12`，
+  而全仓实际只有 1 条无效豁免标记。根因是 `apply_suppressions()` 里
+  `invalid += inv` 写在**逐条发现**的循环体上 → 同一文件的标记被该文件的发现条数重复累加。
+  报告里那句"12 条豁免写法无效"是把一条数了 12 遍。修法：按文件累加一次（放进 cache 填充分支）。
+  **本轮唯一"先改码后补锁"的一条**，所以红/绿用"退回 HEAD 写法"来做：
+  修复态 exit=0，退回后 `AssertionError: 1 != 2`，收尾逐字节核对还原。
+  新锁自带防空跑断言（夹具必须产生同文件 ≥2 条发现，否则这条测不到东西）。
+- **第四条最严重，且是交付物本身**：`.gitignore` 的 `docs/jiangzuo/*` 把 `reports/` 整块挡住，
+  `2026-10-14-audit-chain.md` 与本轮交付报告**都不在版本里**，而 `ship_check` 连着几轮报
+  「交付报告 四问与阶梯齐全」——它查的是磁盘上的文件，不是交付物集合。
+  **闸门假绿的新形态：检查对象存在 ≠ 检查对象随仓库走。**
+  修法是两步：放开 `!docs/jiangzuo/reports/` 并把报告 `git add`；
+  再让 `ship_check` 多问一句"这文件被 git 跟踪吗"（`git ls-files --error-unmatch`；
+  目录里没有 git 就不判，避免卡住别人）。当场两侧都验：没 add 时
+  `SHIP-BLOCKED（没有入库）`，add 后 `SHIP-OK`；两个变异（永远说已入库 / 永远说没入库）都红。
+- **bench 的两次读数**：与三方扫描并发时读到 7.580 与 7.091 ms/文件，安静复跑 5.544——
+  都在预算内，但**并发负载会把读数抬高 30%+**。对外报数要标"安静机 + repeat 3"，
+  否则下次别人复现不了还以为是回退。
+
+## 结论区误报的当期口径（本轮重算，不复用 v0.32 的数）
+
+三仓**结论区共 60 条**（DVWA 59 + flask 1 + requests 0），逐条归属：
+
+| 归类 | 条数 | 说明 |
+|---|---|---|
+| 命中该模块声明的漏洞类别 | 36 | DVWA 官方目录名 ↔ 规则主类别对照表（`dvwa_coverage.py` 的 `CATEGORY`） |
+| 同目录路过（类别≠模块声明） | 20 | 例：`JZ-CSRF-001` 报在 `weak_id/`、`JZ-XSS-001` 报在 `api/`。**未逐条人工判定真伪** |
+| `vulnerabilities/` 目录外 | 3 | 含 `dvwa/includes/dvwaPage.inc.php:651` 的 `md5(uniqid())` 会话令牌（真问题）、`view_help.php` 2 条 |
+| flask 结论区 | 1 | `src/flask/json/tag.py:188 return Markup(value)`——有意设计，**人工判定为误报** |
+| requests 结论区 | 0 | 4 条全部落在 `test`(2)/`library_feature`(2) 另计档 |
+
+- **硬误报 1/60 ≈ 1.7%**（只算已判定为"检测错了"的）。历史 v0.32 那两个数
+  （按结论区 ≈4/49≈8%、按全部产出 ≈30%）属于**另一个版本、另一套分母**，
+  保留在那一节里，不许与本轮混用或取好看的那个报。
+- **另计 17 条**（DVWA 1 + flask 12 + requests 4）不是"检测错"而是"写法在测试/库语境下无害"，
+  仍完整保留在 findings/JSON/SARIF 里，只是不进结论区。
+- **"同目录路过" 20 条是本报告承认的最大未决面**：DVWA 低安全档确实普遍缺 CSRF 校验，
+  但它们不算该模块的声明漏洞，也没有逐条读代码确认。要把误报率说死，得有人把这 20 条读完。
+

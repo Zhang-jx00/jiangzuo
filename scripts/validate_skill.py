@@ -30,6 +30,7 @@ import io
 import os
 import re
 import sys
+import time
 
 # Windows GBK 控制台打印 ✔ 等符号会 UnicodeEncodeError（2026-10-07 本地实跑实测崩溃，CI 在 Linux 未暴露）
 if hasattr(sys.stdout, "reconfigure"):
@@ -371,7 +372,18 @@ def main():
                 changelog = os.path.join(skill_dir, "CHANGELOG.md")
                 if os.path.isfile(changelog):
                     with io.open(changelog, "r", encoding="utf-8", errors="replace") as f:
-                        m = re.search(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", f.read(), re.M)
+                        cl = f.read()
+                    m = re.search(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", cl, re.M)
+                    # 日期检查：2026-10-15 复核时实测四条写成"明天"（10-16）而全套闸门全绿——
+                    # 时间戳和数字一样是"只能从真实输出抄"的东西，所以这里上判据。
+                    dates = re.findall(
+                        r"^##\s*\[?\d+\.\d+\.\d+\]?\s*[-–—]?\s*(\d{4}-\d{2}-\d{2})", cl, re.M)
+                    today = time.strftime("%Y-%m-%d")
+                    future = sorted(set(d for d in dates if d > today))
+                    if future:
+                        err("CHANGELOG 有 %d 个未来日期（%s ｜ 今天 %s）——"
+                            "版本条目按真实当天写，别顺手写一个明天"
+                            % (len(future), u"、".join(future), today))
                     if m and m.group(1) != version:
                         warn("metadata.version (%s) 与 CHANGELOG 最新版本 (%s) 不一致"
                              % (version, m.group(1)))

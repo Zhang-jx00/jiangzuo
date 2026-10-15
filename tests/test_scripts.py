@@ -73,6 +73,36 @@ class TestValidate(unittest.TestCase):
             self.assertIn("tokens", r.stdout)
             self.assertIn(u"超预算", r.stdout)
 
+    def test_validate_flags_future_changelog_date(self):
+        """CHANGELOG 的日期只能从真实日历抄。复核时发现四条写着"明天"——
+        系统日期 2026-10-15，条目却是 2026-10-16，没有任何一道闸拦得住这种笔误。
+        这条锁要同时证明两件事：晚于今天的日期必须报错，今天/过去的必须放过。"""
+        import time
+        today = time.strftime("%Y-%m-%d")
+        future = time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))
+        past = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+        fm = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+              u"正文一句。\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(fm)
+            with io.open(os.path.join(tmp, "CHANGELOG.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# 更新日志\n\n## [0.0.1] - %s\n\n内容。\n" % future)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"未来日期没拦住：%s" % r.stdout)
+            self.assertIn(u"未来日期", r.stdout)
+            # 反面：当天与过去的日期不该被误拦
+            with io.open(os.path.join(tmp, "CHANGELOG.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# 更新日志\n\n## [0.0.1] - %s\n\n## [0.0.0] - %s\n\n内容。\n"
+                        % (today, past))
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+            self.assertNotIn(u"未来日期", ok.stdout)
+
     def test_entry_keeps_iron_law_scope_and_gate(self):
         """入口必须留着这两件行为判据（B6 加的），删掉就该红：
         ① 铁律的**范围声明**（同义改写与暗示同样违规）；
@@ -290,6 +320,48 @@ class TestShipCheck(unittest.TestCase):
             r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("测试通道", r.stdout)
+
+    def test_report_must_actually_be_in_the_repository(self):
+        """报告必须随仓库走。2026-10-15 复核实测：本仓库 .gitignore 的 `docs/jiangzuo/*`
+        把 reports/ 整块挡住，两份交付报告**从未入库**，而 ship_check 连着几轮报
+        「交付报告齐全」——闸门只看磁盘，就给「本地有、交付没有」开绿灯。
+        两半都要测：被 ignore 时必须黑，放开并入库后必须绿（否则这条锁是在乱拦）。"""
+        def put(root, rel, text):
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*a):
+                r = subprocess.run(["git"] + list(a), cwd=tmp, timeout=60,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertEqual(r.returncode, 0, r.stdout.decode("utf-8", "replace"))
+
+            self._proj(tmp, report=self.REPORT_OK)
+            put(tmp, ".gitignore", "__pycache__/\n*.py[cod]\ndocs/jiangzuo/*\n")
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "test")
+            git("add", "-A")
+            git("commit", "-q", "-m", "base")
+            tracked = subprocess.run(["git", "ls-files", "docs/jiangzuo/reports"],
+                                     cwd=tmp, timeout=60, stdout=subprocess.PIPE)
+            self.assertEqual(b"", tracked.stdout.strip(),
+                             u"夹具没造出「报告存在但没入库」的状态，这条测不到东西")
+            r = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(r.returncode, 1, u"报告没入库却放行了：%s" % r.stdout)
+            self.assertIn(u"没有入库", r.stdout)
+            # 放开 negation 并入库 → 必须转绿
+            put(tmp, ".gitignore",
+                "__pycache__/\n*.py[cod]\ndocs/jiangzuo/*\n!docs/jiangzuo/reports/\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", "ship reports")
+            ok = run([os.path.join(SCRIPTS, "ship_check.py"), tmp, "--level", "L2"])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+            self.assertIn("SHIP-OK", ok.stdout)
 
     def test_red_when_no_delivery_report(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -642,6 +714,33 @@ class TestAuditRules(unittest.TestCase):
             r = self._run_rules("--validate", "--add", bad)
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("JZ-BAD-001", r.stdout)
+
+    def test_mid_pattern_global_flag_blocks(self):
+        """`x|(?i)y` 这种写法在 Python 里是 DeprecationWarning，将来会变 SyntaxError。
+        规则校验必须当场拦下，不能让一条"今天只是警告"的模式混进规则库、
+        等下一代解释器把它变成整条链启动失败。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "flag.json")
+            with io.open(bad, "w", encoding="utf-8") as f:
+                json.dump({"rules": [{"id": "JZ-FLAG-001", "title": "标志写错位置",
+                                      "severity": "high", "kind": "pattern",
+                                      "languages": ["python"], "cwe": ["CWE-1"],
+                                      "sinks": [{"pattern": "foo = time()|(?i)bar"}],
+                                      "fix": "f", "retest": "r"}]}, f, ensure_ascii=False)
+            r = self._run_rules("--validate", "--add", bad)
+            self.assertEqual(r.returncode, 1, "中途的全局标志被放过了：%s" % r.stdout)
+            self.assertIn("JZ-FLAG-001", r.stdout)
+            self.assertIn(u"全局标志", r.stdout)
+            # 反面：正确写法（(?i) 在开头）不该被误拦
+            good = os.path.join(tmp, "ok.json")
+            with io.open(good, "w", encoding="utf-8") as f:
+                json.dump({"rules": [{"id": "JZ-FLAG-002", "title": "写法正确",
+                                      "severity": "high", "kind": "pattern",
+                                      "languages": ["python"], "cwe": ["CWE-1"],
+                                      "sinks": [{"pattern": "(?i)foo = time()|bar"}],
+                                      "fix": "f", "retest": "r"}]}, f, ensure_ascii=False)
+            ok = self._run_rules("--validate", "--add", good)
+            self.assertEqual(ok.returncode, 0, ok.stdout)
 
     def test_user_rule_overrides_same_id_without_dupes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1273,6 +1372,29 @@ class TestAuditSuppression(unittest.TestCase):
             self.assertTrue([f for f in data["findings"]
                              if f["rule_id"] == "JZ-SQLI-001"],
                             "豁免另一条规则不该把这条一起藏掉")
+
+    def test_invalid_suppression_is_counted_once_per_file(self):
+        """无效豁免的计数口径是**文件**，不是**发现**。
+        复核本仓库自扫时实测到反例：一个文件里只有 1 条没写理由的标记，
+        但该文件有 12 条发现，`stats.invalid_suppressions` 就报成了 12——
+        报告里"12 条豁免写法无效"是把同一条数了 12 遍，数字直接失真。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            text = (u"import os\nfrom flask import request\nimport sqlite3\n\n\n"
+                    u"@app.route('/a')\ndef a():\n"
+                    u"    q = request.args['q']  # jiangzuo:ignore JZ-SQLI-001\n"
+                    u"    con = sqlite3.connect('db.sqlite')\n"
+                    u"    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}').fetchall()\n"
+                    u"\n\n@app.route('/b')\ndef b():\n"
+                    u"    cmd = request.args['c']\n"
+                    u"    return os.system(cmd)\n")
+            self._write(tmp, "a.py", text)
+            data, out = self._scan(tmp, "count")
+            hits = [f for f in data["findings"] if f["file"].endswith("a.py")]
+            self.assertGreaterEqual(len(hits), 2,
+                                    "夹具必须产生同文件多发，否则这条锁测不到东西：%s" % out)
+            self.assertEqual(1, data["stats"].get("invalid_suppressions"),
+                             "同一条无效标记被按发现条数重复累加（应为 1，实为 %s）"
+                             % data["stats"].get("invalid_suppressions"))
 
     def test_ignore_file_suppresses_by_path_and_rule(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2456,7 +2578,9 @@ class TestReviewPacket(unittest.TestCase):
             self._write(tmp, "a.py", "x = 2\n")
             marker = os.path.join(tmp, "SHOULD_NOT_EXIST")
             out, _ = self._packet(tmp, [u"--verify-cmd", "touch %s" % marker], "run")
-            self.assertIn("SHOULD_NOT_EXIST", io.open(out, encoding="utf-8").read())
+            with io.open(out, encoding="utf-8") as fh:
+                packet = fh.read()
+            self.assertIn("SHOULD_NOT_EXIST", packet)
             self.assertFalse(os.path.exists(marker), u"脚本执行了验证命令——它不该执行任何东西")
 
 

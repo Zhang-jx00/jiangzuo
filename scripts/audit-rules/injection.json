@@ -579,7 +579,7 @@
      "pattern": "\\bmd5\\s*\\(\\s*\\$_SESSION"
     },
     {
-     "pattern": "(?i)\\$(?:cookie_value|session_?\\w*|token|nonce)\\w*\\s*=\\s*(?:time|rand|mt_rand|uniqid|microtime)\\s*\\(?|(?i)\\b(?:cookie_value|session_id|token|nonce)\\s*=\\s*(?:time|rand|Math\\.random)\\s*\\(??"
+     "pattern": "(?i)\\$(?:cookie_value|session_?\\w*|token|nonce)\\w*\\s*=\\s*(?:time|rand|mt_rand|uniqid|microtime)\\s*\\(?|\\b(?:cookie_value|session_id|token|nonce)\\s*=\\s*(?:time|rand|Math\\.random)\\s*\\(??"
     }
    ],
    "unless_present": [

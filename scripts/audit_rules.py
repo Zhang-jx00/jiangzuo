@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import auditlib  # noqa: E402
@@ -57,9 +58,19 @@ def _compile_list(items, where, problems, need_window=False):
                             "这条永远不会命中" % where)
             continue
         try:
-            rx = re.compile(pat)
+            # `x|(?i)y` 这种"全局标志不在开头"的写法，今天只是 DeprecationWarning，
+            # 换解释器版本就是 SyntaxError——规则是长期存活的数据，必须当场拦。
+            # （catch_warnings 不是线程安全的：本函数只在加载期调用，扫描并发走子进程。）
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                rx = re.compile(pat)
         except re.error as exc:
             problems.append("%s：正则无法编译（%s）→ %r" % (where, exc, pat))
+            continue
+        except DeprecationWarning as exc:
+            problems.append("%s：全局标志 (?i)/(?s)/(?m)/(?x) 只能放在整个表达式开头，"
+                            "写在分支中间是废弃写法（将来直接报错）→ %r（%s）"
+                            % (where, pat, exc))
             continue
         rec = dict(item) if isinstance(item, dict) else {"pattern": pat}
         rec["_rx"] = rx

@@ -137,6 +137,26 @@ def find_report(root, explicit):
     return max(files, key=os.path.getmtime) if files else None
 
 
+def _report_tracked(root, path):
+    """报告是否真的随仓库走。返回 None = 这里没有 git，不做判断（别拿这条卡住别人）。
+    2026-10-15 复核实测：`docs/jiangzuo/*` 把 reports/ 整块 ignore 掉了，
+    两份交付报告只存在于本地磁盘，而本闸门连着几轮报「交付报告齐全」——
+    闸门只看文件在不在，就给了"本地有、交付没有"开绿灯。"""
+    def git(*args):
+        try:
+            p = subprocess.Popen(["git"] + list(args), cwd=root,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, _ = p.communicate(timeout=30)
+            return p.returncode, out
+        except Exception:
+            return 128, b""
+    code, _ = git("rev-parse", "--is-inside-work-tree")
+    if code != 0:
+        return None
+    rel = os.path.relpath(path, root).replace(os.sep, "/")
+    return git("ls-files", "--error-unmatch", "--", rel)[0] == 0
+
+
 def check_report(root, explicit, level):
     path = find_report(root, explicit)
     if not path:
@@ -145,13 +165,19 @@ def check_report(root, explicit, level):
                 "L1 可用轻量报告：python scripts/new_doc.py delivery <标题>"
         return FAIL, "交付报告", "未找到交付报告", \
             "python scripts/new_doc.py delivery <标题> → 四问 + 复用阶梯补齐"
-    text = io.open(path, encoding="utf-8", errors="replace").read()
+    with io.open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
     missing = [name for name, rx in REPORT_KEYS if not rx.search(text)]
     if not LADDER_RX.search(text):
         missing.append("复用阶梯停在第几级")
     if missing:
         return FAIL, "交付报告", "%s 缺：%s" % (os.path.basename(path), "、".join(missing)), \
             "补齐缺项；确实没做的事写进「剩余风险」，不要留空"
+    if _report_tracked(root, path) is False:
+        return FAIL, "交付报告", "%s 齐全但**没有入库**（被 .gitignore 挡住）——" \
+                               "交付物不随仓库走，等于没交付" % os.path.basename(path), \
+            "在 .gitignore 里放开 !docs/jiangzuo/reports/ 再 git add；" \
+            "收尾用 git ls-files docs/jiangzuo/reports 确认它真的在版本里"
     return PASS, "交付报告", "%s 四问与阶梯齐全" % os.path.basename(path), ""
 
 

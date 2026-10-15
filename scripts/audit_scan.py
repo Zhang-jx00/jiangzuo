@@ -846,8 +846,10 @@ def apply_suppressions(root, findings):
         rel = f["file"]
         if rel not in cache:
             cache[rel] = _markers_in(os.path.join(root, rel.replace("/", os.sep)))
+            # 无效标记数按**文件**累加一次。放在循环体外会变成"每条发现加一遍"：
+            # 本仓库自扫实测过——1 条无效标记、12 条同文件发现 → 报 12，数字直接失真。
+            invalid += cache[rel][1]
         markers, inv = cache[rel]
-        invalid += inv
         rid = (f.get("rule_id") or "").upper()
         # 豁免标记可以打在这条发现的**任一证据跳**上：
         # 污点流的发现行是 sink，而人通常在 source 那行注明"这里没有外部输入"。
