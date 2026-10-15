@@ -50,6 +50,7 @@ CONF_BONUS = {"sink_verified": 0.2, "interprocedural": 0.15,
 CONF_LABELS = ((0.75, u"高"), (0.5, u"中"), (0.0, u"低"))
 IMPORT_RX = re.compile(r"^\s*(?:import|from)\s+([\w\.]+)|require\(\s*[\"']([^\"'@/]+)"
                        r"|use\s+([a-z0-9_\.]+)|^\s*gem\s+[\"'](\w+)")
+PARALLEL_MIN_FILES = 400   # 小仓开进程池不划算：启动开销比省下的时间贵
 VERIFICATION_NOTE = u"核验五项：位置存在 / sink 仍匹配 / 输入可控 / 净化未生效 / 可达"
 
 
@@ -161,14 +162,144 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
     return hits, imports, peak_kb, []
 
 
+def _prescan_chunk(payload):
+    """worker 侧：吃一批相对路径，返回可序列化的分片结果。
+
+    规则在 worker 里自己加载（约几十毫秒），比把编译好的正则对象 pickle 过去更稳；
+    分片按路径轮转切，合并后统一排序，所以结果与串行**逐字节一致**（有测试锁）。
+    """
+    root, paths, max_bytes = payload
+    rules, problems, _n, _off = audit_rules.load_rules([])
+    if problems:
+        raise ValueError(problems[0])
+    buckets = _build_buckets(rules)
+    state = audit_map.new_state()
+    files, skipped, hits, imports = [], [], {}, set()
+    n_binary = n_oversize = n_hidden = 0
+    rules_obj = None
+    for rel in paths:
+        one = prescan(root, rules, max_bytes, only_paths=[rel])
+        files.extend(one["files"])
+        skipped.extend(one["skipped"])
+        n_binary += one["counts"]["binary"]
+        n_oversize += one["counts"]["oversize"]
+        n_hidden += one["counts"]["hidden"]
+        rules_obj = one["rules_obj"]
+        for k, v in one["hits"].items():
+            hits.setdefault(k, {"sinks": {}, "sources": {}})
+            hits[k]["sinks"].update(v["sinks"])
+            hits[k]["sources"].update(v["sources"])
+        imports |= one["imports"]
+        for key in ("routes", "entrypoints", "auth_boundaries", "dependencies",
+                    "lockfiles", "manifests"):
+            state[key].extend(one["map_state"][key])
+        state["env_vars"] |= one["map_state"]["env_vars"]
+        state["endpoints"] |= one["map_state"]["endpoints"]
+        state["scanned"] += one["map_state"]["scanned"]
+    return {"files": files, "skipped": skipped, "hits": hits, "imports": sorted(imports),
+            "map_state": state, "binary": n_binary, "oversize": n_oversize,
+            "hidden": n_hidden}
+
+
+def _scan_one_file(root, rel, rules_obj, buckets, state, max_bytes, skip_set,
+                   files, skipped, hits, imports, counters):
+    """单遍处理一个文件：算哈希→判二进制→喂地图→喂粗筛。串行与 worker 共用这一份。"""
+    if rel in skip_set or auditlib._builtin_pruned(rel):
+        return
+    if rules_obj.is_ignored(rel):
+        return
+    base = os.path.basename(rel)
+    if base.startswith(".") and base not in auditlib.DOTFILE_KEEP \
+            and not base.startswith(".env"):
+        counters["hidden"] += 1
+        return
+    abs_path = os.path.join(root, rel.replace("/", os.sep))
+    if not os.path.isfile(abs_path) or os.path.islink(abs_path):
+        return
+    try:
+        with io.open(abs_path, "rb") as fh:
+            data = fh.read(max_bytes + 1)
+    except OSError:
+        skipped.append({"path": rel, "reason": "unreadable", "bytes": 0})
+        return
+    size = len(data)
+    if size > max_bytes:
+        counters["oversize"] += 1
+        skipped.append({"path": rel, "reason": "oversize", "bytes": size})
+        return
+    if auditlib.NUL_BYTE in data[:8192]:
+        counters["binary"] += 1
+        skipped.append({"path": rel, "reason": "binary", "bytes": size})
+        return
+    rec = {"path": rel, "bytes": size,
+           "sha1": auditlib.sha1_hex(data), "lang": auditlib.lang_of(rel)}
+    files.append(rec)
+    raw_lines = data.decode("utf-8", "replace").splitlines(keepends=True)
+    audit_map.consume_file(state, root, rec,
+                           [(i, l, False) for i, l in enumerate(raw_lines, 1)])
+    raw_items, mask_items, src_items = _bucket_items(buckets, rec["lang"])
+    if raw_items or mask_items or src_items:
+        per_rule, src_per_rule = {}, {}
+        _match_code_lines(buckets, rec["lang"],
+                          auditlib.code_lines(raw_lines), imports,
+                          per_rule, src_per_rule)
+        if per_rule or src_per_rule:
+            hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
+
+
+def _prescan_chunk(payload):
+    """worker 侧：吃一批相对路径，返回**可序列化**的分片结果。
+
+    规则与忽略规则在 worker 里各加载一次（几十毫秒），比把编译好的正则 pickle
+    过去更稳；分片按路径轮转切、合并后统一排序，所以结果与串行逐字节一致（有测试锁）。
+    """
+    root, paths, max_bytes = payload
+    rules, problems, _n, _off = audit_rules.load_rules([])
+    if problems:
+        raise ValueError(problems[0])
+    buckets = _build_buckets(rules)
+    rules_obj = auditlib.collect_ignore_files(root, None)
+    state = audit_map.new_state()
+    files, skipped, hits, imports = [], [], {}, set()
+    counters = {"binary": 0, "oversize": 0, "hidden": 0}
+    for rel in paths:
+        _scan_one_file(root, rel, rules_obj, buckets, state, max_bytes, set(),
+                       files, skipped, hits, imports, counters)
+    return {"files": files, "skipped": skipped, "hits": hits,
+            "imports": list(imports), "state": state, "counters": counters}
+
+
+def _merge_chunk(merged, part):
+    merged["files"].extend(part["files"])
+    merged["skipped"].extend(part["skipped"])
+    for rel, v in part["hits"].items():
+        cur = merged["hits"].setdefault(rel, {"sinks": {}, "sources": {}})
+        for rid, lines in v["sinks"].items():
+            cur["sinks"].setdefault(rid, []).extend(lines)
+        for rid, lines in v["sources"].items():
+            cur["sources"].setdefault(rid, []).extend(lines)
+    merged["imports"] |= set(part["imports"])
+    state = merged["state"]
+    for key in ("routes", "entrypoints", "auth_boundaries", "dependencies",
+                "lockfiles", "manifests"):
+        state[key].extend(part["state"][key])
+    state["env_vars"] |= set(part["state"]["env_vars"])
+    state["endpoints"] |= set(part["state"]["endpoints"])
+    state["scanned"] += part["state"]["scanned"]
+    for key in ("binary", "oversize", "hidden"):
+        merged["counters"][key] += part["counters"][key]
+
+
 def prescan(root, rules, max_bytes, use_git=True, exclude=None, extra_patterns=None,
-            measure=False):
+            measure=False, jobs=1):
     """**单遍前端**：一次打开、一次逐行，同时产出索引记录、地图状态与粗筛命中。
 
     分步路径（build_index → build_map → coarse_screen）要把全仓读三遍、逐行循环跑三遍；
     基准实测这三遍占掉整链约 65% 的时间。这里合并成一遍：
     字节读进来算 sha1 与二进制判定 → 解码成行 → 地图抽取吃全行、粗筛吃代码行。
     内存仍是逐文件释放（一次只持有一个文件的内容），不是把仓库读进内存。
+
+    jobs>1 且文件数够多时才开进程池：小仓库上进程启动开销比省下的时间还贵。
     """
     root = os.path.abspath(root)
     paths, rules_obj, generator = auditlib.list_scan_paths(
@@ -178,56 +309,56 @@ def prescan(root, rules, max_bytes, use_git=True, exclude=None, extra_patterns=N
     state = audit_map.new_state()
     index_files, skipped, hits = [], [], {}
     imports = set()
-    n_binary = n_oversize = n_hidden = 0
+    counters = {"binary": 0, "oversize": 0, "hidden": 0}
     peak_kb = 0
+    trace = None
     if measure:
         import tracemalloc
         tracemalloc.start()
-    for rel in paths:
-        if measure:
-            peak_kb = max(peak_kb, tracemalloc.get_traced_memory()[1] // 1024)
-        if rel in skip_set or auditlib._builtin_pruned(rel):
-            continue
-        if rules_obj.is_ignored(rel):
-            continue
-        base = os.path.basename(rel)
-        if base.startswith(".") and base not in auditlib.DOTFILE_KEEP \
-                and not base.startswith(".env"):
-            n_hidden += 1
-            continue
-        abs_path = os.path.join(root, rel.replace("/", os.sep))
-        if not os.path.isfile(abs_path) or os.path.islink(abs_path):
-            continue
+        trace = tracemalloc
+    parallel = 0
+    # 进程池在 Windows 上要能重新 import 调用方的 __main__；
+    # 从 stdin/REPL 里调 run() 时子进程会当场崩、父进程卡在收尾——宁可退回串行也不卡住。
+    main_mod = sys.modules.get("__main__")
+    spawn_safe = getattr(main_mod, "__file__", None) and os.path.isfile(
+        getattr(main_mod, "__file__", "") or "")
+    if jobs and jobs > 1 and len(paths) >= PARALLEL_MIN_FILES and not spawn_safe:
+        print(u"提示：调用方没有可导入的 __main__（交互/管道模式），并发已退回串行",
+              file=sys.stderr)
+    if (jobs and jobs > 1 and len(paths) >= PARALLEL_MIN_FILES and spawn_safe):
         try:
-            with io.open(abs_path, "rb") as fh:
-                data = fh.read(max_bytes + 1)
-        except OSError:
-            skipped.append({"path": rel, "reason": "unreadable", "bytes": 0})
-            continue
-        size = len(data)
-        if size > max_bytes:
-            n_oversize += 1
-            skipped.append({"path": rel, "reason": "oversize", "bytes": size})
-            continue
-        binary = auditlib.NUL_BYTE in data[:8192]
-        if binary:
-            n_binary += 1
-            skipped.append({"path": rel, "reason": "binary", "bytes": size})
-            continue
-        rec = {"path": rel, "bytes": size,
-               "sha1": auditlib.sha1_hex(data), "lang": auditlib.lang_of(rel)}
-        index_files.append(rec)
-        raw_lines = data.decode("utf-8", "replace").splitlines(keepends=True)
-        audit_map.consume_file(state, root, rec,
-                               [(i, l, False) for i, l in enumerate(raw_lines, 1)])
-        raw_items, mask_items, src_items = _bucket_items(buckets, rec["lang"])
-        if raw_items or mask_items or src_items:
-            per_rule, src_per_rule = {}, {}
-            _match_code_lines(buckets, rec["lang"],
-                              auditlib.code_lines(raw_lines), imports,
-                              per_rule, src_per_rule)
-            if per_rule or src_per_rule:
-                hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
+            from concurrent.futures import ProcessPoolExecutor
+            n = min(int(jobs), len(paths))
+            payloads = [(root, paths[i::n], max_bytes) for i in range(n)]
+            payloads = [pl for pl in payloads if pl[1]]
+            merged = {"files": [], "skipped": [], "hits": {}, "imports": set(),
+                      "state": audit_map.new_state(),
+                      "counters": {"binary": 0, "oversize": 0, "hidden": 0}}
+            with ProcessPoolExecutor(max_workers=len(payloads)) as ex:
+                for part in ex.map(_prescan_chunk, payloads):
+                    _merge_chunk(merged, part)
+            index_files, skipped, hits = merged["files"], merged["skipped"], merged["hits"]
+            imports, state, counters = merged["imports"], merged["state"], merged["counters"]
+            for key in ("routes", "entrypoints", "auth_boundaries", "dependencies",
+                        "lockfiles", "manifests"):
+                state[key].sort(key=lambda r: json.dumps(r, sort_keys=True,
+                                                         ensure_ascii=False))
+            index_files.sort(key=lambda r: r["path"])
+            parallel = len(payloads)
+        except Exception as exc:          # 池不可用（受限环境/无 fork）就退回串行
+            print(u"提示：并发不可用（%s），已退回单进程" % type(exc).__name__,
+                  file=sys.stderr)
+            index_files, skipped, hits = [], [], {}
+            imports, state = set(), audit_map.new_state()
+            counters = {"binary": 0, "oversize": 0, "hidden": 0}
+    if not parallel:
+        for rel in paths:
+            if trace:
+                peak_kb = max(peak_kb, tracemalloc.get_traced_memory()[1] // 1024)
+            _scan_one_file(root, rel, rules_obj, buckets, state, max_bytes, skip_set,
+                           index_files, skipped, hits, imports, counters)
+    n_binary, n_oversize, n_hidden = (counters["binary"], counters["oversize"],
+                                      counters["hidden"])
     counts = {"files": len(index_files), "binary": n_binary, "oversize": n_oversize,
               "hidden": n_hidden, "skipped_listed": len(skipped),
               "total_bytes": sum(r["bytes"] for r in index_files)}
@@ -238,10 +369,10 @@ def prescan(root, rules, max_bytes, use_git=True, exclude=None, extra_patterns=N
              "ignore_sources": rules_obj.sources, "max_file_bytes": max_bytes,
              "files": index_files, "skipped": skipped[:auditlib.SKIP_LIST_CAP],
              "skipped_truncated": max(0, len(skipped) - auditlib.SKIP_LIST_CAP),
-             "counts": counts, "by_lang": by_lang}
+             "counts": counts, "by_lang": by_lang, "workers": parallel}
     index["index_sha1"] = auditlib.sha1_hex(json.dumps(
         {"files": index_files, "counts": counts}, sort_keys=True, ensure_ascii=False))
-    if measure:
+    if trace:
         peak_kb = max(peak_kb, tracemalloc.get_traced_memory()[1] // 1024)
         tracemalloc.stop()
     return index, audit_map.finalize_map(state, root, index), hits, imports, peak_kb
@@ -696,7 +827,7 @@ def to_sarif(payload, skill_version):
 def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         map_path=None, graph_path=None, user_rules=None, cache_dir=None,
         incremental=False, max_file_kb=2048, report_memory=False,
-        ignore_patterns=None, fused=True, version="0.22.0"):
+        ignore_patterns=None, fused=True, jobs=1, version="0.25.0"):
     root = os.path.abspath(root)
     max_bytes = max_file_kb * 1024
     rules, problems, _notes, _off = audit_rules.load_rules(user_rules or [])
@@ -722,7 +853,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     if use_fused:
         index, map_data, hits, imports, peak_kb = prescan(
             root, rules, max_bytes, exclude=exclude,
-            extra_patterns=ignore_patterns or None, measure=report_memory)
+            extra_patterns=ignore_patterns or None, measure=report_memory,
+            jobs=jobs)
         scan_index = index
         dirty = [rec["path"] for rec in index["files"]]
         cache_hits = []
@@ -848,6 +980,7 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
              "closure_files": stats_note.get("closure_files", 0),
              "reused_flows": stats_note.get("reused_flows", 0),
+             "workers": index.get("workers", 0),
              "files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
              "recomputed_files": len(scan_index["files"]),
              "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
@@ -896,6 +1029,104 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     return payload
 
 
+def diff_baseline(payload, baseline_path):
+    """按指纹与基线比：**新增 / 仍在 / 已消失**。
+
+    CI 要的是"这次改动引入了什么"，不是"这个仓库历史上有多少问题"。
+    已消失的只报条数不报"已修复"——消失可能是代码删了、可能是规则变了、
+    也可能是位置漂了，判定要交给 check_fixes。
+    """
+    with io.open(baseline_path, "r", encoding="utf-8") as f:
+        base = json.load(f)
+    before = dict((f["id"], f) for f in base.get("findings", []))
+    after = dict((f["id"], f) for f in payload["findings"])
+    new = sorted(set(after) - set(before))
+    gone = sorted(set(before) - set(after))
+    same = sorted(set(after) & set(before))
+    payload["baseline"] = {"source": os.path.basename(baseline_path),
+                           "rules_version_match": base.get("rules_version")
+                           == payload.get("rules_version"),
+                           "new": len(new), "gone": len(gone), "unchanged": len(same),
+                           "new_ids": new, "gone_ids": gone,
+                           "new_items": [after[i] for i in new[:50]],
+                           "gone_items": [before[i] for i in gone[:50]]}
+    return payload["baseline"]
+
+
+def check_fixes(root, baseline_path, rules=None, max_bytes=None):
+    """复测闭环：基线里的每一条，逐条回到磁盘上核它还在不在、为什么不在。
+
+    三态：still_there（证据仍在原位）／fixed（文件还在但 sink 证据没了）／
+    gone（文件都没了）。"报告里没有了"不等于"修好了"，这一层就是拦这个的。
+    """
+    rules = rules or audit_rules.load_rules([])[0]
+    max_bytes = max_bytes or 2 * 1024 * 1024
+    with io.open(baseline_path, "r", encoding="utf-8") as f:
+        base = json.load(f)
+    line_cache = {}
+    out = []
+    for old in base.get("findings", []):
+        abs_path = os.path.join(root, old["file"].replace("/", os.sep))
+        rec = {"id": old.get("id"), "rule_id": old.get("rule_id"),
+               "file": old.get("file"), "line": old.get("line")}
+        if not os.path.isfile(abs_path):
+            rec["status"] = "gone"
+            rec["reason"] = u"文件已不存在"
+            out.append(rec)
+            continue
+        if old["file"] not in line_cache:
+            line_cache[old["file"]] = list(auditlib.iter_code_lines(abs_path))
+        lines = line_cache[old["file"]]
+        text_by_line = dict((n, t) for n, t, _x in lines)
+        cur = text_by_line.get(old["line"], "")
+        stored = u""
+        for hop in reversed(old.get("path", []) or []):
+            if hop.get("kind") == "sink":
+                stored = hop.get("text", u"")
+                break
+        still = bool(cur.strip()) and (
+            not stored or auditlib.redact(cur.strip())[:200] == stored[:200]
+            or (old.get("sink_text") or u"")[:40] in auditlib.redact(cur)[:200])
+        if still:
+            rec["status"] = "still_there"
+            rec["reason"] = u"证据仍在原位，未修复"
+        else:
+            rec["status"] = "needs_look"
+            rec["reason"] = (u"该行内容已变，sink 证据对不上——可能是修好了，"
+                             u"也可能是挪了位置，需人工确认")
+        out.append(rec)
+    counts = {}
+    for rec in out:
+        counts[rec["status"]] = counts.get(rec["status"], 0) + 1
+    return {"schema": "jiangzuo-audit-recheck/1",
+            "baseline": os.path.basename(baseline_path),
+            "total": len(out), "counts": counts, "items": out}
+
+
+def recheck_md(report):
+    lines = [u"# 复测报告（对照基线逐条回查）", u"",
+             u"> 基线：%s ｜ 共 %d 条" % (report["baseline"], report["total"]), u"",
+             u"| 状态 | 条数 | 含义 |", u"|---|---|---|"]
+    meaning = {"still_there": u"证据仍在原位，未修复",
+               "needs_look": u"该行已变，需人工确认是修好了还是挪了位置",
+               "gone": u"文件已不存在"}
+    for status in ("still_there", "needs_look", "gone"):
+        if report["counts"].get(status):
+            lines.append(u"| %s | %d | %s |" % (status, report["counts"][status],
+                                                meaning[status]))
+    lines.append(u"")
+    for rec in report["items"][:60]:
+        lines.append(u"- `%s:%s` %s → **%s**：%s"
+                     % (rec["file"], rec["line"], rec["rule_id"], rec["status"],
+                        rec["reason"]))
+    lines.append(u"")
+    lines.append(u"RESULT: RECHECK-OK（未修复 %d ／ 待人工确认 %d ／ 文件消失 %d）"
+                 % (report["counts"].get("still_there", 0),
+                    report["counts"].get("needs_look", 0),
+                    report["counts"].get("gone", 0)))
+    return u"\n".join(lines) + u"\n"
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=u"扫描调度与报告（将作）：粗筛→深挖→独立验证→分级→Markdown/JSON/SARIF。")
@@ -913,8 +1144,17 @@ def main():
     ap.add_argument("--ignore", action="append", default=[],
                     help=u"追加忽略模式，可多次（如 --ignore 'tests/fixtures/**' 排除自造夹具）")
     ap.add_argument("--report-memory", action="store_true", help=u"粗筛阶段用 tracemalloc 测峰值")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help=u"前端并发的进程数（有界；≥2 且文件数 ≥400 才生效，池不可用自动退回串行）")
     ap.add_argument("--staged", action="store_true",
                     help=u"走分步前端（索引→地图→粗筛三遍），用于与单遍融合版对照取证")
+    ap.add_argument("--baseline", default=None,
+                    help=u"上一次扫描的 JSON：报出新增/已消失/仍在，CI 只拦新增")
+    ap.add_argument("--only-new", action="store_true",
+                    help=u"配合 --baseline：报告只留新增发现")
+    ap.add_argument("--check-fixes", default=None, metavar="基线.json",
+                    help=u"不重扫，只逐条回查基线里的发现还在不在（复测闭环）")
+    ap.add_argument("--recheck-md", default=None, help=u"复测报告输出路径")
     ap.add_argument("--strict", action="store_true", help=u"critical/high 存在时退出码 1")
     ap.add_argument("--version", default="0.18.0", help=u"写进 SARIF 的工具版本")
     args = ap.parse_args()
@@ -923,6 +1163,17 @@ def main():
     if not os.path.isdir(root):
         print(u"错误：目录不存在：%s" % args.path, file=sys.stderr)
         return 2
+    if args.check_fixes:
+        if not os.path.isfile(args.check_fixes):
+            print(u"错误：基线文件不存在：%s" % args.check_fixes, file=sys.stderr)
+            return 2
+        report = check_fixes(root, args.check_fixes)
+        text = recheck_md(report)
+        if args.recheck_md:
+            with io.open(args.recheck_md, "w", encoding="utf-8") as f:
+                f.write(text)
+        print(text)
+        return 0
     try:
         payload = run(root, out_json=args.json_out, out_md=args.md_out,
                       out_sarif=args.sarif_out, index_path=args.index,
@@ -930,12 +1181,33 @@ def main():
                       user_rules=args.rules_in, cache_dir=args.cache,
                       incremental=args.incremental, max_file_kb=args.max_file_kb,
                       report_memory=args.report_memory,
-                      ignore_patterns=args.ignore or None, fused=not args.staged)
+                      ignore_patterns=args.ignore or None, fused=not args.staged,
+                      jobs=max(1, args.jobs))
     except ValueError as exc:
         print(u"错误：%s" % exc, file=sys.stderr)
         return 1
 
+    if args.baseline:
+        if not os.path.isfile(args.baseline):
+            print(u"错误：基线文件不存在：%s" % args.baseline, file=sys.stderr)
+            return 2
+        bl = diff_baseline(payload, args.baseline)
+        print(u"基线对照（%s%s）：新增 %d ｜ 已消失 %d ｜ 仍在 %d"
+              % (bl["source"],
+                 u"" if bl["rules_version_match"] else
+                 u"，规则版本已变——差异里可能混有规则改动",
+                 bl["new"], bl["gone"], bl["unchanged"]))
+        if args.only_new:
+            keep = set(bl["new_ids"])
+            payload["findings"] = [f for f in payload["findings"] if f["id"] in keep]
+            payload["stats"]["findings"] = len(payload["findings"])
+            if args.json_out:
+                with io.open(args.json_out, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False, indent=1) + "\n")
+
     s = payload["stats"]
+    if payload["stats"].get("workers"):
+        print(u"前端并发：%d 个 worker（--jobs）" % payload["stats"]["workers"])
     print(u"扫描：%d 文件（候选 %d / 重算 %d / 缓存复用 %d）｜ 粗筛峰值 %s KB ｜ 用时 %.2fs"
           % (s["files_total"], s["candidates"], s["recomputed_files"],
              s["cache_hit_files"], s.get("peak_memory_kb") or u"未测", s["elapsed_sec"]))

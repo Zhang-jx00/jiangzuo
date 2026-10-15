@@ -541,6 +541,26 @@ class TestAuditMap(unittest.TestCase):
             self.assertEqual(first["map_sha1"], second["map_sha1"],
                              "地图必须可复现，否则增量缓存与前后对比都不可信")
 
+    def test_routes_written_inside_string_literals_are_not_routes(self):
+        """夹具与文档里当字符串写的 @app.route 不是路由（自扫实测过一条这样的误报）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "_m.json")
+            with io.open(os.path.join(tmp, "fixtures.py"), "w", encoding="utf-8") as f:
+                f.write("CASES = [\n    \"@app.route('/admin/leak')\",\n]\n\n\n"
+                        "def real():\n    return 1\n")
+            with io.open(os.path.join(tmp, "app.py"), "w", encoding="utf-8") as f:
+                f.write("from flask import Flask\napp = Flask(__name__)\n\n"
+                        "@app.route('/admin/real')\ndef admin():\n    return 1\n")
+            r = run([os.path.join(SCRIPTS, "audit_map.py"), tmp, "--json", out])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            with io.open(out, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            paths = [x["path"] for x in data["routes"]]
+            self.assertIn("/admin/real", paths, "真路由不能一起屏蔽掉")
+            self.assertNotIn("/admin/leak", paths, "字符串字面量里的路由被当成了路由")
+            self.assertEqual([], [a for a in data["auth_boundaries"]
+                                  if a["file"] == "fixtures.py"])
+
     def test_map_consumes_index_and_rejects_absent_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             r = run([os.path.join(SCRIPTS, "audit_map.py"),
@@ -1005,6 +1025,29 @@ class TestAuditFusion(unittest.TestCase):
             self.assertEqual(fused["stats"]["files_total"],
                              staged["stats"]["files_total"])
 
+    def test_parallel_front_end_matches_serial(self):
+        """并发分片必须与串行**逐字节一致**——否则"提速"就是拿结论换时间。"""
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as out:
+            for i in range(420):          # 过 PARALLEL_MIN_FILES，才真走进程池
+                d = os.path.join(tmp, "pkg")
+                if not os.path.isdir(d):
+                    os.makedirs(d)
+                with io.open(os.path.join(d, "m%04d.py" % i), "w",
+                             encoding="utf-8") as f:
+                    f.write("def f%d(x):\n    return x * %d\n" % (i, i))
+            for rel, text in self.FILES.items():
+                with io.open(os.path.join(tmp, rel.replace("/", os.sep)), "w",
+                             encoding="utf-8") as f:
+                    f.write(text)
+            one = self._run_path(tmp, out, [])
+            two = self._run_path(tmp, out, ["--jobs", "2"])
+            self.assertGreaterEqual(two["stats"].get("workers", 0), 2,
+                                    "没真走并发，这条锁是空的")
+            key = lambda p: [(f["rule_id"], f["file"], f["line"]) for f in p["findings"]]
+            self.assertEqual(key(one), key(two), "并发与串行的发现清单不一致")
+            self.assertEqual(one["index_sha1"], two["index_sha1"], "并发改变了索引口径")
+            self.assertEqual(one["map_sha1"], two["map_sha1"], "并发合并地图时丢了字段或顺序不稳")
+
     def test_fused_is_the_default_and_can_be_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             for rel, text in self.FILES.items():
@@ -1080,26 +1123,63 @@ class TestAuditIncrementalGraph(unittest.TestCase):
                             "增量还是把全仓解析了一遍")
             self.assertGreaterEqual(inc["stats"]["reused_flows"], 0)
 
+class TestAuditBaseline(unittest.TestCase):
+    """P5：基线对照与复测闭环——CI 只拦新增，"报告里没了"不等于"修好了"。"""
 
-    def test_routes_written_inside_string_literals_are_not_routes(self):
-        """夹具与文档里当字符串写的 @app.route 不是路由（自扫实测过一条这样的误报）。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "_m.json")
-            with io.open(os.path.join(tmp, "fixtures.py"), "w", encoding="utf-8") as f:
-                f.write("CASES = [\n    \"@app.route('/admin/leak')\",\n]\n\n\n"
-                        "def real():\n    return 1\n")
-            with io.open(os.path.join(tmp, "app.py"), "w", encoding="utf-8") as f:
-                f.write("from flask import Flask\napp = Flask(__name__)\n\n"
-                        "@app.route('/admin/real')\ndef admin():\n    return 1\n")
-            r = run([os.path.join(SCRIPTS, "audit_map.py"), tmp, "--json", out])
-            self.assertEqual(r.returncode, 0, r.stdout)
-            with io.open(out, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            paths = [x["path"] for x in data["routes"]]
-            self.assertIn("/admin/real", paths, "真路由不能一起屏蔽掉")
-            self.assertNotIn("/admin/leak", paths, "字符串字面量里的路由被当成了路由")
-            self.assertEqual([], [a for a in data["auth_boundaries"]
-                                  if a["file"] == "fixtures.py"])
+    VULN = ("from flask import request\nimport sqlite3\n\n\n"
+            "@app.route('/a')\ndef a():\n"
+            "    q = request.args['q']\n"
+            "    con = sqlite3.connect('db.sqlite')\n"
+            "    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}').fetchall()\n")
+    FIXED = ("from flask import request\nimport sqlite3\n\n\n"
+             "@app.route('/a')\ndef a():\n"
+             "    q = int(request.args['q'])\n"
+             "    con = sqlite3.connect('db.sqlite')\n"
+             "    return con.execute('SELECT * FROM t WHERE c LIKE %s', (q,)).fetchall()\n")
+
+    def _scan(self, root, out, extra=None):
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out]
+                + (extra or []))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        return r
+
+    def _write(self, root, rel, text):
+        with io.open(os.path.join(root, rel.replace("/", os.sep)), "w",
+                     encoding="utf-8") as f:
+            f.write(text)
+
+    def test_baseline_reports_only_new_and_recheck_judges_fixes(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            self._write(root, "a.py", self.VULN)
+            base = os.path.join(out, "base.json")
+            self._scan(root, base)
+            with io.open(base, "r", encoding="utf-8") as f:
+                first = json.load(f)
+            self.assertTrue([x for x in first["findings"]
+                             if x["rule_id"] == "JZ-SQLI-001"], "基线里应有那条流")
+
+            self._write(root, "b.py", self.VULN.replace("/a", "/b").replace("def a(", "def b("))
+            again = os.path.join(out, "again.json")
+            r = self._scan(root, again, ["--baseline", base])
+            self.assertIn(u"新增 1", r.stdout)
+            self.assertIn(u"仍在 1", r.stdout)
+
+            only = os.path.join(out, "only.json")
+            self._scan(root, only, ["--baseline", base, "--only-new"])
+            with io.open(only, "r", encoding="utf-8") as f:
+                new_only = json.load(f)
+            self.assertEqual(1, len(new_only["findings"]), "--only-new 应只留新增")
+            self.assertEqual("b.py", new_only["findings"][0]["file"])
+
+            # 修掉 a.py 之后回查基线：不许直接判"已修复"，要落到需人工确认或消失
+            self._write(root, "a.py", self.FIXED)
+            rc = run([os.path.join(SCRIPTS, "audit_scan.py"), root,
+                      "--check-fixes", base])
+            self.assertEqual(rc.returncode, 0, rc.stdout)
+            self.assertIn("RESULT: RECHECK-OK", rc.stdout)
+            self.assertNotIn(u"全部已修复", rc.stdout)
+            statuses = re.findall(r"→ \*\*(\w+)\*\*", rc.stdout)
+            self.assertTrue(statuses, "复测报告没有逐条状态：%s" % rc.stdout[:200])
 
 
 if __name__ == "__main__":
