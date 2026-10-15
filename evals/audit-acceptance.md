@@ -140,7 +140,8 @@ python evals/audit-fixtures/score.py --corpus ../eval-runs/audit-bench \
    `tests|examples|docs|vendor` 路径不算）。DVWA 的"不可利用"标注全程是
    **12（v0.29 基线）→ 40（加规则后）→ 18（缺陷 3 收紧守卫）→ 0（这一条）**。
    其中 65 条那一阶段的 JSON 已按卫生约定删除，数字取自当轮真实输出；
-   12/18/0 三档的 JSON 仍在运行区可复查。
+   **18 与 0 两档的 JSON 仍在运行区可复查**（`eval-runs/tp6-dvwa.json`、
+   `eval-runs/tpf-dvwa.json`），12 与 40 两档要复现需 checkout `v0.29.0` 重跑同一命令。
 
 ## 仍然不达标的那句话（别把它读成通过）
 
