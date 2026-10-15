@@ -198,7 +198,8 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
 | 版本 | 主类别检出 | 说明 |
 |---|---|---|
 | v0.32（补规则前） | **7/19 = 36.8%** | api / csp / exec / sqli / sqli_blind / upload / xss_d |
-| v0.33（本轮） | **10/19 = 52.6%** | 新增 xss_r、open_redirect、weak_id |
+| v0.33（补 sink/规则） | **10/19 = 52.6%** | 新增 xss_r、open_redirect、weak_id |
+| v0.34（跨文件模块池） | **11/19 = 57.9%** | 再补 fi（A/B：只新增 2 条、一条没消失） |
 
 补的四条都是"写法没认全"，不是"类别没规则"：
 
@@ -283,5 +284,14 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   剩下 9 个模块的原因逐个写在上面那张表里；还能用正则补的是 **cryptography（ECB/自拼 XOR）**
   与 **javascript（客户端判定当权限）**，brute/captcha 需要"缺失类"判据（限流、令牌一次性），
   xss_s/bac/authbypass 属于能力边界或地图层。
-- 可达性还有第三档没做：`include`/`require` 的变量路径目前只能靠"页面即入口"兜，
-  显式 `include 'x.php'` 的跨文件链路仍不建边。
+- ~~可达性第三档 / 跨文件模块级变量~~ **已做完（v0.34.0）**：`module_include_pool()` 只在
+  "文件里有变量路径的 include/require"时开一个**同目录子树**的模块级变量池（PHP 专属，
+  复用 `tainted_params` 通道，hop 标 `include-scope`）。A/B 实测：DVWA **只新增 2 条、一条没消失**
+  （`vulnerabilities/fi/index.php:36` 路径穿越、`vulnerabilities/bac/index.php:58` SQL 注入），
+  主类别检出 **10/19 → 11/19**；flask 与 requests 的数字一字不变（非 PHP 仓库零成本零风险）。
+  三道闸里"静态 `require_once 'x.php'` 不开池"是**有意的保守**——静态路径本该被精确解析成边，
+  用同名池糊上去等于把判据借给不该借的地方；那是下一项待办。
+- 仍 MISS 的 8 个模块与原因：xss_s（写库再回显，跨请求）、csrf（表单是 `method="GET"`）、
+  authbypass（真正注入在仓库根 `login.php`，不在模块目录）、bac（越权要"缺少检查"判据）、
+  brute/captcha（缺失型：限流、令牌一次性）、javascript（客户端判定当权限）、
+  cryptography（ECB/自拼 XOR 未建规则）。

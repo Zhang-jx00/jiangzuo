@@ -2211,5 +2211,130 @@ class TestAuditPatternCost(unittest.TestCase):
         print(u"最慢 pattern：%.1f ms ｜ %s" % worst)
 
 
+class TestAuditIncludeScope(unittest.TestCase):
+    """C4：DVWA 的 fi 模块一直没检出，原因是"跨文件的模块级变量"。
+
+    真实形状（逐字读过）：
+      vulnerabilities/fi/source/low.php → `$file = $_GET[ 'page' ];`
+      vulnerabilities/fi/index.php:32   → `require_once …"vulnerabilities/fi/source/{$vulnerabilityFile}";`
+      vulnerabilities/fi/index.php:36   → `include( $file );`
+    PHP 的 include 共享调用方的符号表：被包含文件里赋的模块级变量，包含者直接能读。
+    这条通道只在**文件里确实有"变量路径的 include/require"**时才打开——
+    没有这种写法就把池子打开，等于让全仓同名变量互相污染（那是误报制造机）。
+    """
+
+    def _graph(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        out = os.path.join(root, "_graph.json")
+        r = run([os.path.join(SCRIPTS, "audit_graph.py"), root, "--out", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_variable_path_include_opens_a_directory_scope_pool(self):
+        data = self._graph(tempfile.mkdtemp(), {
+            "vulnerabilities/fi/index.php": (
+                "<?php\n\n"
+                "$vulnerabilityFile = 'low.php';\n"
+                'require_once DVWA_WEB_PAGE_TO_ROOT . "vulnerabilities/fi/source/{$vulnerabilityFile}";\n\n'
+                "if( isset( $_GET[ 'include' ] ) ) {\n"
+                "\tinclude( $file );\n"
+                "}\n"),
+            "vulnerabilities/fi/source/low.php": (
+                "<?php\n\n"
+                "// The page we wish to display\n"
+                "$file = $_GET[ 'page' ];\n"),
+        })
+        trav = [f for f in data["flows"] if f["rule_id"] == "JZ-TRAVERSAL-001"]
+        self.assertEqual(1, len(trav),
+                         "跨文件的模块级污点要接上：flows=%s"
+                         % [(f["rule_id"], f["file"], f["line"]) for f in data["flows"]])
+        self.assertEqual("vulnerabilities/fi/index.php", trav[0]["file"])
+        self.assertEqual(u"interprocedural", trav[0]["depth"],
+                         "跨文件要标出来，不能伪装成本函数内的流")
+
+    def test_no_include_keeps_the_pool_closed(self):
+        """反面半句：两个文件之间没有任何 include 关系时，
+        别的文件里 `$file = $_GET[...]` 不该把这个文件的 `include( $file )` 带成污点。"""
+        data = self._graph(tempfile.mkdtemp(), {
+            "app/loader.php": (
+                "<?php\n\n"
+                "if ( isset( $_GET[ 'p' ] ) ) {\n    include( $file );\n}\n"),
+            "other/sets_var.php": (
+                "<?php\n\n"
+                "$file = $_GET[ 'page' ];\n"
+                "echo $file;\n"),
+        })
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["rule_id"] == "JZ-TRAVERSAL-001"
+                              and f["file"] == "app/loader.php"],
+                         "没有 include 关系就不该开池：%s"
+                         % [(f["file"], f["line"]) for f in data["flows"]])
+
+    def test_pool_is_php_only(self):
+        """只有 PHP 有"被包含文件共享调用方符号表"这回事：JS 的动态 require、
+        Python 的动态 import 都不该把另一个文件的变量接进来。
+
+        这条锁的是**行为**（非 PHP 不开池）。它证明不了 `lang != "php"` 那两个 if 有独立牙齿——
+        生产者取变量名用的是 PHP 专属的赋值正则，机制本身就是 PHP 专用的，
+        光删 if 也开不了别语言的门（变异校准实测如此，已如实记进账本）。
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "srv/page.js": (
+                'const { exec } = require("child_process");\n'
+                'require("./lib/mod" + $name);\n\n'
+                'function go() {\n    exec("ls " + $name);\n}\n'),
+            "srv/lib/sets.js": (
+                'const $name = req.params.n;\n'),
+        })
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["file"] == "srv/page.js"],
+                         "JS 的动态 require 不该把另一个文件的变量接进来：%s"
+                         % [(f["rule_id"], f["file"], f["line"]) for f in data["flows"]])
+        # Python 那半句：importlib 动态导入同理不开池（这里连 include 关键字都没有）
+        data2 = self._graph(tempfile.mkdtemp(), {
+            "srv/main.py": (
+                "import importlib\nimport os\n\n\n"
+                "def run(mod):\n"
+                "    importlib.import_module(mod)\n"
+                "    return os.system('ls ' + mod)\n"),
+            "srv/sets_var.py": (
+                "from flask import request\n\n\nmod = request.args['m']\n"),
+        })
+        self.assertEqual([], [f for f in data2["flows"] if f["file"] == "srv/main.py"],
+                         "Python 的动态 import 不该开池：%s"
+                         % [(f["file"], f["line"]) for f in data2["flows"]])
+
+
+    def test_static_include_does_not_open_the_pool(self):
+        """写死路径的 `require_once 'src/low.php'` **不**开名字池——这是有意的保守。
+
+        注意区分：`include( $file )` 这一行本身就是"变量路径的 include"，
+        所以 fi 那种写法会开池；而这里整份文件只有静态 require，池的钥匙不在它手上。
+        静态路径本该被精确解析成一条边（那才是正解，记在验收记录的待办里），
+        用"同名变量共享"糊上去等于把判据借给了不该借的地方。
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "page/index.php": (
+                "<?php\n\n"
+                "require_once 'src/low.php';\n\n"
+                "if ( isset( $_GET[ 'i' ] ) ) {\n    system( \"ls \" . $dir );\n}\n"),
+            "page/src/low.php": (
+                "<?php\n\n"
+                "$dir = $_GET[ 'd' ];\n"),
+        })
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["rule_id"] == "JZ-CMDI-001"
+                              and f["file"] == "page/index.php"],
+                         "静态 require 不该靠名字池成流：%s"
+                         % [(f["rule_id"], f["file"], f["line"]) for f in data["flows"]])
+
+
 if __name__ == "__main__":
     unittest.main()

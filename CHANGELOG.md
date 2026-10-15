@@ -2,6 +2,32 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.34.0] - 2026-10-15
+
+C4：**PHP 的 include 共享符号表**——DVWA 的 `fi` 模块从 v0.30 起一直 MISS，原因是
+`$file = $_GET['page']` 在 `vulnerabilities/fi/source/low.php`、`include( $file )` 在
+`vulnerabilities/fi/index.php`，两个文件各自看都"没问题"。
+
+- `audit_graph.module_include_pool()`：**只有当某文件的模块级出现"变量路径的 include/require"**
+  （`DYN_INCLUDE_RX`，如 `require_once ROOT . "…/{$vulnerabilityFile}"`）才给这个文件开一个
+  **同目录子树**的模块级变量池，把被包含文件里 `$_GET/…` 直接赋值的变量灌进它的作用域，
+  复用既有的 `tainted_params` 通道（结构与跨文件实参传递同形，`kind="include-scope"`，
+  hop 文案明说"模块级变量由被 include 的文件写入"）。只对 PHP、只在该目录子树内。
+- **三道闸各自都有测试**（红/绿 + 变异校准）：① 必须有变量路径 include（静态 `require_once 'x.php'`
+  不开池——静态路径该被精确解析成边，那是正解，记在待办里；用同名池糊上去等于把判据借给不该借的地方）；
+  ② 只在同目录子树内共享（全仓同名共享会立刻造出跨模块误报）；③ 只对 PHP（JS 动态 require、
+  Python 动态 import 都不开池）。
+- A/B 实测（关掉池 vs 开池，同一份 DVWA）：**只新增 2 条、一条都没消失**——
+  `vulnerabilities/fi/index.php:36` 的路径穿越（fi 模块首次命中）与 `vulnerabilities/bac/index.php:58` 的 SQL 注入。
+  靶场主类别检出 **10/19 → 11/19**；flask 与 requests 完全不变（13／结论 1、4／结论 0）——
+  它们没有 PHP，这条通道对非 PHP 仓库是零成本零风险。
+- **一处如实记录的"没有牙齿"**：变异校准 4 条里 3 条可红，`lang != "php"` 那两个 if **删掉也不会红**——
+  因为生产者取变量名用的是 PHP 专属赋值正则，机制本身就是 PHP 专用的。
+  保留这两个 if 是表达意图，但账本与测试文档串里都写明：**这条测试锁的是行为，不是那两个 if**。
+- 测试 108 → **112**（`TestAuditIncludeScope` 4 例）；语料复跑仍 16/16 高危、0/18 误报、0/15 安全样本；
+  bench 5.621 ms/文件（与改前 5.2–6.0 同带）、峰值 4.2MB；validate 0 错 0 警；preflight PASS；
+  ship_check L1 SHIP-OK。分册本轮**没有**再加行（改在原有 bullet 上），160 行上限仍是硬约束。
+
 ## [0.33.0] - 2026-10-15
 
 C3：**把检出分母交给靶场**——新增 `evals/audit-fixtures/dvwa_coverage.py`，

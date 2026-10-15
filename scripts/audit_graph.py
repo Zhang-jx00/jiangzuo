@@ -404,7 +404,9 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
         for pname, incoming in (in_params.get(rule["id"]) or {}).items():
             tainted[pname] = list(incoming) + [{
                 "file": fn["file"], "line": fn["start"], "kind": "param-in",
-                "text": u"形参 %s 由调用方传入污点值" % pname}]
+                "text": (u"模块级变量 $%s 由被 include 的文件写入（PHP 共享调用方符号表）"
+                         % pname) if fn["name"] == "{module}"
+                else u"形参 %s 由调用方传入污点值" % pname}]
         for lineno, text, _trunc, idents in body_view:
             src_item = _first_code_match(sources, text)
             sink_item = _first_code_match(sinks, text)
@@ -593,6 +595,59 @@ def closure_from_index(name_index, seed, sha1_by_path=None):
             out.add(rel)
     return out
 
+DYN_INCLUDE_RX = re.compile(r"(?i)\b(?:include|require)(?:_once)?\b[^;]*\$")
+
+
+def module_include_pool(all_funcs, rules):
+    """被包含文件的模块级污点 → 灌给"用变量路径 include 它的那个文件"。
+
+    只在同目录子树内共享（DVWA：页面在 `vulnerabilities/fi/`、赋值在
+    `vulnerabilities/fi/source/`），且只对 PHP 开这条通道：
+    Python/JS 的 import 不共享调用方符号表，照搬过去就是拿名字当数据流。
+    返回结构与跨文件实参传递同形：{(文件, 函数名): {规则id: {变量名: hops}}}。
+    """
+    consumers = {}          # 文件 -> 它的目录（有动态 include 才算）
+    for fn in all_funcs:
+        if fn["lang"] != "php" or fn["name"] != "{module}":
+            continue
+        if any(DYN_INCLUDE_RX.search(t) for _n, t, _x in fn["body"]):
+            consumers[fn["file"]] = fn["file"].rsplit("/", 1)[0] if "/" in fn["file"] else ""
+    if not consumers:
+        return {}
+    arx = ASSIGN_RX.get("php")
+    pool = {}
+    for fn in all_funcs:
+        if fn["lang"] != "php" or fn["name"] != "{module}":
+            continue
+        for cfile, cdir in consumers.items():
+            if cfile == fn["file"]:
+                continue
+            pdir = fn["file"].rsplit("/", 1)[0] if "/" in fn["file"] else ""
+            if not (pdir == cdir or pdir.startswith(cdir + u"/")
+                    or (cdir and pdir and cdir.startswith(pdir + u"/"))):
+                continue
+            for rule in rules:
+                if rule.get("kind") != "taint":
+                    continue
+                langs = rule.get("languages", [])
+                if "php" not in langs and "*" not in langs:
+                    continue
+                for lineno, text, _x in fn["body"]:
+                    if not _first_code_match(rule["sources"], text):
+                        continue
+                    m = arx.search(text) if arx else None
+                    if not m:
+                        continue
+                    var = m.groupdict().get("target") or m.groupdict().get("target2")
+                    if not var:
+                        continue
+                    hops = [{"file": fn["file"], "line": lineno, "kind": "include-scope",
+                             "text": text}]
+                    pool.setdefault((cfile, "{module}"), {}) \
+                        .setdefault(rule["id"], {}).setdefault(var, hops)
+    return pool
+
+
 def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
                 max_passes=None, candidates=None, source_candidates=None):
     """candidates：粗筛给出的候选文件集合。
@@ -684,6 +739,12 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
     flows, blocked, stats = [], [], {"sources": 0, "blocked_by_sanitizer": 0,
                                      "sink_without_taint": 0, "passes": 0}
     tainted_params = {}
+    # PHP 的 include/require 共享调用方符号表：被包含文件里赋的模块级变量，包含者直接读。
+    # DVWA 的 fi 模块就是断在这——`$file = $_GET['page']` 在 `source/low.php`，
+    # `include( $file )` 在 `index.php`，两个文件各自看都"没问题"。
+    # 通道只在"这个文件确实有变量路径的 include/require"时才打开：
+    # 没有这种写法就开池，等于让全仓同名变量互相污染（那是误报制造机）。
+    tainted_params.update(module_include_pool(all_funcs, taint_rules))
     for _pass in range(max_passes or MAX_PASSES):
         stats["passes"] = _pass + 1
         transfers = []
