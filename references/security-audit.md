@@ -92,6 +92,25 @@ python evals/audit-fixtures/bench.py --workdir ../eval-runs/bench --files 1500 -
 大仓建议：先 `audit_index.py` 出清单存盘，再 `audit_scan.py --index 清单.json` 复用；
 续扫用 `--cache DIR --incremental`（只重算变更文件，规则或解析器一变整份缓存作废）。
 
+## 误报怎么办：豁免是出口，不是静音键
+
+业界三层（Semgrep `# nosemgrep`、Gitleaks `gitleaks:allow`、Trivy `.trivyignore`）我们都接了，
+但**必须带理由，没写理由的豁免不生效**——否则误报只是从报告里消失，下次接手的人看不见：
+
+```python
+q = request.args["q"]      # jiangzuo:ignore JZ-SQLI-001 该服务只跑在内网批处理，无外部输入
+```
+
+```
+# .jiangzuoignore（每行：路径模式 规则ID 理由）
+tests/fixtures/** JZ-CMDI-001 夹具里的坏写法是故意的，用于回归检出能力
+```
+
+- 标记可以打在这条发现的**任一证据跳**上（污点流的发现行是 sink，人通常在 source 行注明理由）。
+- 报告里单列「已豁免 N 条（含理由）」，并提示"另有 X 处没写理由的豁免未生效"。
+- 某条规则反复被豁免 → 说明规则本身该收紧或该停用，走 `--validate` + `enabled:false`，
+  不要靠豁免堆到看不见。
+
 ## 常见错误
 
 - "扫描 0 发现，所以安全"——0 发现只说明这批规则没命中；逻辑漏洞、权限模型、竞态不在其列。

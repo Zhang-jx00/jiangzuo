@@ -25,6 +25,7 @@
 仅使用 Python 标准库（3.8+），不联网、只读项目。
 """
 import argparse
+import fnmatch
 import io
 import json
 import os
@@ -603,6 +604,90 @@ def verify(root, finding, map_data, all_lines_cache):
     return keep, result, reasons
 
 
+MARKER_RX = re.compile(r"(?:#|//|/\*|<!--|\*)\s*jiangzuo:ignore\s+"
+                       r"([A-Za-z0-9_\-]+)\s*(.*)$")
+MIN_REASON = 4          # 没写理由的豁免不算豁免：误报必须留在台面上，不许被静默藏掉
+
+
+def load_ignore_file(root):
+    """`.jiangzuoignore`：每行 `路径模式 规则ID 理由`。缺理由的行不计入豁免。"""
+    path = os.path.join(root, ".jiangzuoignore")
+    entries, invalid = [], 0
+    if not os.path.isfile(path):
+        return entries, invalid
+    for _n, text, _t in auditlib.iter_lines(path):
+        text = text.strip()
+        if not text or text.startswith("#"):
+            continue
+        parts = text.split(None, 2)
+        if len(parts) < 3 or len(parts[2].strip()) < MIN_REASON:
+            invalid += 1
+            continue
+        entries.append((parts[0], parts[1].upper(), parts[2].strip()))
+    return entries, invalid
+
+
+def _markers_in(abs_path):
+    """文件里所有行内豁免：{行号: [(规则 id, 理由, 是否有效)]}。"""
+    markers, invalid = {}, 0
+    if not os.path.isfile(abs_path):
+        return markers, invalid
+    for lineno, text, _t in auditlib.iter_lines(abs_path):
+        m = MARKER_RX.search(text)
+        if not m:
+            continue
+        reason = (m.group(2) or "").strip().lstrip("-*# ").strip()
+        valid = len(reason) >= MIN_REASON
+        if not valid:
+            invalid += 1
+        markers.setdefault(lineno, []).append((m.group(1).upper(), reason, valid))
+    return markers, invalid
+
+
+def apply_suppressions(root, findings):
+    """把"带理由的豁免"从发现里摘出来单独留痕（行内 + 路径级两层）。"""
+    ignore_entries, invalid = load_ignore_file(root)
+    cache, kept, suppressed = {}, [], []
+    for f in findings:
+        rel = f["file"]
+        if rel not in cache:
+            cache[rel] = _markers_in(os.path.join(root, rel.replace("/", os.sep)))
+        markers, inv = cache[rel]
+        invalid += inv
+        rid = (f.get("rule_id") or "").upper()
+        # 豁免标记可以打在这条发现的**任一证据跳**上：
+        # 污点流的发现行是 sink，而人通常在 source 那行注明"这里没有外部输入"。
+        probes = set()
+        for hop in (f.get("path") or []):
+            if hop.get("line"):
+                probes.add(hop["line"])
+                probes.add(hop["line"] - 1)
+        if f.get("line"):
+            probes.add(f["line"])
+            probes.add(f["line"] - 1)
+        hit = None
+        for probe in sorted(probes):
+            for rule_id, reason, valid in (markers.get(probe) or []):
+                if rule_id == rid and valid:
+                    hit = (reason, u"行内")
+                    break
+            if hit:
+                break
+        if not hit:
+            for pattern, prule, preason in ignore_entries:
+                if prule == rid and (fnmatch.fnmatch(rel, pattern)
+                                     or fnmatch.fnmatch(os.path.basename(rel), pattern)):
+                    hit = (preason, u".jiangzuoignore")
+                    break
+        if hit:
+            suppressed.append({"rule_id": f.get("rule_id"), "file": rel,
+                               "line": f.get("line"), "severity": f.get("severity"),
+                               "reason": hit[0], "scope": hit[1]})
+            continue
+        kept.append(f)
+    return kept, suppressed, invalid
+
+
 def grade(finding, result):
     value = float(finding.get("confidence_base", 0.5))
     if result["sink_still_matches"]:
@@ -754,6 +839,19 @@ def report_md(payload, root):
                   u"- **指纹**：`%s`%s" % (f["id"], u"（重复 %d 处已合并）"
                                           % f["duplicates"] if f.get("duplicates") else u""),
                   u""]
+    if payload.get("suppressed"):
+        st = payload["stats"]
+        lines += [u"## 已豁免（带理由，留痕不隐藏）", u"",
+                  u"| 规则 | 位置 | 范围 | 理由 |", u"|---|---|---|---|"]
+        for sp in payload["suppressed"]:
+            lines.append(u"| %s | `%s:%s` | %s | %s |"
+                         % (sp["rule_id"], sp["file"], sp["line"], sp["scope"],
+                            sp["reason"][:80]))
+        if st.get("invalid_suppressions"):
+            lines.append(u"")
+            lines.append(u"> ⚠ 另有 %d 处**没写理由的豁免**，未生效——豁免不是静音键。"
+                         % st["invalid_suppressions"])
+        lines.append(u"")
     if payload["dropped"]:
         lines += [u"## 验证环节丢弃（不粉饰）", u""]
         for d in payload["dropped"]:
@@ -977,10 +1075,13 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         f["verification"] = result
         verified.append(grade(f, result))
     verified = rank_dependencies(verified)
+    # 豁免层：带理由的豁免单独留痕；没写理由的不动发现，只计数
+    verified, suppressed, invalid_sup = apply_suppressions(root, verified)
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
              "closure_files": stats_note.get("closure_files", 0),
              "reused_flows": stats_note.get("reused_flows", 0),
              "workers": index.get("workers", 0),
+             "suppressed": len(suppressed), "invalid_suppressions": invalid_sup,
              "files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
              "recomputed_files": len(scan_index["files"]),
              "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
@@ -988,6 +1089,7 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
              "peak_memory_kb": peak_kb}
     payload = build_report_payload(root, index, map_data, None, rules, verified, dropped,
                                    cache.get("blocked", []) if cache else [], stats)
+    payload["suppressed"] = suppressed
     payload["_rules"] = [{"id": r["id"], "title": r["title"], "note": r.get("note", ""),
                           "cwe": r.get("cwe", []), "owasp": r.get("owasp", []),
                           "severity": r["severity"]} for r in rules]

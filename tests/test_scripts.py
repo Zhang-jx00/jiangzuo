@@ -1182,5 +1182,82 @@ class TestAuditBaseline(unittest.TestCase):
             self.assertTrue(statuses, "复测报告没有逐条状态：%s" % rc.stdout[:200])
 
 
+class TestAuditSuppression(unittest.TestCase):
+    """B2：豁免是业界标配，但**没写理由的豁免不算豁免**——否则误报只是被藏起来了。"""
+
+    VULN = ("from flask import request\nimport sqlite3\n\n\n"
+            "@app.route('/a')\ndef a():\n"
+            "    q = request.args['q']\n"
+            "    con = sqlite3.connect('db.sqlite')\n"
+            "    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}').fetchall()\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_s_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_inline_suppression_with_reason_hides_and_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a.py", self.VULN.replace(
+                "    return con.execute(",
+                "    return con.execute(").replace(
+                "    q = request.args['q']",
+                "    q = request.args['q']  # jiangzuo:ignore JZ-SQLI-001 只被内部任务调用，无外部输入"))
+            data, _ = self._scan(tmp, "reason")
+            self.assertEqual([], [f for f in data["findings"]
+                                 if f["rule_id"] == "JZ-SQLI-001"],
+                             "带理由的行内豁免没生效")
+            sup = data.get("suppressed") or []
+            self.assertTrue(any(s["rule_id"] == "JZ-SQLI-001" for s in sup),
+                            "豁免必须留痕：%s" % data["stats"])
+            self.assertIn(u"内部任务", sup[0]["reason"])
+
+    def test_suppression_without_reason_does_not_hide(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a.py", self.VULN.replace(
+                "    q = request.args['q']",
+                "    q = request.args['q']  # jiangzuo:ignore JZ-SQLI-001"))
+            data, _ = self._scan(tmp, "noreason")
+            self.assertTrue([f for f in data["findings"]
+                             if f["rule_id"] == "JZ-SQLI-001"],
+                            "没写理由的豁免不该生效，否则误报被静默藏掉")
+            self.assertGreaterEqual(data["stats"].get("invalid_suppressions", 0), 1,
+                                    "无效豁免要被数出来并报告")
+
+    def test_suppression_is_rule_specific(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a.py", self.VULN.replace(
+                "    q = request.args['q']",
+                "    q = request.args['q']  # jiangzuo:ignore JZ-SSRF-001 豁免的是别的规则"))
+            data, _ = self._scan(tmp, "other")
+            self.assertTrue([f for f in data["findings"]
+                             if f["rule_id"] == "JZ-SQLI-001"],
+                            "豁免另一条规则不该把这条一起藏掉")
+
+    def test_ignore_file_suppresses_by_path_and_rule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a.py", self.VULN)
+            self._write(tmp, ".jiangzuoignore",
+                        "a.py JZ-SQLI-001 演示代码，不接生产\n")
+            data, _ = self._scan(tmp, "file")
+            self.assertEqual([], [f for f in data["findings"]
+                                 if f["rule_id"] == "JZ-SQLI-001"])
+            self._write(tmp, ".jiangzuoignore", "other.py JZ-SQLI-001 路径不匹配\n")
+            data2, _ = self._scan(tmp, "file2")
+            self.assertTrue([f for f in data2["findings"]
+                             if f["rule_id"] == "JZ-SQLI-001"],
+                            "忽略文件里的路径不该误伤别的文件")
+
+
 if __name__ == "__main__":
     unittest.main()
