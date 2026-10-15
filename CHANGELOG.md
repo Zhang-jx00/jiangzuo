@@ -2,6 +2,28 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.28.0] - 2026-10-14
+
+B3：**SARIF 按 GitHub 必填口径自检**（此前只说"结构自检"，没说清检的是哪些字段）。
+
+- 新增 `sarif_selfcheck()`：`version`/`$schema`/`tool.driver.name`/`rules[]` 非空、
+  **每条 `ruleId` 必须在 `rules[]` 里声明过**（GitHub 对未声明的 ruleId 直接丢结果）、
+  `message.text` 非空、`level ∈ {none,note,warning,error}`、
+  `locations[]` 非空、**`artifactLocation.uri` 必须是仓库相对 POSIX 路径**
+  （反斜杠、绝对路径、盘符都会被拒）、`startLine ≥ 1`、
+  `partialFingerprints.primaryLocationLineHash` 必须存在（跨 run 去重靠它）。
+- 产出 SARIF 后自动回读自检，结果进 `stats.sarif_problems` 并打印。
+- **口径修正**：官方 `sarif-validator` 并没有可执行命令行（字段校验实际靠上传 API 拒绝），
+  所以只声称"字段级自检通过"；`baselineCommit` 与 `suppressions` **GitHub 不消费**，
+  我们不再把它们当能力宣传。
+
+### 验证
+
+`TestAuditSarifCheck` 在**同一条测试里**既验自家产物自检为空，也用 6 种坏数据
+（反斜杠 uri、未声明 ruleId、缺指纹、非法 level、空 locations、错 version）
+逐个确认被抓——自检器自己也被校准过，不是只会点头。65 tests OK。
+
+
 ## [0.27.0] - 2026-10-14
 
 对标补的第一块短板：**豁免机制**（Semgrep `# nosemgrep` / Gitleaks `gitleaks:allow` /

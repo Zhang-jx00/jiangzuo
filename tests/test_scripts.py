@@ -1259,5 +1259,49 @@ class TestAuditSuppression(unittest.TestCase):
                             "忽略文件里的路径不该误伤别的文件")
 
 
+class TestAuditSarifCheck(unittest.TestCase):
+    """B3：SARIF 自检必须"能红"——同一条测试里既验干净通过，也验坏数据被抓。"""
+
+    def _sarif(self, tmp):
+        with io.open(os.path.join(tmp, "a.py"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("from flask import request\nimport sqlite3\n\n\n"
+                    "@app.route('/a')\ndef a():\n"
+                    "    q = request.args['q']\n"
+                    "    con = sqlite3.connect('db.sqlite')\n"
+                    "    return con.execute(f'SELECT * FROM t WHERE c LIKE {q}')"
+                    ".fetchall()\n")
+        sarif = os.path.join(tmp, "r.sarif")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), tmp, "--sarif", sarif])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("SARIF 字段级自检：通过", r.stdout)
+        with io.open(sarif, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_clean_sarif_passes_and_broken_is_caught(self):
+        sys.path.insert(0, SCRIPTS)
+        import audit_scan
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._sarif(tmp)
+            self.assertEqual([], audit_scan.sarif_selfcheck(doc), "自家产物自检没过")
+            cases = {
+                "uri 用反斜杠": lambda d: d["runs"][0]["results"][0]["locations"][0]
+                    ["physicalLocation"]["artifactLocation"].__setitem__("uri", "src\\a.py"),
+                "ruleId 未在 rules 声明": lambda d: d["runs"][0]["results"][0].__setitem__(
+                    "ruleId", "JZ-NOT-A-RULE"),
+                "缺 partialFingerprints": lambda d: d["runs"][0]["results"][0].pop(
+                    "partialFingerprints"),
+                "level 非法": lambda d: d["runs"][0]["results"][0].__setitem__(
+                    "level", "severe"),
+                "缺 locations": lambda d: d["runs"][0]["results"][0].__setitem__(
+                    "locations", []),
+                "version 不对": lambda d: d.__setitem__("version", "2.0.0"),
+            }
+            for name, mutate in cases.items():
+                broken = json.loads(json.dumps(doc))
+                mutate(broken)
+                problems = audit_scan.sarif_selfcheck(broken)
+                self.assertTrue(problems, "坏 SARIF 没被抓出来：%s" % name)
+
+
 if __name__ == "__main__":
     unittest.main()

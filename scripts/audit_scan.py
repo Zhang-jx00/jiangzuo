@@ -1128,6 +1128,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         with io.open(out_sarif, "w", encoding="utf-8") as f:
             f.write(json.dumps(to_sarif(payload, version), ensure_ascii=False,
                                indent=1) + "\n")
+        with io.open(out_sarif, "r", encoding="utf-8") as f:
+            payload["stats"]["sarif_problems"] = sarif_selfcheck(json.load(f))
     return payload
 
 
@@ -1229,6 +1231,56 @@ def recheck_md(report):
     return u"\n".join(lines) + u"\n"
 
 
+SARIF_LEVELS = {"none", "note", "warning", "error"}
+
+
+def sarif_selfcheck(doc):
+    """按 GitHub code scanning 的必填口径自检（缺必填会被上传直接拒绝）。
+
+    只声称"字段级自检"：官方 sarif-validator 命令行并不存在，字段校验实际靠上传 API 拒绝，
+    所以这里通过 ≠ 官方通过。
+    """
+    problems = []
+    if doc.get("version") != SARIF_VERSION:
+        problems.append(u"version 必须是 %s" % SARIF_VERSION)
+    if "$schema" not in doc:
+        problems.append(u"缺 $schema")
+    for ri, run_obj in enumerate(doc.get("runs") or []):
+        driver = (run_obj.get("tool") or {}).get("driver") or {}
+        if not driver.get("name"):
+            problems.append(u"runs[%d] 缺 tool.driver.name" % ri)
+        rule_ids = set(r.get("id") for r in driver.get("rules") or [])
+        if not driver.get("rules"):
+            problems.append(u"runs[%d] 缺 tool.driver.rules" % ri)
+        for n, res in enumerate(run_obj.get("results") or []):
+            where = u"results[%d]" % n
+            if not res.get("ruleId"):
+                problems.append(where + u" 缺 ruleId")
+            elif res["ruleId"] not in rule_ids:
+                problems.append(u"%s ruleId %s 未在 rules[] 声明（GitHub 会丢这条）"
+                                % (where, res["ruleId"]))
+            if not (res.get("message") or {}).get("text"):
+                problems.append(where + u" 缺 message.text")
+            if res.get("level") not in SARIF_LEVELS:
+                problems.append(u"%s level 非法：%r" % (where, res.get("level")))
+            locs = res.get("locations") or []
+            if not locs:
+                problems.append(where + u" 缺 locations（无位置的告警会被拒）")
+            for loc in locs:
+                phys = loc.get("physicalLocation") or {}
+                uri = ((phys.get("artifactLocation") or {}).get("uri")) or ""
+                if not uri:
+                    problems.append(where + u" artifactLocation.uri 为空")
+                elif "\\" in uri or uri.startswith("/") or re.match(r"^[A-Za-z]:", uri):
+                    problems.append(u"%s uri 必须是仓库相对 POSIX 路径：%s" % (where, uri))
+                line = ((phys.get("region") or {}).get("startLine")) or 0
+                if line < 1:
+                    problems.append(u"%s region.startLine 必须 ≥1" % where)
+            if not (res.get("partialFingerprints") or {}).get("primaryLocationLineHash"):
+                problems.append(where + u" 缺 partialFingerprints（跨 run 去重靠它）")
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=u"扫描调度与报告（将作）：粗筛→深挖→独立验证→分级→Markdown/JSON/SARIF。")
@@ -1324,6 +1376,13 @@ def main():
                  f["kind"], f["file"], f["line"]))
     if len(payload["findings"]) > 12:
         print(u"  ……其余见报告")
+    probs = s.get("sarif_problems")
+    if probs is not None:
+        print(u"SARIF 字段级自检：%s"
+              % (u"通过（按 GitHub 必填口径；官方 validator 本机不可用，未跑）"
+                 if not probs else u"未通过"))
+        for pr in probs[:10]:
+            print(u"  ✘ %s" % pr)
     print(u"RESULT: SCAN-OK（%d 条发现，%d 条被独立验证拦下）"
           % (s["findings"], s["dropped_by_verifier"]))
     if args.strict and (dist.get("critical") or dist.get("high")):
