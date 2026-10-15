@@ -112,7 +112,8 @@ def validate_rule(rule, source, problems, compiled):
     return entry
 
 
-def load_rules(extra_paths=None, problems=None, include_disabled=False):
+def load_rules(extra_paths=None, problems=None, include_disabled=False,
+              osv_paths=None):
     """内置目录 + 用户文件 → 按 id 去重合并（用户后到，覆盖同名内置）。
 
     `enabled: false` 的规则不进活动集（实测误报率高的规则要被数据停用，
@@ -158,6 +159,16 @@ def load_rules(extra_paths=None, problems=None, include_disabled=False):
             else:
                 order.append(rid)
                 raw_by_id[rid] = (rule, name)
+    if osv_paths:
+        osv_rules, n_bad = load_osv(osv_paths)
+        for rec in osv_rules:
+            if rec["id"] in raw_by_id:
+                continue          # 用户/内置已有同 id 时不覆盖
+            raw_by_id[rec["id"]] = (rec, "osv")
+            order.append(rec["id"])
+        soft_notes.append(u"OSV 导入 %d 条建议（跳过 %d 条无法解析的记录）"
+                          % (len(osv_rules), n_bad))
+
     active = []
     skipped = []
     for rid in order:
@@ -203,6 +214,102 @@ def export_rules(rules):
     return out
 
 
+OSV_SEVERITY = {"CRITICAL": "critical", "HIGH": "high", "MODERATE": "medium",
+                "MODERATE ": "medium", "LOW": "low", "NONE": "info"}
+OSV_LANG_BY_ECO = {"PyPI": "python", "npm": "javascript", "Go": "go", "Maven": "java",
+                   "RubyGems": "ruby", "Packagist": "php", "crates.io": "rust",
+                   "NuGet": "csharp"}
+
+
+def _osv_severity(rec):
+    for sev in rec.get("severity") or []:
+        text = str(sev.get("score", "")).upper()
+        for key, val in OSV_SEVERITY.items():
+            if text.startswith(key.strip()):
+                return val
+    return "high"
+
+
+def load_osv(paths):
+    """把 OSV 记录（https://osv.dev 的 JSON）变成 dependency 规则。
+
+    为什么需要：内置那 6 条手写建议是**样例基线**，不是 advisory feed——
+    拿它当"依赖漏洞已覆盖"是自欺。OSV 可按生态离线拉取（`all.zip`），
+    我们只做导入通道，**不把数据提交进技能仓库**（体积与时效都不合适）。
+    """
+    rules, skipped, seen = [], 0, set()
+    files = []
+    for path in paths or []:
+        if os.path.isdir(path):
+            for name in sorted(os.listdir(path)):
+                if name.endswith(".json"):
+                    files.append(os.path.join(path, name))
+        elif os.path.isfile(path):
+            files.append(path)
+    for path in files:
+        try:
+            with io.open(path, "r", encoding="utf-8") as f:
+                blob = json.load(f)
+        except (OSError, ValueError):
+            skipped += 1
+            continue
+        records = blob if isinstance(blob, list) else [blob]
+        for rec in records:
+            if not isinstance(rec, dict):
+                skipped += 1
+                continue
+            oid = rec.get("id")
+            aliases = [a for a in (rec.get("aliases") or []) if str(a).startswith("CVE")]
+            pairs = []
+            for aff in rec.get("affected") or []:
+                pkg = aff.get("package") or rec.get("package") or {}
+                fixed = None
+                for rng in aff.get("ranges") or []:
+                    for event in rng.get("events") or []:
+                        if "fixed" in event:
+                            fixed = str(event["fixed"])
+                            break
+                    if fixed:
+                        break
+                if pkg.get("name") and fixed:
+                    pairs.append((pkg, fixed))
+            if not pairs:
+                skipped += 1
+                continue
+            for pkg, fixed in pairs:
+                name = str(pkg.get("name") or "").strip()
+                eco = str(pkg.get("ecosystem") or "").strip()
+                if not (name and eco and oid):
+                    skipped += 1
+                    continue
+                key = (eco.lower(), name.lower(), fixed)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rules.append({
+                    "id": "OSV-%s" % oid,
+                    "title": u"依赖已知漏洞：%s %s（%s）" % (name, u"< " + fixed,
+                                                           (aliases or [oid])[0]),
+                    "kind": "dependency",
+                    "severity": _osv_severity(rec),
+                    "confidence_base": 0.75,
+                    "languages": [OSV_LANG_BY_ECO.get(eco, "*")],
+                    "cwe": ["CWE-1035", "CWE-1104"],
+                    "owasp": [u"A06:2021 易受攻击组件"],
+                    "advisory": {"ecosystem": eco, "name": name.lower(),
+                                 "vulnerable_below": fixed,
+                                 "cve": (aliases or [oid])[0],
+                                 "module_alias": [name.lower(),
+                                                  name.lower().replace("-", "_")]},
+                    "fix": u"升级到 %s %s 或更高；无法升级时按 OSV 记录的 workaround 处理。"
+                           % (name, fixed),
+                    "retest": u"用包管理器确认**实际解析版本**（不只是清单声明）已不在受影响区间："
+                              u" pip show / npm ls / cargo tree。",
+                    "source": "osv",
+                })
+    return rules, skipped
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=u"声明式规则引擎（将作）：加载/校验/合并审计规则，规则是数据不是代码。")
@@ -212,6 +319,8 @@ def main():
     ap.add_argument("--json", dest="json_out", default=None, help=u"导出合并后的规则集")
     ap.add_argument("--list", action="store_true", help=u"按严重度列出规则")
     ap.add_argument("--dir", default=None, help=u"改用别的规则目录（调试用）")
+    ap.add_argument("--osv", action="append", default=[],
+                    help=u"OSV JSON 文件或目录（可多次）；数据不入库，只走导入通道")
     ap.add_argument("--enable-all", action="store_true",
                     help=u"连 enabled:false 的规则一起加载（默认按数据停用）")
     args = ap.parse_args()
@@ -222,7 +331,8 @@ def main():
 
     problems = []
     rules, problems, soft_notes, disabled = load_rules(args.add, problems,
-                                                       include_disabled=args.enable_all)
+                                                       include_disabled=args.enable_all,
+                                                       osv_paths=args.osv or None)
     version = rules_version(rules)
     by_sev = {}
     by_kind = {}

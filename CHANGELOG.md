@@ -2,6 +2,34 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.29.0] - 2026-10-14
+
+B4：**依赖建议接真实数据源**——`--osv` 导入 OSV 记录，替代"6 条手写样例"。
+
+- `audit_rules.load_osv()`：读 OSV JSON（文件或目录，query 结果数组也吃），
+  按 `affected[].package` + `ranges[].events.fixed` 生成 dependency 规则，
+  严重度从 `severity`/CVSS 映射，CVE 从 `aliases` 取，`module_alias` 自动带上
+  `name` 与 `name.replace('-', '_')` 两种写法。
+- **不随仓库分发数据**：只带一份 10KB 真实样本当测试夹具
+  （`evals/audit-fixtures/osv-pyyaml.json`，来自 `api.osv.dev/v1/query` 查 pyyaml 5.3 的返回，
+  含 GHSA-6757-jp84-gxfx / GHSA-8q59-q68h-6hv4 / PYSEC-2020-96 / PYSEC-2021-142），
+  全量数据由用户按生态离线拉取（`osv-vulnerabilities.storage.googleapis.com/{PyPI,npm}/all.zip`）。
+- 导入后 `rules_version` 变化（实测 `51886c29` → `8b16fb2b`）→ 增量缓存自动作废，
+  不会拿旧结论糊新 advisory。
+- 解析不了的记录**跳过并计数**（`跳过 N 条无法解析的记录`），不崩、不猜。
+
+### 实现中修掉的一个真错
+
+第一版只读顶层 `rec["package"]`，而 OSV 规范把 package 放在 **`affected[].package`** 里——
+真实数据会被全部静默跳过，样例基线看起来"工作正常"。这条已写进函数注释，
+并靠真实夹具锁住（`test_osv_import_adds_real_advisories` 断言报告里出现 `OSV-` 前缀的规则）。
+
+### 验证
+
+3 条新测试全绿（真实数据导入生效、坏记录被跳过、版本随数据变化）；
+全量 68 tests OK、`validate_skill` 11/0/0、`preflight --all --strict` PASS。
+
+
 ## [0.28.0] - 2026-10-14
 
 B3：**SARIF 按 GitHub 必填口径自检**（此前只说"结构自检"，没说清检的是哪些字段）。

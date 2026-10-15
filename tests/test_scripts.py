@@ -1303,5 +1303,53 @@ class TestAuditSarifCheck(unittest.TestCase):
                 self.assertTrue(problems, "坏 SARIF 没被抓出来：%s" % name)
 
 
+class TestAuditOsv(unittest.TestCase):
+    """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
+    不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""
+
+    OSV = os.path.join(REPO, "evals", "audit-fixtures", "osv-pyyaml.json")
+
+    def _scan(self, root, extra):
+        out = os.path.join(root, "_osv%s.json" % (len(extra) or 0))
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out] + extra)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_osv_import_adds_real_advisories(self):
+        self.assertTrue(os.path.isfile(self.OSV), "OSV 夹具不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "requirements.txt"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write("pyyaml==5.3\n")
+            plain, _ = self._scan(tmp, [])
+            with_osv, stdout = self._scan(tmp, ["--osv", self.OSV])
+            ids = [f["rule_id"] for f in with_osv["findings"]]
+            self.assertTrue(any(i.startswith("OSV-") for i in ids),
+                            "OSV 派生的建议没进报告：%s" % ids)
+            self.assertGreater(len([i for i in ids if i.startswith("OSV-")]),
+                               0)
+            self.assertNotEqual(plain["rules_version"], with_osv["rules_version"],
+                                "换了 advisory 数据而 rules_version 不变 → 缓存会拿旧结论")
+
+    def test_malformed_osv_is_skipped_not_fatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "bad.json")
+            with io.open(bad, "w", encoding="utf-8") as f:
+                f.write(json.dumps([{"id": "NOPE-1"}, {"package": {"name": "x"},
+                                                       "affected": []}, "junk"]))
+            r = run([os.path.join(SCRIPTS, "audit_rules.py"), "--validate",
+                     "--osv", bad])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"跳过 3 条", r.stdout)
+
+    def test_validate_reports_osv_counts(self):
+        r = run([os.path.join(SCRIPTS, "audit_rules.py"), "--validate",
+                 "--osv", self.OSV])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("OSV 导入", r.stdout)
+        self.assertIn("RESULT: RULES-OK", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

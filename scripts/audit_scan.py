@@ -925,10 +925,12 @@ def to_sarif(payload, skill_version):
 def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         map_path=None, graph_path=None, user_rules=None, cache_dir=None,
         incremental=False, max_file_kb=2048, report_memory=False,
-        ignore_patterns=None, fused=True, jobs=1, version="0.25.0"):
+        ignore_patterns=None, fused=True, jobs=1, osv_paths=None,
+        version="0.28.0"):
     root = os.path.abspath(root)
     max_bytes = max_file_kb * 1024
-    rules, problems, _notes, _off = audit_rules.load_rules(user_rules or [])
+    rules, problems, _notes, _off = audit_rules.load_rules(
+        user_rules or [], osv_paths=osv_paths or None)
     if problems:
         raise ValueError(u"规则库有问题，拒绝扫描：" + u"；".join(problems[:5]))
     rules_version = audit_rules.rules_version(rules)
@@ -1302,6 +1304,8 @@ def main():
                     help=u"前端并发的进程数（有界；≥2 且文件数 ≥400 才生效，池不可用自动退回串行）")
     ap.add_argument("--staged", action="store_true",
                     help=u"走分步前端（索引→地图→粗筛三遍），用于与单遍融合版对照取证")
+    ap.add_argument("--osv", action="append", default=[],
+                    help=u"OSV JSON 文件或目录：用真实 advisory 替换内置样例建议集")
     ap.add_argument("--baseline", default=None,
                     help=u"上一次扫描的 JSON：报出新增/已消失/仍在，CI 只拦新增")
     ap.add_argument("--only-new", action="store_true",
@@ -1336,7 +1340,7 @@ def main():
                       incremental=args.incremental, max_file_kb=args.max_file_kb,
                       report_memory=args.report_memory,
                       ignore_patterns=args.ignore or None, fused=not args.staged,
-                      jobs=max(1, args.jobs))
+                      jobs=max(1, args.jobs), osv_paths=args.osv or None)
     except ValueError as exc:
         print(u"错误：%s" % exc, file=sys.stderr)
         return 1
