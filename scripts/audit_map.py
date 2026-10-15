@@ -174,6 +174,8 @@ def detect_routes(root, rel, lang, lines):
             if lang not in langs_ok:
                 continue
             m = rx.search(line)
+            if m and auditlib.match_in_string(line, m.start()):
+                continue      # 命中位置在字符串字面量里：夹具/文档写的路由不是路由
             if m:
                 break
         if not m:
@@ -273,10 +275,16 @@ def consume_file(state, root, rec, lines):
     if not lines:
         return
     state["scanned"] += 1
+    # 源码类文件只在**代码行**上抽路由/鉴权/连接点：测试夹具与文档里当字符串写的
+    # `@app.route('/x')` 不是路由（自扫实测过一条这样的误报）。
+    # 清单文件仍吃原文——package.json 的依赖就在字符串里，屏蔽掉就抽不着了。
+    is_source = lang in auditlib.SOURCE_LANGS or lang == "vue"
+    code_triples = [(n, raw, x) for n, raw, _m, x in
+                    auditlib.code_lines(l for _i, l, _x in lines)] if is_source else lines
     if base in ENTRY_NAMES or len(rel.split("/")) <= 2:
         reason = u"文件名即入口约定" if base in ENTRY_NAMES else ""
         for call, why in ENTRY_CALLS:
-            for lineno, line, _t in lines:
+            for lineno, line, _t in code_triples:
                 if call in line:
                     reason = why
                     break
@@ -285,8 +293,8 @@ def consume_file(state, root, rec, lines):
         if base in ENTRY_NAMES or reason:
             state["entrypoints"].append({"path": rel, "lang": lang,
                                          "reason": reason or u"文件名约定"})
-    if lang in auditlib.SOURCE_LANGS or lang == "vue":
-        state["routes"].extend(detect_routes(root, rel, lang, lines))
+    if is_source:
+        state["routes"].extend(detect_routes(root, rel, lang, code_triples))
     if base in project_scan.MANIFESTS or base.startswith("requirements"):
         # 只有清单文件才整份拼文本（几十 KB 级）；源码一律逐行扫，
         # 避免"为了抽依赖把每个源文件都拼成一个大字符串"这种内存自伤
@@ -296,7 +304,7 @@ def consume_file(state, root, rec, lines):
         # 数据文件（json/yaml/md，包括本工具自己写出的地图）不参与
         # 环境变量/连接点/鉴权边界抽取，否则第二次扫描会读到第一次的产物，
         # 地图就会"越扫越脏"——可复现性是被这条毁掉的（测试实测出来）
-        for lineno, line, _t in lines:
+        for lineno, line, _t in code_triples:
             for m in ENV_READ_RX.finditer(line):
                 name = m.group(1) or m.group(2) or m.group(3)
                 if name:

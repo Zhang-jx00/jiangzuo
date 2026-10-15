@@ -457,7 +457,9 @@ def iter_lines(path, max_bytes=DEFAULT_MAX_FILE_BYTES, max_line=DEFAULT_MAX_LINE
 
 DOCSTRING_DELIMS = ('"""', "'''")
 COMMENT_PREFIXES = ("#", "//", "*", "/*")
-STRING_SPAN_RX = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"")
+# 字面量跨度必须认转义：`"...\b@app.route('x')..."` 里被转义的引号不是字符串结束，
+# 早先按"最近一个引号"配对会把后半行当成代码，屏蔽形同虚设（自扫实测 3 条误报）。
+STRING_SPAN_RX = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 
 
 def code_lines(raw_iter):

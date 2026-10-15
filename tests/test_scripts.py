@@ -1081,5 +1081,26 @@ class TestAuditIncrementalGraph(unittest.TestCase):
             self.assertGreaterEqual(inc["stats"]["reused_flows"], 0)
 
 
+    def test_routes_written_inside_string_literals_are_not_routes(self):
+        """夹具与文档里当字符串写的 @app.route 不是路由（自扫实测过一条这样的误报）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "_m.json")
+            with io.open(os.path.join(tmp, "fixtures.py"), "w", encoding="utf-8") as f:
+                f.write("CASES = [\n    \"@app.route('/admin/leak')\",\n]\n\n\n"
+                        "def real():\n    return 1\n")
+            with io.open(os.path.join(tmp, "app.py"), "w", encoding="utf-8") as f:
+                f.write("from flask import Flask\napp = Flask(__name__)\n\n"
+                        "@app.route('/admin/real')\ndef admin():\n    return 1\n")
+            r = run([os.path.join(SCRIPTS, "audit_map.py"), tmp, "--json", out])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            with io.open(out, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            paths = [x["path"] for x in data["routes"]]
+            self.assertIn("/admin/real", paths, "真路由不能一起屏蔽掉")
+            self.assertNotIn("/admin/leak", paths, "字符串字面量里的路由被当成了路由")
+            self.assertEqual([], [a for a in data["auth_boundaries"]
+                                  if a["file"] == "fixtures.py"])
+
+
 if __name__ == "__main__":
     unittest.main()
