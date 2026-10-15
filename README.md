@@ -68,7 +68,7 @@ jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
 ├── references/       # 19 本分册（渐进式披露：进入哪个阶段读哪本）
 ├── templates/        # 14 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准/进化账本…）
-├── scripts/          # 13 个纯标准库脚本
+├── scripts/          # 14 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿
 │   ├── audit_index.py     # 审计链①：文件索引与 gitignore 忽略，产出可复现清单
 │   ├── audit_map.py       # 审计链②：项目侦察地图（语言/入口/路由/鉴权边界/依赖）
@@ -149,7 +149,7 @@ npx skills add <you>/jiangzuo
 ## 兼容性说明
 
 - 脚本仅用 Python 3.8+ 标准库，Windows/macOS/Linux 通用；环境没有 Python 时按各分册的人工清单执行，效果等价
-- 所有脚本只读项目文件、不联网、不写技能目录外的东西，可放心审计
+- 脚本**不联网、不改任何项目文件**；只有你显式给了 `--out/--json/--md` 才会往你指定的路径写交付物（`review_packet.py` 之类），可放心审计
 - SKILL.md 220 行（上限 500），description 241 字符（entry 合计 290，适配清单 299 字符可见截断），纯触发条件不含工作流摘要
 - **跨平台硬约束已适配**（实测+官方文档）：Claude/ZCode 系技能清单 entry≈299 字符截断（本技能全可见）；Codex/Copilot 对超 1024 字符的 description 静默丢弃（本技能 241，安全）；Cursor 要求 name 与目录同名（jiangzuo ✓）；`.agents/skills/` 为 Codex/Cursor/Gemini/Copilot 通用项目级目录
 

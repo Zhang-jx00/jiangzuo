@@ -25,6 +25,7 @@ SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
 SCRIPT_NAMES = ["audit_graph.py", "audit_index.py", "audit_map.py", "audit_rules.py",
+                "review_packet.py",
                 "audit_scan.py", "evolve_report.py", "lookup.py", "new_doc.py",
                 "preflight.py", "project_scan.py", "ship_check.py",
                 "validate_skill.py"]
@@ -2334,6 +2335,101 @@ class TestAuditIncludeScope(unittest.TestCase):
                               and f["file"] == "page/index.php"],
                          "静态 require 不该靠名字池成流：%s"
                          % [(f["rule_id"], f["file"], f["line"]) for f in data["flows"]])
+
+
+class TestReviewPacket(unittest.TestCase):
+    """B5：把"交给审查者/子代理的东西"变成一个文件。
+
+    之前是多轮对话里散着的描述——上下文一压缩就丢，而且**说没做≠做没做**。
+    这个脚本只做一件事：把 diff + 任务原话 + 验收标准 + 验证命令 + 四态回执
+    钉进一个文件。它**不执行**任何验证命令（第 4 条测试专门锁这一点）。
+    """
+
+    def _repo(self, tmp):
+        def git(*a):
+            r = subprocess.run(["git"] + list(a), cwd=tmp, timeout=60,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(r.returncode, 0, r.stdout.decode("utf-8", "replace"))
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "test")
+
+    def _write(self, tmp, rel, text):
+        path = os.path.join(tmp, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _packet(self, tmp, extra, name):
+        out = os.path.join(tmp, "_pkt_%s.md" % name)
+        r = run([os.path.join(SCRIPTS, "review_packet.py"), "--root", tmp,
+                 "--out", out] + extra)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        return out, r
+
+    def test_packet_pins_diff_brief_acceptance_and_four_states(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            self._write(tmp, "app.py", "def add(a, b):\n    return a + b\n")
+            subprocess.run(["git", "add", "-A"], cwd=tmp, timeout=60, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=tmp, timeout=60,
+                           stdout=subprocess.DEVNULL)
+            self._write(tmp, "app.py", "def add(a, b):\n    return a - b   # 故意改坏\n")
+            self._write(tmp, "accept.md", u"- 验收①：add(2,3) 必须是 5\n")
+            out, _ = self._packet(tmp, [u"--brief", u"修一个加法符号搞反的 bug",
+                                        "--acceptance-file", os.path.join(tmp, "accept.md"),
+                                        u"--verify-cmd", u"pytest -q"], "make")
+            text = io.open(out, encoding="utf-8").read()
+            self.assertIn(u"app.py", text, u"diff 摘要要在")
+            self.assertIn(u"修一个加法符号搞反的 bug", text, u"任务原话要逐字钉进去")
+            self.assertIn(u"add(2,3) 必须是 5", text, u"验收标准要进去")
+            self.assertIn(u"pytest -q", text, u"验证命令要列出来")
+            for state in (u"DONE", u"CONCERNS", u"NEEDS_CONTEXT", u"BLOCKED"):
+                self.assertIn(state, text, u"四态回执缺 %s" % state)
+
+    def test_secrets_are_redacted_before_the_packet_hits_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            self._write(tmp, "cfg.py", "TOKEN = \"old\"\n")
+            subprocess.run(["git", "add", "-A"], cwd=tmp, timeout=60, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=tmp, timeout=60,
+                           stdout=subprocess.DEVNULL)
+            secret = "ghp_" + "A1" * 18
+            self._write(tmp, "cfg.py", "TOKEN = \"%s\"\n" % secret)
+            out, _ = self._packet(tmp, [], "sec")
+            text = io.open(out, encoding="utf-8").read()
+            self.assertNotIn(secret, text, u"真实令牌不能被抄进交付文件")
+            self.assertIn(u"****", text, u"要看得出「这里脱敏过」，而不是整行被删")
+            self.assertIn("TOKEN", text, u"键名要留着，审查者才知道改的是哪一行")
+
+    def test_oversized_diff_is_truncated_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            self._write(tmp, "a.py", "x = 1\n")
+            subprocess.run(["git", "add", "-A"], cwd=tmp, timeout=60, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=tmp, timeout=60,
+                           stdout=subprocess.DEVNULL)
+            self._write(tmp, "a.py", "".join("y%d = %d\n" % (i, i) for i in range(6000)))
+            out, _ = self._packet(tmp, [u"--max-diff-kb", "4"], "big")
+            text = io.open(out, encoding="utf-8").read()
+            self.assertLess(len(text), 60000, u"超预算必须截断，不能把 60KB 灌进交付文件")
+            self.assertIn(u"截断", text, u"截断要留痕，不能悄悄少给")
+
+    def test_the_packet_never_runs_the_verify_commands(self):
+        """锁的是"只落文件、不执行"。列命令给人看，执行由人/上游决定。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            self._write(tmp, "a.py", "x = 1\n")
+            subprocess.run(["git", "add", "-A"], cwd=tmp, timeout=60, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=tmp, timeout=60,
+                           stdout=subprocess.DEVNULL)
+            self._write(tmp, "a.py", "x = 2\n")
+            marker = os.path.join(tmp, "SHOULD_NOT_EXIST")
+            out, _ = self._packet(tmp, [u"--verify-cmd", "touch %s" % marker], "run")
+            self.assertIn("SHOULD_NOT_EXIST", io.open(out, encoding="utf-8").read())
+            self.assertFalse(os.path.exists(marker), u"脚本执行了验证命令——它不该执行任何东西")
 
 
 if __name__ == "__main__":
