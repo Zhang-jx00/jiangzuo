@@ -2,6 +2,46 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.30.0] - 2026-10-15
+
+B7：**第一次用不是我写的仓库量自己**——flask / requests / DVWA 三仓取证，
+量出四个真缺陷并全部修成红/绿配对，同时把"误报 ≤10%"这条验收的**未达标**写进记录。
+
+- **角色与范围**（`audit_scan.repo_role()` + 规则 `scope: "app"` + `is_example_path()`）：
+  纯库不再被配置型规则（调试开关、会话 cookie、错误回显）报；`examples/`、`docs/`、
+  `tests/` 下的配置型命中转「不适用（已判定并留痕）」，**注入类规则在这些路径仍生效**
+  （只压配置型不压能力型，有测试守反面）。requests 14→4、flask 44→13（另 29 条不适用）。
+  反面教训入档：角色判定最初用"没有路由就当库"，把过程式 PHP 的 DVWA 判成库，
+  **压掉 7 条真漏洞**；现在要求"有打包清单 且 docs/examples 外无真实页面文件"。
+- **PHP 检出补全**（DVWA 上 SQL 注入原本 0 条）：
+  `JZ-SQLI-003` 加"变量实参进查询函数"的 sink（`mysqli_query($link, $query)` 这类
+  插值后传参的写法，污点闸门保证它不误报）；新增 `JZ-XSS-002`（PHP 反射输出：
+  `$_GET/$_POST/$_REQUEST/$_COOKIE/$_FILES` 与可控 `$_SERVER` 键 → `echo`/`print`/`<?=`，
+  `htmlspecialchars` 等断流）；PHP 赋值识别补 `.=`（`$html .= …` 是主流输出构造写法）；
+  `JZ-CMDI-001/JZ-TRAVERSAL-001/JZ-SSRF-001/JZ-REDIR-001` 的 source 补 `$_REQUEST`/`$_COOKIE`，
+  CMDI 净化补 `intval/floatval/settype/is_numeric`。DVWA 命令注入 6 条、SQL 注入 13 条，
+  官方修复档 `impossible.php` 由净化拦住而不是靠漏检。
+- **载体精度**（`audit_graph.carriers_of()`）：字符串字面量里的普通单词**不算变量读取**，
+  只认各语言显式内插（PHP 双引号 `$var`、Ruby `#{}`、JS 模板 `${}`、Python f-string `{}`）。
+  起因是 DVWA 的 `prepare('… WHERE id = (:id)')` 里占位符名 `:id` 撞上变量名 `id`，
+  把安全写法一路报成反射 XSS。
+- **守卫不是数据入口**：`__inline__` 兜底只在 source 与 sink **同一行**时成立。
+  `if ( isset( $_POST['Submit'] ) )` 这类 DVWA 每模块都有的守卫，原先会让同函数内
+  任何 sink 认领这条流。收紧后连带量出 CMDI 的 source 缺键（那 8 条命令注入是误报撞对的）。
+- **过程式 PHP 页面即入口**：模块级出现变量读写的 `.php` 文件进可达根
+  （纯 `class/namespace/use/属性` 定义文件与 `tests|examples|docs|vendor` 不算）。
+  DVWA 的"不可利用"标注 12（v0.29 基线）→ 40 → 18 → 0。
+- **`bench.py` 默认预算修正**：`--max-ms-per-file` 3.0 从有实测记录起就没达到过
+  （4.7→5.6），默认跑法常年 BENCH-FAIL、真回退反而看不见；按现状 1.4× 余量设 8.0，
+  CI 仍用 20 挡数量级，细粒度由结构锁 `TestAuditCostModel` 兜。
+  性能本身持平：HEAD 5.39 vs 本轮 5.13/5.61 ms/文件（噪声内），峰值 4.2 MB 不变。
+- **测量自纠入档**：变异校准脚本第一版把 `restore()` 写在跑测试之前，七个变异全被还原后才测,
+  报成"锁无效"。这是**测量缺陷不是代码缺陷**——变异窗口必须包住被测运行。
+- 验收记录新增「第三方真实仓库取证」一节（含逐条发现表与仍不达标的结论：
+  干净库上 20/20 是噪声，合计 20/66≈30%，靶场侧 ≈3/49≈6%）。
+- 测试 71 → **85**（新增 `TestAuditPhpFlows` 14 例，先红后绿；7 处锁做变异校准，全部可红）。
+  语料复跑仍是高危 16/16、误报 0/18、安全样本 0/15；自扫本仓库 0 条发现。
+
 ## [0.29.0] - 2026-10-14
 
 B4：**依赖建议接真实数据源**——`--osv` 导入 OSV 记录，替代"6 条手写样例"。

@@ -123,6 +123,9 @@
     },
     {
      "pattern": "\\b(?:where|select|find_by_sql)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\+|#\\{)"
+    },
+    {
+     "pattern": "(?:mysql_query|mysqli_query|pg_query|->query|->prepare|->exec)\\s*\\([^)]*\\$"
     }
    ],
    "sources": [
@@ -133,6 +136,9 @@
    "sanitizers": [
     {
      "pattern": "\\b(?:setString|setInt|bindValue)\\s*\\(|\\breal_escape_string\\b|\\bPreparedStatement\\b|\\$\\d"
+    },
+    {
+     "pattern": "\\b(?:intval|floatval|settype|is_numeric|filter_var)\\s*\\("
     }
    ],
    "fix": "改用 PreparedStatement / ORM 参数绑定：Java prepareStatement(sql) 后 setString(1, v)；PHP 用 PDO 预处理；Ruby 用 where(\"id = ?\", id)；Go 用 db.Query(\"... $1\", v)。",
@@ -186,12 +192,15 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.(?:args|form|json)|req\\.(?:body|query|params)|\\$_(?:GET|POST)|params\\[|argv)"
+     "pattern": "(?<!\\w)(?:request\\.(?:args|form|json)|req\\.(?:body|query|params)|\\$_(?:GET|POST|REQUEST|COOKIE)|params\\[|argv)"
     }
    ],
    "sanitizers": [
     {
      "pattern": "\\bshlex\\.quote\\b|\\bescapeshellarg\\b|\\bsubprocess\\.\\w+\\s*\\(\\s*\\["
+    },
+    {
+     "pattern": "\\b(?:intval|floatval|settype|is_numeric)\\s*\\("
     }
    ],
    "fix": "不经过 shell：subprocess.run([\"convert\", src, dst], shell=False)；必须拼接时逐个参数 shlex.quote / escapeshellarg，命令名固定不来自输入。",
@@ -336,7 +345,7 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.(?:args|form|files)|req\\.(?:query|params|body|file)|\\$_(?:GET|POST|FILES)|params\\[)"
+     "pattern": "(?<!\\w)(?:request\\.(?:args|form|files)|req\\.(?:query|params|body|file)|\\$_(?:GET|POST|REQUEST|FILES|COOKIE)|params\\[)"
     }
    ],
    "sanitizers": [
@@ -387,7 +396,10 @@
    ],
    "sources": [
     {
-     "pattern": "\\b(?:request\\.\\w+|req\\.(?:query|body|params)|\\$_GET|webhook_url|callback)\\b"
+     "pattern": "\\b(?:request\\.\\w+|req\\.(?:query|body|params)|\\$_(?:GET|POST|REQUEST)|webhook_url|callback)\\b"
+    },
+    {
+     "pattern": "\\b\\$_(?:GET|POST|REQUEST)\\s*\\["
     }
    ],
    "sanitizers": [
@@ -429,7 +441,7 @@
    ],
    "sources": [
     {
-     "pattern": "(?i)(?:request\\.(?:args|form|values|query_params|data)|req\\.(?:query|body|params)|\\$_(?:GET|POST))\\s*\\[[^\\]]*(?:next|redirect|url|return|to|dest|target)"
+     "pattern": "(?i)(?:request\\.(?:args|form|values|query_params|data)|req\\.(?:query|body|params)|\\$_(?:GET|POST|REQUEST))\\s*\\[[^\\]]*(?:next|redirect|url|return|to|dest|target)"
     },
     {
      "pattern": "(?i)(?:next|redirect_uri|return_url|target|dest)\\s*=\\s*(?:request\\.|req\\.|\\$_)"
@@ -485,6 +497,45 @@
    "fix": "把用户输入当数据传进固定模板 render_template(\"x.html\", name=user_input)，不用用户字符串当模板本体；必须动态模板时用 SandboxedEnvironment。",
    "retest": "输入 {{7*7}} 与 {{config}}，页面应原样显示文本，而不是 49 或配置对象。",
    "ignore_strings": true
+  },
+  {
+   "id": "JZ-XSS-002",
+   "title": "PHP 反射输出：请求参数未经转义进入 echo/print",
+   "kind": "taint",
+   "severity": "high",
+   "confidence_base": 0.55,
+   "languages": [
+    "php"
+   ],
+   "cwe": [
+    "CWE-79"
+   ],
+   "owasp": [
+    "A03:2021 注入"
+   ],
+   "sinks": [
+    {
+     "pattern": "\\b(?:echo|print)\\b[^;]*\\$"
+    },
+    {
+     "pattern": "<\\?=\\s*\\$"
+    }
+   ],
+   "sources": [
+    {
+     "pattern": "\\$_(?:GET|POST|REQUEST|COOKIE|FILES)\\s*\\["
+    },
+    {
+     "pattern": "\\$_SERVER\\s*\\[\\s*[\"'](?:PHP_SELF|REQUEST_URI|QUERY_STRING|HTTP_)"
+    }
+   ],
+   "sanitizers": [
+    {
+     "pattern": "\\b(?:htmlspecialchars|htmlentities|strip_tags|filter_var|addslashes)\\s*\\("
+    }
+   ],
+   "fix": "输出前 htmlspecialchars(\\$v, ENT_QUOTES, 'UTF-8')；模板里用 {{ }} / @autoescape；只有富文本才用净化库按标签白名单过滤。",
+   "retest": "参数填 <img src=x onerror=alert(1)>，页面应显示原文或弹窗被拦，查看响应体确认标签已被实体化。"
   }
  ]
 }

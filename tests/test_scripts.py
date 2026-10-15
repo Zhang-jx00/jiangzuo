@@ -1351,5 +1351,343 @@ class TestAuditOsv(unittest.TestCase):
         self.assertIn("RESULT: RULES-OK", r.stdout)
 
 
+class TestAuditRoleScope(unittest.TestCase):
+    """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
+
+    requests 里出现 CERT_NONE / set_cookie 是它的职责，flask 的 examples 里
+    `app.debug = True` 是示例。但**压掉之前必须留痕**，且应用仓库里的同样写法照报——
+    两半都要断言，否则"降误报"只是把结论藏起来。
+    """
+
+    DEBUG_LIB = "debug = True\n"
+    APP_FORM = ("from flask import request, Flask\napp = Flask(__name__)\n\n"
+                "@app.route('/x')\ndef x():\n"
+                "    return '<form method=post action=/save></form>'\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_r_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_library_repo_moves_app_rules_to_not_applicable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "pyproject.toml",
+                        '[project]\nname = "mylib"\nversion = "1.0"\n')
+            self._write(tmp, "src/mylib/config.py", self.DEBUG_LIB)
+            data, stdout = self._scan(tmp, "lib")
+            self.assertEqual("library", data["stats"]["repo_role"])
+            self.assertEqual([], [f for f in data["findings"]
+                                 if f["rule_id"] == "JZ-DEBUG-001"],
+                              "库代码里的 debug=True 不该进结论")
+            self.assertTrue(any(n["rule_id"] == "JZ-DEBUG-001"
+                                for n in data["not_applicable"]),
+                            "被压掉的必须留痕：%s" % data["stats"])
+            self.assertIn(u"不适用", stdout)
+
+    def test_app_repo_still_reports_the_same_pattern(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.py", "from flask import Flask\napp = Flask(__name__)\n"
+                                       "app.debug = True\n")
+            self._write(tmp, "templates/x.html", "<html><body>hi</body></html>\n")
+            data, _ = self._scan(tmp, "app")
+            self.assertEqual("app", data["stats"]["repo_role"],
+                             "有页面/有入口就该判应用，不许靠'没路由'误判成库")
+            self.assertTrue([f for f in data["findings"]
+                             if f["rule_id"] == "JZ-DEBUG-001"],
+                            "应用仓库里同样的写法必须照报（防过度抑制）")
+
+    def test_example_and_test_paths_are_excluded_for_app_rules_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.py", "from flask import Flask\napp = Flask(__name__)\n")
+            self._write(tmp, "examples/demo/settings.py", self.DEBUG_LIB)
+            self._write(tmp, "examples/demo/bad.py",
+                        "from flask import request\nimport os\n\n\n"
+                        "def run():\n    os.system(\"ls \" + request.args['d'])\n")
+            data, _ = self._scan(tmp, "ex")
+            ids = set(f["rule_id"] for f in data["findings"])
+            self.assertNotIn("JZ-DEBUG-001", ids, "示例目录里的配置型规则应转不适用")
+            self.assertIn("JZ-CMDI-001", ids,
+                          "示例目录里的注入类规则仍要报——只压配置型，不压能力型")
+            self.assertTrue(any(n["rule_id"] == "JZ-DEBUG-001"
+                                for n in data["not_applicable"]))
+
+
+class TestAuditPhpFlows(unittest.TestCase):
+    """B7 取证回填：DVWA 实测暴露的两处真实漏检。
+
+    第一轮在 DVWA 上跑，SQL 注入 0 条——而 SQLi 是 DVWA 的招牌漏洞。
+    根因两条：① SQLi-003 的 sink 只认拼接写法（`+` / `.`），PHP 双引号插值
+    `$query = "… '$id';"` 后 `mysqli_query($link, $query)` 传变量整条链不命中；
+    ② PHP 反射输出（`echo $html`）根本没有污点规则，只有 `<?php echo $_GET`
+    这一种字面写法。这两条测试是**先红后绿**写出来的：规则改之前它们必须失败。
+    """
+
+    def _graph(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        out = os.path.join(root, "_graph.json")
+        r = run([os.path.join(SCRIPTS, "audit_graph.py"), root, "--out", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_php_interpolated_sql_reaches_query_sink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "if ( isset( $_REQUEST[ 'Submit' ] ) ) {\n"
+                "    $id = $_REQUEST[ 'id' ];\n"
+                "    $query = \"SELECT first_name FROM users WHERE user_id = '$id';\";\n"
+                "    $result = mysqli_query($db_link, $query);\n"
+                "}\n")})
+            sql = [f for f in data["flows"] if f["rule_id"] == "JZ-SQLI-003"]
+            self.assertEqual(1, len(sql),
+                             "插值 SQL 交给 mysqli_query 必须成流；flows=%s"
+                             % [f["rule_id"] for f in data["flows"]])
+            hops = sql[0]["path"]
+            self.assertGreaterEqual(len(hops), 3,
+                                    "source→插值→sink 至少三跳证据")
+            self.assertEqual("sink", hops[-1]["kind"])
+
+    def test_php_numeric_cast_before_query_is_blocked_not_silent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "$id = $_GET[ 'id' ];\n"
+                "$id = intval( $id );\n"
+                "$result = mysqli_query($db_link, \"SELECT * FROM users WHERE id = $id\");\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-SQLI-003"],
+                             "intval 收敛成整数后不该再报注入")
+            self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1,
+                                    "净化要留痕，不能当没发生过")
+
+    def test_php_concat_assignment_propagates_taint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "$name = $_GET[ 'name' ];\n"
+                "$html .= \"<pre>Hello \" . $name . \"</pre>\";\n"
+                "echo $html;\n")})
+            xss = [f for f in data["flows"] if f["rule_id"] == "JZ-XSS-002"]
+            self.assertEqual(1, len(xss),
+                             ".= 累加是 PHP 主流写法，污点必须续传；flows=%s"
+                             % [f["rule_id"] for f in data["flows"]])
+
+    def test_php_reflected_output_without_sanitizer_is_a_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "$name = $_GET[ 'name' ];\n"
+                "echo \"<p>Hello \" . $name . \"</p>\";\n")})
+            xss = [f for f in data["flows"] if f["rule_id"] == "JZ-XSS-002"]
+            self.assertEqual(1, len(xss), "反射输出无转义要成流")
+
+    def test_htmlspecialchars_breaks_reflected_output_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "$name = htmlspecialchars( $_GET[ 'name' ] );\n"
+                "echo \"<p>Hello \" . $name . \"</p>\";\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-XSS-002"],
+                             "htmlspecialchars 之后不得再报反射 XSS")
+            self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1)
+
+
+    def test_guard_only_superglobal_does_not_taint_unrelated_output(self):
+        """`if (isset($_POST['Submit']))` 是**守卫条件**，不是数据入口。
+
+        DVWA 每个模块都有这句，实测它把同函数里一条与请求无关的
+        `echo $out` 带成了反射 XSS——`__inline__` 兜底把"函数里出现过 source"
+        当成了"source 流到了 sink"。守卫型出现不该产生污点。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "function run() {\n"
+                "    if ( isset( $_POST['Submit'] ) ) {\n"
+                "        $out = shell_exec('ls -la');\n"
+                "        echo $out;\n"
+                "    }\n"
+                "}\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-XSS-002"],
+                             "守卫里的 $_POST 不该污染无关输出：%s"
+                             % [(f["rule_id"], f["path"][-1]["line"])
+                                for f in data["flows"]])
+
+    def test_inline_source_on_the_sink_line_still_counts(self):
+        """反向半句：`echo $_GET['x']` 同行内联仍然是真漏洞，不能被上一条修没。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "function head() {\n"
+                "    echo $_GET['page'];\n"
+                "}\n")})
+            xss = [f for f in data["flows"] if f["rule_id"] == "JZ-XSS-002"]
+            self.assertEqual(1, len(xss),
+                             "同行内联的 source→sink 必须成流；flows=%s"
+                             % [f["rule_id"] for f in data["flows"]])
+
+    def test_non_controllable_server_keys_are_not_xss_sources(self):
+        """`$_SERVER['REQUEST_METHOD']` 不是攻击者可控输入，不该当 XSS 入口；
+        `$_SERVER['PHP_SELF']` 是可控的，该当。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"v.php": (
+                "<?php\n\n"
+                "function nav() {\n"
+                "    $m = $_SERVER['REQUEST_METHOD'];\n"
+                "    echo $m;\n"
+                "}\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-XSS-002"])
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"w.php": (
+                "<?php\n\n"
+                "function form() {\n"
+                "    $self = $_SERVER['PHP_SELF'];\n"
+                "    echo $self;\n"
+                "}\n")})
+            self.assertEqual(1, len([f for f in data["flows"]
+                                     if f["rule_id"] == "JZ-XSS-002"]),
+                             "PHP_SELF 可控，反射 XSS 要报")
+
+
+    def test_php_page_script_flows_are_reachable(self):
+        """过程式 PHP 的每个页面文件自己就是入口——不能一律判"不可利用"。
+
+        DVWA 的漏洞体在 `vulnerabilities/*/source/*.php`，由 index.php 用
+        变量路径的 `require_once …"…/{$vulnerabilityFile}"` 引入，静态跟图跟不动；
+        上一版因此把 SQL 注入标成"不可利用"，把靶场最强信号降了档。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"vulnerabilities/xss_r/source/low.php": (
+                "<?php\n\n"
+                "$name = $_GET[ 'name' ];\n"
+                "$html .= \"<p>Hello \" . $name . \"</p>\";\n"
+                "echo $html;\n")})
+            xss = [f for f in data["flows"] if f["rule_id"] == "JZ-XSS-002"]
+            self.assertEqual(1, len(xss))
+            self.assertTrue(xss[0]["reachable"],
+                            "PHP 页面脚本的模块级污点流应判可达")
+
+    def test_php_class_file_is_not_counted_as_a_page(self):
+        """反向半句：只有 class/namespace/use 的定义文件不该被当成页面入口，
+        否则"可达"这条闸就形同虚设。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"src/Kernel.php": (
+                "<?php\n\n"
+                "namespace App;\n\n"
+                "class Kernel\n{\n"
+                "    private $db;\n"
+                "    public function handle()\n    {\n"
+                "        $cmd = $_GET[ 'c' ];\n"
+                "        system( \"ls \" . $cmd );\n"
+                "    }\n"
+                "}\n")})
+            cmdi = [f for f in data["flows"] if f["rule_id"] == "JZ-CMDI-001"]
+            self.assertEqual(1, len(cmdi), "命令注入本身要检出：%s"
+                             % [f["rule_id"] for f in data["flows"]])
+            self.assertFalse(cmdi[0]["reachable"],
+                             "定义文件里的方法没有入口路径，应仍判不可达")
+            self.assertEqual(0, data["stats"]["roots"],
+                             "纯 class/namespace 文件不能进可达根，否则"
+                             "'可达性'这道闸就白设（roots=%s）" % data["stats"])
+
+
+    def test_placeholder_name_inside_sql_string_is_not_a_variable_read(self):
+        """字符串里的 SQL 关键字/占位符不是"读了这个变量"。
+
+        DVWA 的 impossible.php 被报成反射 XSS，链条是
+        `$id = $_GET['id']` → `$data = $db->prepare('… WHERE id = (:id)')`
+        ——占位符名 `:id` 与变量名 `id` 撞字面，引擎以为这行读了 `id`，
+        于是 prepare→fetch→print 一路把安全写法带成污点输出。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"p.php": (
+                "<?php\n\n"
+                "function q() {\n"
+                "    $id = $_GET['id'];\n"
+                "    $data = $db->prepare( 'SELECT name FROM users WHERE id = (:id)' );\n"
+                "    $row = $data->fetch();\n"
+                "    $who = $row['name'];\n"
+                "    echo $who;\n"
+                "}\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-XSS-002"],
+                             "占位符撞名不该造出一条污点流：%s"
+                             % [(f["rule_id"], f["path"][-1]["line"])
+                                for f in data["flows"]])
+
+    def test_non_page_php_dirs_are_not_promoted_to_entries(self):
+        """半句保护：tests/ examples/ 里的 PHP 脚本不因"页面即入口"被抬成可达。
+        （vendor/ 在索引层就跳过了，用不上这条；真正需要它挡的是索引会收的目录。）"""
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"tests/fixtures/paywall/page.php": (
+                "<?php\n\n"
+                "$amt = $_GET[ 'amt' ];\n"
+                "$out = \"total \" . $amt;\n"
+                "echo $out;\n")})
+            reach = [f for f in data["flows"] if f["reachable"]]
+            self.assertEqual([], reach,
+                             "tests/ 路径不得算页面入口：%s"
+                             % [(f["rule_id"], f["file"]) for f in reach])
+
+
+    def test_request_superglobal_is_a_command_injection_source(self):
+        """`$_REQUEST` 和 `$_GET`/`$_POST` 一样是外部输入。
+
+        CMDI-001 的 source 原先只写 `\$_(?:GET|POST)`，DVWA exec 模块四档全部用
+        `$_REQUEST['ip']`——上一轮那 8 条命令注入其实是靠
+        `if (isset($_POST['Submit']))` 的 `__inline__` 兜底**误打误撞**报出来的；
+        兜底收紧成"同行才算"后就整组漏掉了。这暴露的是 source 缺键，不是兜底过严。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"exec_low.php": (
+                "<?php\n\n"
+                "if ( isset( $_POST[ 'Submit' ] ) ) {\n"
+                "    $target = $_REQUEST[ 'ip' ];\n"
+                "    $cmd = shell_exec( 'ping  ' . $target );\n"
+                "}\n")})
+            cmdi = [f for f in data["flows"] if f["rule_id"] == "JZ-CMDI-001"]
+            self.assertEqual(1, len(cmdi),
+                             "$_REQUEST 拼进 shell_exec 必须成流；flows=%s"
+                             % [(f["rule_id"], f["path"][-1]["line"])
+                                for f in data["flows"]])
+
+    def test_numeric_octet_reassembly_is_blocked_for_cmdi(self):
+        """DVWA impossible.php 的四段 is_numeric 校验 + 逐段重组，是它公认的修复版；
+        数值校验要能进 CMDI 的净化名单，否则靶场的"安全档"和"危险档"分不开。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            data, _ = self._graph(tmp, {"exec_imp.php": (
+                "<?php\n\n"
+                "$target = $_REQUEST[ 'ip' ];\n"
+                "$octet = explode( \".\", $target );\n"
+                "if ( is_numeric( $octet[0] ) && is_numeric( $octet[1] ) ) {\n"
+                "    $target = $octet[0] . '.' . $octet[1];\n"
+                "    $cmd = shell_exec( 'ping  ' . $target );\n"
+                "}\n")})
+            self.assertEqual([], [f for f in data["flows"]
+                                  if f["rule_id"] == "JZ-CMDI-001"],
+                             "is_numeric 校验后的重组不应再报命令注入")
+            self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

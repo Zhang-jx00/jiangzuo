@@ -63,11 +63,64 @@ ASSIGN_RX["javascript"] = re.compile(
     r"(?:const|let|var)\s+(?P<target>\w+)\s*=\s*(?P<expr>.+)|"
     r"^\s*(?P<target2>\w+)\s*=\s*(?P<expr2>.+)")
 ASSIGN_RX["java"] = re.compile(r"\b(?P<type>[\w<>]+)\s+(?P<target>\w+)\s*=\s*(?P<expr>.+)")
-ASSIGN_RX["php"] = re.compile(r"\$(?P<target>\w+)\s*=\s*(?P<expr>.+)")
+# PHP：`$x = …` 之外还必须认 `$html .= …`（拼接累加是 PHP 的主流输出构造写法，
+# DVWA 的反射输出就是 `$html .= "… {$_GET[…]}";` 后 `echo $html;`——只认 `=` 时
+# 污点在累加处断掉）。`=(?!=)` 把 `==` 排除掉，否则比较行会被当成赋值。
+ASSIGN_RX["php"] = re.compile(r"\$(?P<target>\w+)\s*(?:\.=|=(?!=))\s*(?P<expr>.+)")
 ASSIGN_RX["go"] = re.compile(r"(?::=|=)\s*(?P<expr>.+)|(?P<target>\w+)\s*:=")
 
 IDENT_RX = re.compile(r"\b([A-Za-z_]\w*)\b")
 JS_LIKE = ("javascript", "typescript", "vue")
+
+# PHP 页面入口判定：模块级出现"变量读写"才算这页真的在处理数据；
+# 成员声明/继承/类定义那些行不算（库里满是这样写的文件）。
+PHP_VAR_RX = re.compile(r"\$\w+")
+PHP_MEMBER_RX = re.compile(
+    r"^\s*(?:public|private|protected|static|const|var|function|abstract|final"
+    r"|interface|trait|class|namespace|use|extends|implements|require|include)\b")
+PHP_NON_PAGE_RX = re.compile(r"(?:^|/)(?:tests?|spec|docs?|examples?|vendor)/")
+
+STR_SPAN_RX = re.compile(
+    r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`(?:[^`\\]|\\.)*`")
+PHP_INTERP_RX = re.compile(r"\$(\w+)")
+RUBY_INTERP_RX = re.compile(r"#\{\s*(\w+)")
+JS_INTERP_RX = re.compile(r"\$\{\s*(\w+)")
+PY_INTERP_RX = re.compile(r"\{([^{}]*)\}")
+
+
+def carriers_of(text, lang):
+    """取一行里真正"被读的变量名"——字符串字面量里的普通单词不算读取。
+
+    这条是 DVWA 实测逼出来的：impossible.php（修复版）里
+    `$data = $db->prepare( 'SELECT … WHERE user_id = (:id)' )` 的占位符名 `:id`
+    撞上上面 `$_GET[ 'id' ]` 的变量名 `id`，引擎以为这一行读了 `id`，
+    于是 prepare→fetch→print 一路把**安全写法**报成反射 XSS。
+    SQL 关键字、列名、占位符、注释性文本都在字符串里，不是数据流。
+    只有各语言明确的"字符串内插"语法才算：PHP 双引号 `$var`、
+    Ruby 双引号 `#{var}`、JS 模板串 `${var}`、Python f-string `{expr}`。
+    """
+    out = []
+    pos = 0
+    for m in STR_SPAN_RX.finditer(text):
+        out.extend(IDENT_RX.findall(text[pos:m.start()]))
+        body = m.group(0)
+        quote = body[0]
+        if lang == "python":
+            # f"…" 的引号前 2 个字符里一定有 f（STR_SPAN_RX 从前引号开始匹配，
+            # 不含前缀）；普通 "…" 里的 SQL 关键字不算变量读取。
+            pre = text[max(0, m.start() - 2):m.start()].lower()
+            if quote in "'\"" and "f" in pre:
+                for inner in PY_INTERP_RX.findall(body[1:-1]):
+                    out.extend(IDENT_RX.findall(inner))
+        elif quote == '"' and lang == "php":
+            out.extend(PHP_INTERP_RX.findall(body))
+        elif quote == '"' and lang == "ruby":
+            out.extend(RUBY_INTERP_RX.findall(body))
+        elif quote == "`" and lang in JS_LIKE:
+            out.extend(JS_INTERP_RX.findall(body))
+        pos = m.end()
+    out.extend(IDENT_RX.findall(text[pos:]))
+    return out
 
 
 def _params(raw):
@@ -233,6 +286,20 @@ def reachable_roots(map_data, all_funcs):
     for fn in all_funcs:
         if fn["file"] in entry_files and fn["indent"] == 0:
             roots.add((fn["file"], fn["name"]))
+    # 过程式 PHP：一个 .php 文件本身就是一个 URL，不需要被谁调用。
+    # DVWA 的漏洞体在 vulnerabilities/*/source/*.php，由 index.php 用
+    # `require_once DVWA_WEB_PAGE_TO_ROOT . "…/{$vulnerabilityFile}"` 引入——
+    # 变量路径 + 无括号 include 静态图跟不动，于是把招牌漏洞标成"不可利用"。
+    # 边界：模块级要出现"变量读写"才算页面（纯 class/namespace/use/属性的定义
+    # 文件不算），并跳过 tests/examples/docs/vendor 这类非部署路径。
+    for fn in all_funcs:
+        if fn["lang"] != "php" or fn["name"] != "{module}":
+            continue
+        if PHP_NON_PAGE_RX.search(fn["file"]):
+            continue
+        if any(PHP_VAR_RX.search(t) and not PHP_MEMBER_RX.match(t)
+               for _n, t, _x in fn["body"]):
+            roots.add((fn["file"], fn["name"]))
     return roots
 
 
@@ -324,6 +391,8 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
     # SSRF 不认）。共用一份 tainted 会让 A 规则的净化被 B 规则的 source 绕过，
     # 最后由 C 条 sink 认领——实测就是 int() 净化后跨文件流照报。
     in_params = tainted_params.get(key) or {}
+    # 每行的"被读变量名"只算一次（按语言剥字符串字面量），规则循环里复用。
+    body_view = [(ln, tx, _x, carriers_of(tx, fn["lang"])) for ln, tx, _x in fn["body"]]
     for rule in rules:
         if rule.get("kind") != "taint":
             continue
@@ -336,7 +405,7 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
             tainted[pname] = list(incoming) + [{
                 "file": fn["file"], "line": fn["start"], "kind": "param-in",
                 "text": u"形参 %s 由调用方传入污点值" % pname}]
-        for lineno, text, _trunc in fn["body"]:
+        for lineno, text, _trunc, idents in body_view:
             src_item = _first_code_match(sources, text)
             sink_item = _first_code_match(sinks, text)
             san_item = _first_code_match(sanits, text)
@@ -371,8 +440,11 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                 m = arx.search(text)
                 if m and m.groupdict().get("target") or (m and m.groupdict().get("target2")):
                     target = m.groupdict().get("target") or m.groupdict().get("target2")
-                    expr = m.groupdict().get("expr") or m.groupdict().get("expr2") or ""
-                    carriers = [v for v in IDENT_RX.findall(expr) if v in tainted]
+                    # 只算等号右边的"被读变量"——左边的目标名不是读取（自我强化会
+                    # 让 hops 每行 +1，MAX_PATH_HOPS 只是兜底不是设计）。
+                    key_name = "expr" if m.groupdict().get("expr") else "expr2"
+                    carriers = [v for v in carriers_of(text[m.start(key_name):], fn["lang"])
+                                if v in tainted]
                     if carriers:
                         if san_hit:
                             blocked.append({"rule_id": rule["id"], "file": fn["file"],
@@ -384,10 +456,16 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                             {"file": fn["file"], "line": lineno, "kind": "propagate",
                              "text": text}]
             if sink_hit:
-                idents = IDENT_RX.findall(text)
                 carriers = [v for v in idents if v in tainted]
                 if not carriers and "__inline__" in tainted:
-                    carriers = ["__inline__"]
+                    # 兜底只认"同一行内联"：source 表达式直接写在 sink 调用里
+                    # （os.system("ls " + request.args['d'])、echo $_GET['page']）。
+                    # 跨行借用会把守卫当数据入口——DVWA 每个模块开头的
+                    # `if ( isset( $_POST['Submit'] ) )` 实测把同函数里一条与请求
+                    # 无关的 `echo $out` 带成了反射 XSS。
+                    if any(h["line"] == lineno and h["file"] == fn["file"]
+                           for h in tainted["__inline__"]):
+                        carriers = ["__inline__"]
                 if carriers:
                     hops = tainted[carriers[0]] + [
                         {"file": fn["file"], "line": lineno, "kind": "sink", "text": text}]
@@ -424,7 +502,7 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                     inner += ch
                 args = _split_args(inner.lstrip("("))
                 for idx, arg in enumerate(args):
-                    carriers = [v for v in IDENT_RX.findall(arg) if v in tainted]
+                    carriers = [v for v in carriers_of(arg, fn["lang"]) if v in tainted]
                     if not carriers and _first_code_match(sources, arg):
                         # 实参本身就是外部输入：top(request.args["d"])
                         # 不先赋给变量，一样是污点入口。

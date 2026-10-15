@@ -644,6 +644,70 @@ def _markers_in(abs_path):
     return markers, invalid
 
 
+EXAMPLE_SEGMENTS = {"tests", "test", "testing", "examples", "example", "docs", "doc",
+                    "samples", "sample", "example_apps", "spec"}
+BOOTSTRAP_HINTS = ("uvicorn", "gunicorn", "ListenAndServe", "app.listen", "createServer",
+                   "SpringApplication", "runserver", "Flask 启动", "Express 监听",
+                   "Node http 服务", "Gin 监听", "Rails 启动", "Python/uvicorn 启动")
+
+
+def repo_role(map_data, index=None):
+    """库 or 应用？——决定"应用级规则"要不要参与结论。
+
+    第三方取证逼出来的维度：requests 里出现 `CERT_NONE`、flask 里出现 `Markup(value)`
+    是它们的**职责所在**（实现 verify 开关、实现安全字符串类型），当漏洞报就是误报。
+    判据：没有任何 HTTP 路由、且入口里没有服务端启动语句 → 当库看。
+    """
+    routes = (map_data.get("summary") or {}).get("routes_total", 0)
+    if routes:
+        return "app"
+    for entry in map_data.get("entrypoints") or []:
+        if any(h in (entry.get("reason") or "") for h in BOOTSTRAP_HINTS):
+            return "app"
+    # 没有路由器不等于不是应用：过程式 PHP（如 DVWA）根本没有路由表。
+    # 只有"有打包清单 + 没有页面文件"才敢判成库，否则保持 app，宁可不压。
+    manifests = " ".join(map_data.get("manifests") or [])
+    has_packaging = any(h in manifests for h in
+                        ("pyproject.toml", "setup.py", "Cargo.toml", "go.mod",
+                         "pom.xml", "build.gradle"))
+    pages = 0
+    if index:
+        # 只数"真页面"：docs/ 与 examples/ 里的 html 是文档，不是可运行的应用面
+        pages = sum(1 for rec in index.get("files", [])
+                    if rec["lang"] in ("html", "php", "vue")
+                    and not is_example_path(rec["path"]))
+    else:
+        pages = (map_data.get("languages") or {}).get("html", 0) +             (map_data.get("languages") or {}).get("php", 0)
+    return "library" if (has_packaging and not pages) else "app"
+
+
+def is_example_path(rel):
+    parts = rel.split("/")
+    return any(seg in EXAMPLE_SEGMENTS for seg in parts[:-1]) or \
+        os.path.basename(rel).startswith("test_")
+
+
+def split_not_applicable(findings, role, rules_by_id):
+    """把"应用级规则 × 库代码/示例目录"的发现挪出结论，但**逐条留痕并给理由**。"""
+    kept, na = [], []
+    for f in findings:
+        rule = rules_by_id.get(f["rule_id"]) or {}
+        if rule.get("scope") != "app":
+            kept.append(f)
+            continue
+        reason = None
+        if role == "library":
+            reason = u"库代码：应用级规则（CSRF/Cookie/调试开关/路由鉴权）不适用"
+        elif is_example_path(f["file"]):
+            reason = u"示例/测试目录：配置型规则不计入结论（注入类规则仍在此路径生效）"
+        if reason:
+            na.append({"rule_id": f["rule_id"], "file": f["file"], "line": f["line"],
+                       "severity": f.get("severity"), "reason": reason})
+            continue
+        kept.append(f)
+    return kept, na
+
+
 def apply_suppressions(root, findings):
     """把"带理由的豁免"从发现里摘出来单独留痕（行内 + 路径级两层）。"""
     ignore_entries, invalid = load_ignore_file(root)
@@ -839,6 +903,16 @@ def report_md(payload, root):
                   u"- **指纹**：`%s`%s" % (f["id"], u"（重复 %d 处已合并）"
                                           % f["duplicates"] if f.get("duplicates") else u""),
                   u""]
+    if payload.get("not_applicable"):
+        st = payload["stats"]
+        lines += [u"## 不适用（已判定并留痕，不当作漏洞也不当作已修）", u"",
+                  u"> 仓库角色判为 **%s**；以下 %d 条属应用级规则命中库代码或示例/测试目录。"
+                  % (st.get("repo_role"), len(payload["not_applicable"])), u"",
+                  u"| 规则 | 位置 | 原因 |", u"|---|---|---|"]
+        for na in payload["not_applicable"][:20]:
+            lines.append(u"| %s | `%s:%s` | %s |"
+                         % (na["rule_id"], na["file"], na["line"], na["reason"]))
+        lines.append(u"")
     if payload.get("suppressed"):
         st = payload["stats"]
         lines += [u"## 已豁免（带理由，留痕不隐藏）", u"",
@@ -1079,11 +1153,15 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     verified = rank_dependencies(verified)
     # 豁免层：带理由的豁免单独留痕；没写理由的不动发现，只计数
     verified, suppressed, invalid_sup = apply_suppressions(root, verified)
+    role = repo_role(map_data, index)
+    verified, not_applicable = split_not_applicable(
+        verified, role, dict((r["id"], r) for r in rules))
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
              "closure_files": stats_note.get("closure_files", 0),
              "reused_flows": stats_note.get("reused_flows", 0),
              "workers": index.get("workers", 0),
              "suppressed": len(suppressed), "invalid_suppressions": invalid_sup,
+             "repo_role": role, "not_applicable": len(not_applicable),
              "files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
              "recomputed_files": len(scan_index["files"]),
              "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
@@ -1091,6 +1169,7 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
              "peak_memory_kb": peak_kb}
     payload = build_report_payload(root, index, map_data, None, rules, verified, dropped,
                                    cache.get("blocked", []) if cache else [], stats)
+    payload["not_applicable"] = not_applicable
     payload["suppressed"] = suppressed
     payload["_rules"] = [{"id": r["id"], "title": r["title"], "note": r.get("note", ""),
                           "cwe": r.get("cwe", []), "owasp": r.get("owasp", []),
@@ -1370,6 +1449,8 @@ def main():
           % (s["files_total"], s["candidates"], s["recomputed_files"],
              s["cache_hit_files"], s.get("peak_memory_kb") or u"未测", s["elapsed_sec"]))
     dist = s.get("by_severity", {})
+    print(u"仓库角色：%s ｜ 不适用（库/示例）%d 条"
+          % (s.get("repo_role"), s.get("not_applicable", 0)))
     print(u"发现 %d 条（%s）｜ 验证丢弃 %d 条 ｜ 净化排除 %d 处"
           % (s["findings"], u"、".join("%s=%d" % (k, dist[k])
                                      for k in audit_rules.SEVERITIES if dist.get(k)) or u"无",

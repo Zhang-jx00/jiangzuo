@@ -287,7 +287,8 @@
    ],
    "fix": "生产配置与开发配置分离，调试开关默认关；报错返回通用文案，堆栈只进服务端日志。",
    "retest": "人为触发一次 500，确认响应体不含堆栈/SQL/绝对路径；检查部署环境变量的实际取值。",
-   "ignore_strings": true
+   "ignore_strings": true,
+   "scope": "app"
   },
   {
    "id": "JZ-ERRINFO-001",
@@ -322,7 +323,8 @@
     }
    ],
    "fix": "对外返回稳定错误码与可读文案，细节写服务端日志（带 request-id）；日志里同样不得含密钥与用户口令。",
-   "retest": "构造非法输入触发异常，检查响应体只有 code/message；日志里能按 request-id 找到完整堆栈。"
+   "retest": "构造非法输入触发异常，检查响应体只有 code/message；日志里能按 request-id 找到完整堆栈。",
+   "scope": "app"
   },
   {
    "id": "JZ-AUTHGAP-001",
@@ -343,7 +345,8 @@
    "sensitive_path": "(?i)/(?:admin|manage|internal|config|user|account|profile|order|pay|payment|export|upload|delete|remove|admin-users|token|session)",
    "fix": "服务端加认证依赖/权限中间件；前端隐藏菜单不算鉴权。对象级权限检查做成统一依赖，不靠每个接口自觉。",
    "retest": "未登录直接 curl 该路径应 401/403；换一个用户的 id 应拿不到别人的数据（水平越权）。",
-   "note": "该结论来自地图里'本文件未见鉴权标记'，全局中间件/网关看不见——必须人工确认后才能定性为漏洞。"
+   "note": "该结论来自地图里'本文件未见鉴权标记'，全局中间件/网关看不见——必须人工确认后才能定性为漏洞。",
+   "scope": "app"
   },
   {
    "id": "JZ-HORZ-001",
@@ -492,23 +495,22 @@
    ],
    "sinks": [
     {
-     "pattern": "set_cookie\\s*\\((?![^)]*httponly\\s*=\\s*True)(?![^)]*secure\\s*=\\s*True)"
+     "pattern": "\\b(?:response|resp|res)\\s*\\.\\s*set_cookie\\s*\\((?![^)]*(?:httponly|HttpOnly|secure\\s*=|samesite|SESSION_COOKIE))"
     },
     {
-     "pattern": "document\\.cookie\\s*=[^\\n]{0,60}(token|session|jwt)"
-    },
-    {
-     "pattern": "Set-Cookie[^\\n]*(?:;\\s*)?(?:[^\\n]*)(?<!HttpOnly)(?<!Secure)(?<!SameSite=[LlSs])"
+     "pattern": "Set-Cookie[\\\"']?\\s*[:=][^\\n]{0,80}(?:session|sid)[^\\n]*(?!HttpOnly)(?!Secure)"
     }
    ],
    "unless_present": [
     {
-     "pattern": "(?i)(httponly|secure\\s*=\\s*True|same_site)",
-     "window": 0
+     "pattern": "\\bdef\\s+set_cookie\\b|\\bclass\\s+\\w*CookieJar\\b|should_set_cookie",
+     "window": 12
     }
    ],
    "fix": "会话 Cookie 加 HttpOnly + Secure + SameSite=Lax/Strict；前端把 token 存 localStorage 且不设过期时间是常见误区，能用 HttpOnly Cookie 就别让 JS 读。",
-   "retest": "浏览器 DevTools 看响应头三项齐全；构造 XSS 载荷确认拿不到会话 Cookie。"
+   "retest": "浏览器 DevTools 看响应头三项齐全；构造 XSS 载荷确认拿不到会话 Cookie。",
+   "scope": "app",
+   "sources": []
   },
   {
    "id": "JZ-CSRF-001",
@@ -545,7 +547,8 @@
    ],
    "fix": "表单走 CSRF token（或 Cookie SameSite=Lax/Strict）；纯 Bearer token 的 SPA 可豁免，但要确认认证确实不依赖 Cookie。",
    "retest": "从别的站点发一个自动 POST，应 403；去掉 token 提交应失败而不是成功。",
-   "note": "低置信度规则：Bearer token API 会被误报，作为提醒项排在最后，不作为结论。"
+   "note": "低置信度规则：Bearer token API 会被误报，作为提醒项排在最后，不作为结论。",
+   "scope": "app"
   },
   {
    "id": "JZ-DEP-001",

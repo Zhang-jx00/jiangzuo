@@ -83,3 +83,116 @@ python evals/audit-fixtures/score.py --corpus ../eval-runs/audit-bench \
 - 单跑一遍曾出现全阶段统一慢 3 倍而其中一层根本没改码——那是环境噪声，
   所以所有数字都是 repeat≥2 的均值。
 - 复现：`python evals/audit-fixtures/bench.py --workdir ../eval-runs/bench --files 1500 --repeat 2`
+
+---
+
+# 第三方真实仓库取证（v0.30.0，2026-10-15）
+
+这一节补的是上面"必须说清的边界"里最大的一块：**语料是我自己写的**。
+本轮换成三个不是我写的仓库，逐条人工判定，做完即删副本。
+
+## 方法
+
+- 仓库：`pallets/flask`（228 文件，Python Web 库）、`psf/requests`（119 文件，纯库）、
+  `digininja/DVWA`（233 文件，PHP 靶场——漏洞是**有意埋的**，所以它同时是检出分母）。
+- 命令：`python scripts/audit_scan.py <repo> --json <工作区外的 json>`；
+  JSON 写到扫描目录之外，避免上一轮输出污染下一轮索引（这条是踩过才知道的）。
+- 判定口径：**可行动**=拿到这条会去做修复；**噪声**=写法正确或语境不成立；
+  **降级但正确**=检出成立但被"不可利用"标注压了档。
+
+## 数字（v0.29 → v0.30，同一台机器）
+
+| 仓库 | 文件 | 角色判定 | v0.29 发现 | v0.30 发现 | 不适用 | 人工判定噪声 |
+|---|---|---|---|---|---|---|
+| flask | 228 | app | 44 | **13** | 29 | 13/13 |
+| requests | 119 | library | 14 | **4** | 0 | 4/4 |
+| DVWA | 233 | app | 37（**SQLi 0 条**） | **49** | 0 | ≈3/49 |
+
+- DVWA 按严重度：critical=24、high=18、medium=1、low=6；命令注入 6 条（low/medium/high 三档 × 两个分支），
+  `impossible.php`（官方修复档）被 `is_numeric` 净化拦住；SQL 注入从 **0 条** 到 13 条。
+- 三轮"中间态"也留了痕，防止只看最后一行数字：
+  `flask 44→13`（角色/范围）、`requests 14→6→4`（角色 + 守卫收紧）、
+  `DVWA 37→65→43→49`（先加规则涨到 65，收紧误报回到 43，再补 `$_REQUEST` 回 49）。
+
+## 这一轮量出来的四个真缺陷（全部有红/绿配对）
+
+1. **库与应用不分**：requests 是纯库，却被 `scope: app` 的配置型规则（调试开关、会话 cookie、
+   错误信息回显）报了 8 条。修法：`repo_role()` 判角色 + 规则 `scope: "app"`，
+   `requests` 走 library 档。**反面教训先记着**：角色判定最初用"没有路由就当库"，
+   把过程式 PHP 的 DVWA 判成库，**压掉了 7 条真漏洞**——现在要求"有打包清单且
+   docs/examples 外没有真实页面文件"才算库。
+2. **字符串字面量里的单词被当成变量读取**：DVWA `impossible.php` 报反射 XSS，链路是
+   `$id = $_GET['id']` → `$db->prepare('… WHERE id = (:id)')`——占位符名 `:id` 撞上了
+   变量名 `id`。修法是 `carriers_of()`：按语言剥字符串，只认显式内插语法
+   （PHP 双引号 `$var`、Ruby `#{var}`、JS 模板 `${var}`、Python f-string `{expr}`）。
+3. **守卫条件被当成数据入口**：`if ( isset( $_POST['Submit'] ) )` 只出现过 source、
+   没有赋值目标，就走 `__inline__` 兜底，于是同函数里任何 sink 行都认领这条流——
+   DVWA 每个模块开头都有这句。修法：`__inline__` 只在**与 sink 同一行**时成立
+   （`os.system("ls " + request.args['d'])` 这种真内联仍报）。
+   **连带量出的第二个缺陷**：收紧后 DVWA exec 的 8 条命令注入**全部消失**——
+   原来那 8 条是靠守卫误报**误打误撞**报出来的，真正的洞在 `$_REQUEST['ip']`，
+   而 CMDI-001 的 source 只写了 `\$_(?:GET|POST)`。补齐 `$_REQUEST`/`$_COOKIE` 后回到 6 条，
+   且 impossible 档这次是被净化拦住、不是靠误报撑住。
+4. **过程式 PHP 的页面入口没进可达根**：DVWA 的漏洞体在 `vulnerabilities/*/source/*.php`，
+   由 `index.php` 用**变量路径 + 无括号** `require_once DVWA_WEB_PAGE_TO_ROOT . "…/{$vulnerabilityFile}"`
+   引入，静态图跟不动，于是招牌漏洞被标成"不可利用"降档。修法：PHP 模块级出现变量读写
+   就把该文件当页面入口（纯 `class`/`namespace`/`use`/属性声明的文件不算，
+   `tests|examples|docs|vendor` 路径不算）。DVWA 的"不可利用"标注全程是
+   **12（v0.29 基线）→ 40（加规则后）→ 18（缺陷 3 收紧守卫）→ 0（这一条）**。
+   其中 65 条那一阶段的 JSON 已按卫生约定删除，数字取自当轮真实输出；
+   12/18/0 三档的 JSON 仍在运行区可复查。
+
+## 仍然不达标的那句话（别把它读成通过）
+
+**"整体误报率 ≤10%" 这条验收在真实第三方仓库上仍未达标。**
+两个干净库贡献了全部噪声：flask 13/13、requests 4/4 都是不可行动的，合计 20/66 ≈ 30%。
+逐条点名（这就是下一步的工单，不是我随口的评价）：
+
+- flask `JZ-XSS-001` 9 条里 **8 条在 `tests/`**（`Markup("")` 是测试夹具本身要构造的对象），
+  1 条在 `src/flask/json/tag.py:188` 的 `return Markup(value)`（标签编码器的有意行为）。
+  根因：为了不过度抑制，示例/测试路径下**能力型规则仍生效**（这条有测试守着）。
+- flask `JZ-ERRINFO-001` 3 条在 `src/flask/cli.py` 的 `traceback.print_exc()` /
+  `click.secho(…, err=True)`——CLI 打到 stderr，不是 HTTP 响应，语境不成立。
+- flask `JZ-SECRET-001`：`tests/test_reqctx.py:215` 给 `app.secret_key` 赋了一个
+  名为 secret_key 的测试夹具值（不是真实密钥，也不在任何部署路径里）。
+- requests `JZ-TLS-001` 2 条在 `src/requests/adapters.py` 的 `cert_reqs = "CERT_NONE"`——
+  **库必须实现 `verify=False` 这个选项**，实现了不等于有漏洞；另 2 条是测试里主动 `verify=False`。
+- DVWA 约 3 条低价值：`vulnerabilities/sqli/test.php` 的默认口令（公开文档值）、
+  `bac/source/impossible.php` 的 `error_reporting(E_ALL)`、2 条把
+  `$_SERVER['CONTENT_TYPE']` 判断认成上传处理。
+
+对照着看：**靶场上精度达标（≈3/49≈6%），干净库上精度不达标（17/17 是噪声）**——
+这两个数不能互相替代，也不能只报好看的那个。
+
+## 性能：本轮改动没有让它变慢（也没假装变快了）
+
+同一命令 `bench.py --files 1500`：HEAD(v0.29) **5.39 ms/文件**、本轮 **5.13 / 5.61 ms/文件**
+（两次取样，差异在噪声内），整链峰值 **4.2 MB** 不变，图层解析文件数仍是 75。
+`carriers_of()` 看着像新增开销，但它把"每行每规则各算一次标识符"改成
+"每行算一次复用"，净效果抵消。三仓真实耗时：DVWA 3.97s / flask 5.89s / requests 3.59s
+（含冷盘索引，不能与合成语料的 ms/文件混算）。
+
+顺带修了一个**永远红的锁**：`bench.py` 的默认预算 `--max-ms-per-file 3.0` 从有实测记录起
+就没达到过（4.7→5.6），默认跑法常年 BENCH-FAIL，真回退反而看不见。按现状 1.4× 余量改成 8.0，
+CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
+
+## 回归确认
+
+- `tests/test_scripts.py` **85 用例全绿**（本轮 +14：`TestAuditPhpFlows` 14 例，
+  先红后绿；变异校准 7 处锁逐个摘掉当场跑，全部能红）。
+- 合成语料复跑：高危检出 **16/16=100%**、误报 **0/18=0%**、安全样本 **0/15**、增量==全量不变。
+- 自扫本仓库：**0 条发现**（1 条候选被独立验证拦下）。
+- 一次**取证自纠**：变异校准脚本第一版把 `restore()` 写在跑测试之前，七个变异
+  全部"当场没测到"→ 报成"锁无效"。这不是代码缺陷而是**测量缺陷**，
+  改脚本顺序后同一批变异 5/5 有效。教训：变异窗口必须包住被测运行，
+  还原只能在跑完之后。
+
+## 待办（这一节量出来的）
+
+- 测试/夹具路径下的能力型发现**单列一档**（保留证据与行号，移出主列表）：
+  预期 flask 13→5、requests 4→2 的主列表噪声，且不动 DVWA。
+- 语境识别：CLI/stderr 与"库实现某危险选项"这两类，给规则加"角色×语境"二维条件。
+- DVWA 未覆盖类别补规则：XXE、认证绕过、越权/直接对象引用、会话固定——
+  这些在 DVWA 里是有标准答案的，适合当检出分母。
+- 可达性还有第三档没做：`include`/`require` 的变量路径目前只能靠"页面即入口"兜，
+  显式 `include 'x.php'` 的跨文件链路仍不建边。
