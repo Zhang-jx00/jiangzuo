@@ -85,7 +85,7 @@
    ],
    "unless_present": [
     {
-     "pattern": "(?i)(your[_-]|xxx+|changeme|placeholder|example|dummy|sample|test_|os\\.environ|process\\.env|getenv|config\\(|<[^>]+>)",
+     "pattern": "(?i)(your[_-]|xxx+|changeme|placeholder|example|dummy|sample|test_|os\\.environ|process\\.env|getenv|config\\(|<[^>]{1,200}>)",
      "window": 0
     }
    ],

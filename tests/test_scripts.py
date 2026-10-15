@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1987,6 +1988,227 @@ class TestAuditRuleContext(unittest.TestCase):
                              % [(f["rule_id"], f["file"]) for f in data["findings"]])
             self.assertIsNone(hit[0].get("context"),
                               "return 出去的错误文本不是控制台输出，必须算结论")
+
+
+class TestAuditDvwaClasses(unittest.TestCase):
+    """C3：DVWA 的模块目录名就是标准答案，分母不由我定。
+
+    先有 `evals/audit-fixtures/dvwa_coverage.py` 量出"按主类别只检出 7/19"，
+    这一轮补的是其中**能用正则正确解决**的四类；每类都带反面半句，
+    避免把"报得多"当成"检得出"。
+    """
+
+    def _graph(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        out = os.path.join(root, "_graph.json")
+        r = run([os.path.join(SCRIPTS, "audit_graph.py"), root, "--out", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_output_buffer_concat_is_an_xss_sink(self):
+        """DVWA 的反射 XSS 是 `$html .= '<pre>' . $_GET[...] . '</pre>'`，
+        真正的 echo 在模板里（跨文件）——sink 必须认"把污点拼进要输出的 HTML 变量"这一步。"""
+        data = self._graph(tempfile.mkdtemp(), {"vulnerabilities/xss_r/source/low.php": (
+            "<?php\n\n"
+            "if ( array_key_exists( \"name\", $_GET ) ) {\n"
+            "    $html .= '<pre>Hello ' . $_GET[ 'name' ] . '</pre>';\n"
+            "}\n")})
+        xss = [f for f in data["flows"] if f["rule_id"] == "JZ-XSS-002"]
+        self.assertEqual(1, len(xss), "拼进输出缓冲的污点要成流：%s"
+                         % [f["rule_id"] for f in data["flows"]])
+
+    def test_plain_include_without_parens_is_traversal(self):
+        """原 sink 写成 `(?:include|require)_?once?\\s*\\(`——`once?` 要求必须有 "onc"，
+        所以不带 `_once` 的 `include( $file )` 永远匹配不上。"""
+        data = self._graph(tempfile.mkdtemp(), {"vulnerabilities/fi/index.php": (
+            "<?php\n\n"
+            "$file = $_GET[ 'page' ];\n"
+            "include( $file );\n")})
+        trav = [f for f in data["flows"] if f["rule_id"] == "JZ-TRAVERSAL-001"]
+        self.assertEqual(1, len(trav), "无括号的 include 变量要检出：%s"
+                         % [f["rule_id"] for f in data["flows"]])
+
+    def test_static_include_is_not_traversal(self):
+        """反面半句：`include_once 'config.php';` 是写死的路径，不是穿越。"""
+        data = self._graph(tempfile.mkdtemp(), {"boot.php": (
+            "<?php\n\n"
+            "define( 'ROOT', __DIR__ );\n"
+            "$status = 1;\n"
+            "include_once 'dvwa/includes/dvwaPage.inc.php';\n")})
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["rule_id"] == "JZ-TRAVERSAL-001"])
+
+    def test_lowercase_location_header_is_open_redirect(self):
+        """DVWA 写的是 `header (\"location: \" . $_GET['redirect'])`——小写 l。"""
+        data = self._graph(tempfile.mkdtemp(), {"vulnerabilities/open_redirect/source/low.php": (
+            "<?php\n\n"
+            "if ( array_key_exists (\"redirect\", $_GET) ) {\n"
+            "    header (\"location: \" . $_GET['redirect']);\n"
+            "    exit;\n"
+            "}\n")})
+        redir = [f for f in data["flows"] if f["rule_id"] == "JZ-REDIR-001"]
+        self.assertEqual(1, len(redir), "小写 location 的开放重定向要检出：%s"
+                         % [f["rule_id"] for f in data["flows"]])
+
+    def test_fixed_location_header_is_not_redirect(self):
+        """反面半句：`header( 'Location:?page=include.php' )` 是写死的目标。"""
+        data = self._graph(tempfile.mkdtemp(), {"vulnerabilities/fi/index.php": (
+            "<?php\n\n"
+            "$page = $_GET[ 'page' ];\n"
+            "$count = 1;\n"
+            "header( 'Location:?page=include.php' );\n")})
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["rule_id"] == "JZ-REDIR-001"])
+
+    def _scan(self, root, files, name):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        out = os.path.join(root, "_w_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_predictable_session_identifiers_are_caught(self):
+        """weak_id 模块三档：递增计数器当会话值、`time()` 当 cookie 值、`md5(计数器)`。"""
+        root = tempfile.mkdtemp()
+        data = self._scan(root, {
+            "app.py": "from flask import Flask\napp = Flask(__name__)\n\n"
+                      "@app.route('/x')\ndef x():\n    return 'ok'\n",
+            "vulnerabilities/weak_id/low.php": (
+                "<?php\n\n$_SESSION['last_session_id']++;\n"
+                "$cookie_value = $_SESSION['last_session_id'];\n"
+                "setcookie(\"dvwaSession\", $cookie_value);\n"),
+            "vulnerabilities/weak_id/medium.php": (
+                "<?php\n\n$x = 1;\n$cookie_value = time();\n"
+                "setcookie(\"dvwaSession\", $cookie_value);\n"),
+            "vulnerabilities/weak_id/high.php": (
+                "<?php\n\n$seed = 1;\n"
+                "$cookie_value = md5($_SESSION['last_session_id_high']);\n"
+                "setcookie(\"dvwaSession\", $cookie_value);\n"),
+        }, "weak")
+        got = set(f["file"] for f in data["findings"] if f["rule_id"] == "JZ-WEAKID-001")
+        for want in ("low.php", "medium.php", "high.php"):
+            self.assertTrue(any(want in g for g in got),
+                            "%s 没检出可预测标识符：%s" % (want, sorted(got)))
+
+    def test_csprng_generation_is_not_weak_id(self):
+        """反面半句：`random_bytes()` / `random_int()` 生成的标识不该报。"""
+        data = self._scan(tempfile.mkdtemp(), {
+            "app.py": "from flask import Flask\napp = Flask(__name__)\n\n"
+                      "@app.route('/x')\ndef x():\n    return 'ok'\n",
+            "good.php": "<?php\n\n$salt = 1;\n"
+                        "$session_id = bin2hex(random_bytes(16));\n"
+                        "$token = bin2hex(openssl_random_pseudo_bytes(8));\n"
+                        "setcookie(\"sid\", $session_id);\n",
+        }, "good")
+        self.assertEqual([], [f for f in data["findings"]
+                              if f["rule_id"] == "JZ-WEAKID-001"],
+                         "CSPRNG 生成的标识被误报了：%s"
+                         % [(f["file"], f["line"]) for f in data["findings"]
+                            if f["rule_id"] == "JZ-WEAKID-001"])
+
+
+    def test_constant_append_to_tainted_buffer_is_not_a_flow(self):
+        """赋值**左边的变量不是"读取"**：`$html .= "<p>Too many requests.</p>"` 里
+        没有任何外部数据，只因为 `$html` 早先被污染过就报 XSS，是把输出容器当输入。
+        DVWA 的 impossible.php 曾因此被成片误报（第一版实测 16 发里多数是常量拼接）。
+
+        取舍写明白：拼接缓冲这类 sink 只认"同一行内联读了外部输入"（xss_r 那种），
+        两步写法（先拼再 echo）交给 `echo` 那条 sink——只拼不输出的文件不报，
+        因为输出发生在别的文件里，本来就跟不动，不该假装看得见。
+        """
+        data = self._graph(tempfile.mkdtemp(), {"page.php": (
+            "<?php\n\n"
+            "$name = $_GET[ 'name' ];\n"
+            "$html .= \"<p>Hello \" . $name . \"</p>\";\n"
+            "$html .= \"<p>Too many requests. Please try again later.</p>\";\n"
+            "$html .= \"<p>Your image was not uploaded.</p>\";\n"
+            "echo $html;\n")})
+        lines = sorted(f["line"] for f in data["flows"] if f["rule_id"] == "JZ-XSS-002")
+        lines = sorted(f["line"] for f in data["flows"] if f["rule_id"] == "JZ-XSS-002")
+        # 行号：1 `<?php`、2 空、3 取参、4 拼污点、5-6 常量拼接、7 `echo $html`
+        self.assertEqual([7], lines,
+                         "污点经缓冲区最终输出时只报 echo 那一行，常量拼接不各自成流：%s" % lines)
+
+    def test_numeric_coercion_is_xss_safe_and_breaks_the_flow(self):
+        """`intval()` 出来的整数不含标签字符，拼进 HTML 是安全的（DVWA bac/impossible 就这样写）。
+        数值收敛要进 XSS 的净化名单，否则官方修复档会被成片误报。
+
+        夹具走 `echo` 那条 sink（不是缓冲拼接那条），这样"拦住它"的**只有净化名单**——
+        第一版夹具写得让 sink 本来就不匹配，净化删掉也照样绿，等于没测。
+        """
+        data = self._graph(tempfile.mkdtemp(), {"bac.php": (
+            "<?php\n\n"
+            "$id = $_GET[ 'id' ];\n"
+            "$id = intval( $id );\n"
+            "echo \"<p>No user found with ID: {$id}</p>\";\n")})
+        self.assertEqual([], [f for f in data["flows"]
+                              if f["rule_id"] == "JZ-XSS-002"],
+                         "intval 之后输出不该报反射 XSS：%s"
+                         % [(f["line"],) for f in data["flows"]])
+        self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1,
+                                "净化要留痕，不能当没发生过")
+
+
+class TestAuditPatternCost(unittest.TestCase):
+    """C3 自纠：我写的一条 sink 是 O(n²) 的，600KB 行要跑 106 秒。
+
+    形状是 `[^;]*(?:A[^;]*<|<[^;]*A)`——一个无上界字符类里再套两个同类，
+    失配时引擎要逐起点重扫。这类东西**本地永远测不出来**（真实行都短），
+    所以不能只靠"跑得快"，要有一条当场把长行喂进去的时限锁。
+    """
+
+    # 两条对抗形状：都故意不带分号（让 `[^;]*` 一路扫到尾），
+    # A 里放 superglobal 锚点、B 里放括号引号尖括号的混合噪声。
+    # 尺寸取 20 万级而不是更大：Python 中断不了一次正在跑的 regex 搜索，
+    # 输入必须小到"即使真是 O(n²) 也只几秒就红"——200K 上二次方约 1.4 秒（超 500ms 限值会红），
+    # 线性只有几毫秒。实测过 540K：二次方要 10 秒以上，整条校准流水线因此卡死过一回。
+    ADVERSARIAL = [
+        "\$_GET['k'] . \"a<&" * 12000,
+        "$x = foo(bar'baz\"qux <&=() " * 5000,
+    ]
+    LIMIT_MS = 500.0
+
+    def test_every_rule_pattern_is_linear_on_long_lines(self):
+        import re as _re
+        sys_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts")
+        if sys_path not in sys.path:
+            sys.path.insert(0, sys_path)
+        import audit_rules as AR
+        rules, problems, _notes, _off = AR.load_rules([])
+        self.assertEqual([], problems, u"规则库有问题：%s" % problems[:2])
+        worst = (0.0, u"")
+        for r in rules:
+            for field in ("sinks", "sources", "sanitizers", "unless_present"):
+                for item in r.get(field, []):
+                    rx = _re.compile(item["pattern"])
+                    for text in self.ADVERSARIAL:
+                        t0 = time.time()
+                        rx.search(text)
+                        ms = (time.time() - t0) * 1000.0
+                        if ms > worst[0]:
+                            worst = (ms, u"%s.%s %s" % (r["id"], field, item["pattern"][:60]))
+                        self.assertLess(ms, self.LIMIT_MS,
+                                        u"%s.%s 在 %d 字符的行上花了 %.0f ms——"
+                                        u"疑似灾难性回溯（限 %d ms）：%s"
+                                        % (r["id"], field, len(text), ms,
+                                           self.LIMIT_MS, item["pattern"][:80]))
+        # 让"最慢的那条"可见，别只报通过与否
+        print(u"最慢 pattern：%.1f ms ｜ %s" % worst)
 
 
 if __name__ == "__main__":

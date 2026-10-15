@@ -431,6 +431,12 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                 if target:
                     tainted[target] = [{"file": fn["file"], "line": lineno,
                                         "kind": "source", "text": text}]
+                    # 同一行还内联读了 source（`$html .= '<pre>' . $_GET['name']` 这种）：
+                    # sink 的载体只算等号右边，所以要把这一行的内联也记一笔，
+                    # 否则"source 与 sink 同行"这条最直白的流会被左排除规则吃掉。
+                    tainted.setdefault("__inline__", []).append(
+                        {"file": fn["file"], "line": lineno, "kind": "source",
+                         "text": text})
                     stats["sources"] += 1
                 else:
                     tainted.setdefault("__inline__", []).append(
@@ -456,6 +462,10 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                             {"file": fn["file"], "line": lineno, "kind": "propagate",
                              "text": text}]
             if sink_hit:
+                # 载体取整行读到的变量名。曾经这里加过"只算等号右边"的排除
+                # （防 `$html .= "常量"` 靠左边容器名认领污点），但把缓冲类 sink
+                # 收紧成"必须内联读外部输入"之后，那条排除已无可观察效果——
+                # 测不到的防御不留，退回简单写法。
                 carriers = [v for v in idents if v in tainted]
                 if not carriers and "__inline__" in tainted:
                     # 兜底只认"同一行内联"：source 表达式直接写在 sink 调用里
