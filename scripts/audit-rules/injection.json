@@ -33,7 +33,7 @@
      "pattern": "\\brequest\\.(?:args|form|json|values|query_string|data)\\b"
     },
     {
-     "pattern": "\\b(?:req\\.(?:body|query|params)|params\\[|argv|user_input|payload)\\b"
+     "pattern": "\\breq\\.(?:body|query|params)\\b|\\bparams\\[|\\bargv\\["
     },
     {
      "pattern": "\\binput\\s*\\("
@@ -82,7 +82,7 @@
      "pattern": "\\breq\\.(?:body|query|params)\\b"
     },
     {
-     "pattern": "\\b(?:params|payload|input|body)\\["
+     "pattern": "\\b(?:params|body)\\["
     }
    ],
    "sanitizers": [
@@ -234,7 +234,7 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[)"
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[|sys\\.argv)"
     }
    ],
    "sanitizers": [
@@ -281,10 +281,10 @@
    ],
    "sources": [
     {
-     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload)"
+     "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload\\.)"
     },
     {
-     "pattern": "\bopen\\s*\\([^)]*,\\s*[\"']rb"
+     "pattern": "\\bopen\\s*\\([^)]*,\\s*[\\\"']rb"
     }
    ],
    "sanitizers": [
@@ -429,7 +429,10 @@
    ],
    "sources": [
     {
-     "pattern": "(?:next|redirect|url|return|target|dest)"
+     "pattern": "(?i)(?:request\\.(?:args|form|values|query_params|data)|req\\.(?:query|body|params)|\\$_(?:GET|POST))\\s*\\[[^\\]]*(?:next|redirect|url|return|to|dest|target)"
+    },
+    {
+     "pattern": "(?i)(?:next|redirect_uri|return_url|target|dest)\\s*=\\s*(?:request\\.|req\\.|\\$_)"
     }
    ],
    "sanitizers": [

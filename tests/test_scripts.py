@@ -1016,5 +1016,70 @@ class TestAuditFusion(unittest.TestCase):
             self.assertIn("--staged", r.stdout)
 
 
+class TestAuditIncrementalGraph(unittest.TestCase):
+    """P4：增量必须**跟得上跨文件因果**——改了调用方，下游 sink 的结论也要跟着变。
+
+    只测"没改动时零重算"是不够的：那种缓存在改了 caller 之后照样复用旧 flow，
+    看起来快，实际是假装没事。
+    """
+
+    HANDLER = ("from flask import request\n\n\n"
+               "@app.route('/report')\n"
+               "def handle():\n"
+               "    name = request.args['name']\n"
+               "    return render(name)\n")
+    HANDLER_SAFE = ("from flask import request\n\n\n"
+                    "@app.route('/report')\n"
+                    "def handle():\n"
+                    "    name = int(request.args['name'])\n"
+                    "    return render(name)\n")
+    SERVICE = ("import sqlite3\n\n\n"
+               "def render(value):\n"
+               "    con = sqlite3.connect('x.db')\n"
+               "    return con.execute(f'SELECT {value} FROM t').fetchall()\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def _scan(self, root, cache, extra=None):
+        out = os.path.join(cache, "f%s.json" % ("".join(extra or ["x"]).replace("-", "_")))
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out,
+                 "--cache", cache] + (extra or []))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_changing_the_caller_updates_the_downstream_flow(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as cache:
+            for i in range(10):
+                self._write(root, "pkg/mod_%02d.py" % i,
+                            "def f%d(x):\n    return x + %d\n" % (i, i))
+            self._write(root, "handlers.py", self.HANDLER)
+            self._write(root, "services.py", self.SERVICE)
+            cold = self._scan(root, cache)
+            flows = [f for f in cold["findings"] if f["rule_id"] == "JZ-SQLI-001"]
+            self.assertEqual(1, len(flows), "跨文件污点流应被检出：%s" % cold["findings"])
+            self.assertEqual("services.py", flows[0]["file"])
+
+            self._write(root, "handlers.py", self.HANDLER_SAFE)   # 只改调用方
+            inc = self._scan(root, cache, ["--incremental"])
+            fresh = self._scan(root, cache)                       # 对照：全量重扫
+            key = lambda p: sorted((f["rule_id"], f["file"], f["line"])
+                                   for f in p["findings"])
+            self.assertEqual(key(fresh), key(inc), "增量结论与全量不一致")
+            self.assertEqual([], [f for f in inc["findings"]
+                                 if f["rule_id"] == "JZ-SQLI-001"],
+                             "调用方已净化，下游污点流必须消失——缓存不许假装没事")
+            self.assertLess(inc["stats"]["graph_parsed_files"],
+                            inc["stats"]["files_total"],
+                            "增量还是把全仓解析了一遍")
+            self.assertGreaterEqual(inc["stats"]["reused_flows"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

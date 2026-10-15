@@ -39,6 +39,10 @@ KINDS = ("taint", "pattern", "dependency", "auth_gap")
 REQUIRED = ("id", "title", "kind", "severity", "languages", "cwe", "fix", "retest")
 KNOWN_LANGS = set(auditlib.LANG_BY_EXT.values()) | {"*"}
 
+# 控制字符（ 被 shell/字符串层吃掉后就是退格符 ）——
+# 这类模式永远匹配不上，却会静默把规则变成哑弹，所以直接判错。
+CONTROL_RX = re.compile(u"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
 
 def _compile_list(items, where, problems, need_window=False):
     """把 [{pattern, window}] 编译成带 _rx 的列表；坏模式直接记问题，不留到运行时炸。"""
@@ -47,6 +51,10 @@ def _compile_list(items, where, problems, need_window=False):
         pat = item.get("pattern") if isinstance(item, dict) else item
         if not pat:
             problems.append("%s：有条目缺 pattern 字段" % where)
+            continue
+        if CONTROL_RX.search(pat):
+            problems.append("%s：模式里含控制字符（多半是 \b 被某一层吃成了退格符），"
+                            "这条永远不会命中" % where)
             continue
         try:
             rx = re.compile(pat)

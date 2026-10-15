@@ -715,6 +715,7 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
 
     t0 = time.time()
     cache = load_cache(cache_file, rules_version) if incremental else None
+    taint_closure, cached_name_index = set(), None
     # 单遍前端（prescan）一次打开同时出索引、地图与粗筛命中；
     # 走缓存增量时仍用分步路径——它要按文件粒度复用，融合在那条路上没有收益。
     use_fused = bool(fused) and not index_path and not map_path and cache is None
@@ -752,6 +753,25 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         else:
             dirty = [rec["path"] for rec in index["files"]]
 
+        # 增量闭包 = 变更文件 ∪ 其调用链邻居（用"便宜名片"算，不重新解析全仓）。
+        # 为什么要它：taint 发现成不成立取决于**调用方**，只按 sink 文件自己的哈希
+        # 决定复用，就会在改了 caller 之后把旧结论原样搬进新报告（实测漏过一次）。
+        if cache and dirty:
+            name_index = dict(cache.get("name_index") or {})
+            sha_by_path = dict((r["path"], r["sha1"]) for r in index["files"])
+            stale = set(dirty) | set(r for r, e in name_index.items()
+                                    if e.get("sha1") != sha_by_path.get(r))
+            for rec in index["files"]:
+                if rec["path"] in stale and rec["lang"] in audit_graph.DEF_PATTERNS:
+                    entry = audit_graph.name_entry(root, rec, max_bytes)
+                    entry["sha1"] = rec["sha1"]
+                    name_index[rec["path"]] = entry
+            for rel in list(name_index):
+                if rel not in sha_by_path:
+                    del name_index[rel]
+            cached_name_index = name_index
+            taint_closure = audit_graph.closure_from_index(name_index, stale)
+
         scan_index = {"files": [rec for rec in index["files"]
                                 if rec["path"] in set(dirty)],
                       "counts": index["counts"], "index_sha1": index["index_sha1"]}
@@ -761,12 +781,16 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     reused = []
     if cache:
         for rel in cache_hits:
-            reused.extend(cache["files"][rel].get("findings", []))
+            for f in cache["files"][rel].get("findings", []):
+                if rel in taint_closure and f.get("kind") == "taint":
+                    continue      # 调用链邻居变了，这条流必须重算
+                reused.append(f)
     findings = reused + findings
     findings.extend(auth_gap_findings(map_data, rules))
     findings.extend(dependency_findings(map_data, rules, imports))
 
     graph_parsed, graph_gated = 0, False
+    stats_note = {}
     need_graph = True
     if cache and not set(dirty) and cache.get("flows") is not None:
         need_graph = False
@@ -776,12 +800,36 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
             flows = json.load(f).get("flows", [])
         need_graph = False
     else:
-        graph = audit_graph.build_graph(root, index=index, map_data=map_data,
-                                        rules=rules,
-                                        candidates=set(r for r, i in hits.items() if i["sinks"]))
+        # seed 必须同时含 source 命中文件：跨文件污点流的**起点**往往在调用方，
+        # 那里没有 sink。只按 sink 门控会把这类流整条丢掉（v0.21 就是这么退化的，
+        # 由 TestAuditIncrementalGraph 抓到）。
+        seed_files = set(r for r, i in hits.items() if i["sinks"])
+        src_files = set(r for r, i in hits.items() if i["sources"] and not i["sinks"])
+        if cached_name_index is not None:
+            # 真增量：只重算"变更文件 ∪ 调用链邻居"，其余文件的污点流直接复用。
+            # 闭包在上面算一次就好——这里再算一遍就是两份实现，迟早分叉。
+            closure = taint_closure
+            cached_sinks = set(r for r, e in cache.get("files", {}).items()
+                              if (e.get("hits") or {}).get("sinks"))
+            cached_srcs = set(r for r, e in cache.get("files", {}).items()
+                              if (e.get("hits") or {}).get("sources")
+                              and not (e.get("hits") or {}).get("sinks"))
+            cand = (cached_sinks | seed_files) & closure
+            src_cand = (cached_srcs | src_files) & closure
+            graph = audit_graph.build_graph(root, index=index, map_data=map_data,
+                                            rules=rules, candidates=cand,
+                                            source_candidates=src_cand)
+            reused = [f for f in cache.get("flows", []) if f["file"] not in closure]
+            flows = reused + graph["flows"]
+            stats_note = {"closure_files": len(closure), "reused_flows": len(reused)}
+        else:
+            graph = audit_graph.build_graph(root, index=index, map_data=map_data,
+                                            rules=rules, candidates=seed_files,
+                                            source_candidates=src_files)
+            flows = graph["flows"]
+            stats_note = {}
         graph_parsed = graph["stats"].get("parsed_files", 0)
         graph_gated = bool(graph["stats"].get("gated_by_candidates"))
-        flows = graph["flows"]
     findings.extend(flow_findings({"flows": flows}))
 
     dropped = []
@@ -798,6 +846,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
         verified.append(grade(f, result))
     verified = rank_dependencies(verified)
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
+             "closure_files": stats_note.get("closure_files", 0),
+             "reused_flows": stats_note.get("reused_flows", 0),
              "files_total": len(index["files"]), "candidates": len(hits) + len(cache_hits),
              "recomputed_files": len(scan_index["files"]),
              "cache_hit_files": len(cache_hits), "files_cached": len(scan_index["files"]),
@@ -810,12 +860,24 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
                           "severity": r["severity"]} for r in rules]
     if cache_file:
         entries = dict((rel, {"sha1": rec["sha1"], "rules_version": rules_version,
+                              "hits": hits.get(rel) or {},
                               "findings": [f for f in verified if f["file"] == rel]})
                        for rec in index["files"] for rel in [rec["path"]])
+        # 名片索引 = "谁定义了谁、谁调用了谁"，是增量算邻居的依据。
+        # 开了缓存就得付这一遍便宜扫描（不留函数体），换来之后每次增量只刷新脏文件；
+        # 不建它，改了"调用方"就找不到下游的 sink 文件，增量会**假装没事**。
+        name_index = {}
+        for rec in index["files"]:
+            if rec["lang"] not in audit_graph.DEF_PATTERNS:
+                continue
+            entry = audit_graph.name_entry(root, rec, max_bytes)
+            entry["sha1"] = rec["sha1"]
+            name_index[rec["path"]] = entry
         save_cache(cache_file, {"rules_version": rules_version,
                                 "lib_version": auditlib.LIB_VERSION,
                                 "index_sha1": index["index_sha1"],
                                 "files": entries, "flows": flows,
+                                "name_index": name_index,
                                 "blocked": payload["blocked_by_sanitizer"]})
         payload["stats"]["cache_written"] = bool(cache_file)
     if out_json:

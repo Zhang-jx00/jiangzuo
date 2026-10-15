@@ -320,11 +320,10 @@ def _first_code_match(items, text):
 def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
     """函数内污点传播 + 出参传递登记。tainted_params[(file,name)] = set(参数名)。"""
     key = (fn["file"], fn["name"])
-    tainted = {}                       # var -> hops 列表
-    for pname, incoming in (tainted_params.get(key) or {}).items():
-        tainted[pname] = list(incoming) + [{
-            "file": fn["file"], "line": fn["start"], "kind": "param-in",
-            "text": u"形参 %s 由调用方传入污点值" % pname}]
+    # 污点上下文**按规则隔离**：净化点是每条规则自己的（SQL 注入认 int()，
+    # SSRF 不认）。共用一份 tainted 会让 A 规则的净化被 B 规则的 source 绕过，
+    # 最后由 C 条 sink 认领——实测就是 int() 净化后跨文件流照报。
+    in_params = tainted_params.get(key) or {}
     for rule in rules:
         if rule.get("kind") != "taint":
             continue
@@ -332,6 +331,11 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
             continue
         sinks, sources, sanits = rule["sinks"], rule["sources"], rule["sanitizers"]
         arx = ASSIGN_RX.get(fn["lang"])
+        tainted = {}                   # 本规则视角下的 var -> hops 列表
+        for pname, incoming in (in_params.get(rule["id"]) or {}).items():
+            tainted[pname] = list(incoming) + [{
+                "file": fn["file"], "line": fn["start"], "kind": "param-in",
+                "text": u"形参 %s 由调用方传入污点值" % pname}]
         for lineno, text, _trunc in fn["body"]:
             src_item = _first_code_match(sources, text)
             sink_item = _first_code_match(sinks, text)
@@ -421,6 +425,13 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                 args = _split_args(inner.lstrip("("))
                 for idx, arg in enumerate(args):
                     carriers = [v for v in IDENT_RX.findall(arg) if v in tainted]
+                    if not carriers and _first_code_match(sources, arg):
+                        # 实参本身就是外部输入：top(request.args["d"])
+                        # 不先赋给变量，一样是污点入口。
+                        carriers = ["__inline__"]
+                        tainted.setdefault("__inline__", []).append(
+                            {"file": fn["file"], "line": lineno, "kind": "source",
+                             "text": text})
                     if carriers:
                         transfers.append({"callee_name": callee, "arg_index": idx,
                                           "caller": (fn["file"], fn["name"]),
@@ -465,8 +476,37 @@ def _def_names(root, rec, limit):
     return out
 
 
+
+def name_entry(root, rec, limit):
+    """一个文件的**便宜名片**：它定义了哪些名字、调用了哪些名字（不留函数体）。
+
+    增量扫描靠它算"调用链邻居"：不必重新解析全仓，也能知道
+    改了 A 之后，哪些文件因为调用 A 里的东西而可能被影响。
+    """
+    defs = sorted(_def_names(root, rec, limit))
+    calls = sorted(_collect_calls(root, rec, limit))
+    return {"defs": defs, "calls": calls, "lang": rec["lang"]}
+
+
+def closure_from_index(name_index, seed, sha1_by_path=None):
+    """seed ∪ seed 调用的定义文件 ∪ 调用了 seed 内定义的文件（一跳，可复现）。"""
+    seed = set(seed)
+    out = set(seed)
+    seed_calls = set()
+    seed_defs = set()
+    for rel in seed:
+        entry = name_index.get(rel) or {}
+        seed_calls |= set(entry.get("calls") or [])
+        seed_defs |= set(entry.get("defs") or [])
+    for rel, entry in name_index.items():
+        defs = set(entry.get("defs") or [])
+        calls = set(entry.get("calls") or [])
+        if (defs & seed_calls) or (calls & seed_defs):
+            out.add(rel)
+    return out
+
 def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
-                max_passes=None, candidates=None):
+                max_passes=None, candidates=None, source_candidates=None):
     """candidates：粗筛给出的候选文件集合。
 
     给了就**门控**——粗筛没有候选 → 图层直接空转返回；有候选 → 只全量解析
@@ -494,14 +534,36 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
         if not cand:
             parse_set, gated_skip = set(), True
         else:
+            seeds = set(cand)
+            # 名片索引一次算完，后面两处判定都复用它（各算一遍就是两遍全仓扫描）。
+            defs_by_file = {}
+            calls_by_file = {}
+            for rec in source_recs:
+                defs_by_file[rec["path"]] = _def_names(root, rec, limit)
+            all_defs = set()
+            for names in defs_by_file.values():
+                all_defs |= names
+
+            def _outbound(rel):
+                """本文件调用的、**不是自己定义的**仓库内名字。"""
+                own = defs_by_file.get(rel) or set()
+                return (_collect_calls(root, by_path[rel], limit) - own) & (all_defs - own)
+
+            # source 命中文件只有"会调用到仓库内别的文件定义的函数"时，
+            # 才可能是跨文件污点流的起点；否则数据只会在本文件内成流，
+            # 而本文件有 sink 时它早就是候选了。少了这一道，
+            # 满屏带 request.args 的路由文件都会被拖进图层（实测 1025/1502）。
+            for rel in sorted(set(source_candidates or ()) - seeds):
+                if _outbound(rel):
+                    seeds.add(rel)
             called = set()
-            for rel in sorted(cand):
-                called |= _collect_calls(root, by_path[rel], limit)
-            parse_set = set(cand)
+            for rel in sorted(seeds):
+                called |= (_collect_calls(root, by_path[rel], limit))
+            parse_set = set(seeds)
             for rec in source_recs:
                 if rec["path"] in parse_set:
                     continue
-                if _def_names(root, rec, limit) & called:
+                if defs_by_file[rec["path"]] & called:
                     parse_set.add(rec["path"])
 
     all_funcs = []
@@ -554,7 +616,8 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
                 if tr["arg_index"] < len(params):
                     pname = params[tr["arg_index"]]
                     k = (cand["file"], cand["name"])
-                    slot = tainted_params.setdefault(k, {})
+                    slot = tainted_params.setdefault(k, {}).setdefault(
+                        tr["rule_id"], {})
                     if pname not in slot:
                         slot[pname] = tr["hops"]
                         changed = True
