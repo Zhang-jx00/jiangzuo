@@ -687,6 +687,30 @@ def is_example_path(rel):
         os.path.basename(rel).startswith("test_")
 
 
+TEST_SEGMENTS = {"tests", "test", "testing", "spec", "specs", "__tests__", "fixtures"}
+EXAMPLE_ONLY_SEGMENTS = {"examples", "example", "docs", "doc", "samples", "sample",
+                         "example_apps"}
+TEST_FILE_SUFFIXES = (".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.js",
+                      ".spec.ts", "_test.py", "_test.go", "Test.java", "Tests.java")
+
+
+def code_context(rel):
+    """这条命中长在什么语境里：`test`／`example`／None（正式代码）。
+
+    只按**路径段**与**文件名形态**判——`src/latest_posts.py`、`contest.py`
+    里含 "test" 子串不算测试（B7 实测过这种撞名，判据必须按段不按子串）。
+    """
+    parts = rel.split("/")
+    segs = set(parts[:-1])
+    base = parts[-1]
+    if segs & TEST_SEGMENTS or base.startswith("test_") or \
+            any(base.endswith(sfx) for sfx in TEST_FILE_SUFFIXES):
+        return u"test"
+    if segs & EXAMPLE_ONLY_SEGMENTS:
+        return u"example"
+    return None
+
+
 def split_not_applicable(findings, role, rules_by_id):
     """把"应用级规则 × 库代码/示例目录"的发现挪出结论，但**逐条留痕并给理由**。"""
     kept, na = [], []
@@ -863,6 +887,8 @@ def report_md(payload, root):
              u"",
              u"| 结论 | 数 |", u"|---|---|",
              u"| 确认发现（去重后） | %d |" % s["findings"],
+             u"| **其中正式代码（结论数）** | **%d** |" % s.get("conclusions", s["findings"]),
+             u"| 其中测试/示例语境（另计，不删证据） | %d |" % s.get("context_excluded", 0),
              u"| 验证环节丢弃（位置对不上） | %d |" % s["dropped_by_verifier"],
              u"| 净化断链（已排除） | %d |" % len(payload["blocked_by_sanitizer"]),
              u"| 扫描文件 | %d（重算 %d / 复用缓存 %d） |" % (
@@ -876,20 +902,21 @@ def report_md(payload, root):
     if s.get("peak_memory_kb"):
         lines.append(u"| 粗筛峰值内存 | %d KB（tracemalloc 实测） |" % s["peak_memory_kb"])
         lines.append(u"")
-    for f in payload["findings"]:
+    def _finding(f, no):
         v = f["verification"]
-        lines += [u"## %d. [%s/%s 置信%s] %s — `%s:%d`" % (
-            f["order"], f["severity"], f["kind"], f["confidence"]["label"],
-            f["title"], f["file"], f["line"]), u"",
+        out = [u"## %d. [%s/%s 置信%s] %s — `%s:%d`%s" % (
+            no, f["severity"], f["kind"], f["confidence"]["label"],
+            f["title"], f["file"], f["line"],
+            u" ｜ 语境：%s" % f["context"] if f.get("context") else u""), u"",
             u"- **位置**：`%s:%d`" % (f["file"], f["line"]),
             u"- **命中**：%s" % (f["sink_text"] or u"—"),
             u"- **CWE/OWASP**：%s / %s" % (u"、".join(f.get("cwe", [])) or u"—",
                                           u"、".join(f.get("owasp", [])) or u"—"),
             u"- **数据流**（%s）：" % f.get("depth", ""),]
         for hop in f.get("path", []):
-            lines.append(u"  - `%s:%d` %s：%s" % (hop["file"], hop["line"], hop["kind"],
-                                                  hop["text"][:120]))
-        lines += [u"- **利用条件**：%s" % (u"可达（从入口/路由走得到）" if f["exploitable"]
+            out.append(u"  - `%s:%d` %s：%s" % (hop["file"], hop["line"], hop["kind"],
+                                               hop["text"][:120]))
+        out += [u"- **利用条件**：%s" % (u"可达（从入口/路由走得到）" if f["exploitable"]
                                           else u"不可达 — " + (f.get("note") or u"证据链上函数从入口不可达")),
                   u"- **置信度**：%s（%.2f）｜ **核验**：路径%s sink%s 输入%s 净化%s 可达%s" % (
                       f["confidence"]["label"], f["confidence"]["value"],
@@ -903,6 +930,22 @@ def report_md(payload, root):
                   u"- **指纹**：`%s`%s" % (f["id"], u"（重复 %d 处已合并）"
                                           % f["duplicates"] if f.get("duplicates") else u""),
                   u""]
+        return out
+
+    main_findings = [f for f in payload["findings"] if not f.get("context")]
+    ctx_findings = [f for f in payload["findings"] if f.get("context")]
+    no = 0
+    for f in main_findings:
+        no += 1
+        lines += _finding(f, no)
+    if ctx_findings:
+        lines += [u"## 测试/示例语境（另计 %d 条：证据、修复示例与复测点照常保留，"
+                  u"不计入结论数）" % len(ctx_findings), u"",
+                  u"> 这一档不是「没问题」，是「先别当成你系统的洞」。"
+                  u"要合回去看总量就看上一表的「确认发现」行。", u""]
+        for f in ctx_findings:
+            no += 1
+            lines += _finding(f, no)
     if payload.get("not_applicable"):
         st = payload["stats"]
         lines += [u"## 不适用（已判定并留痕，不当作漏洞也不当作已修）", u"",
@@ -969,6 +1012,7 @@ def to_sarif(payload, skill_version):
                            "confidence": f["confidence"]["value"],
                            "confidenceLabel": f["confidence"]["label"],
                            "exploitable": f["exploitable"], "kind": f["kind"],
+                           "jiangzuo:context": f.get("context") or u"main",
                            "cwe": f.get("cwe", []), "owasp": f.get("owasp", []),
                            "fix": f.get("fix", ""), "retest": f.get("retest", "")},
         })
@@ -1156,6 +1200,11 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     role = repo_role(map_data, index)
     verified, not_applicable = split_not_applicable(
         verified, role, dict((r["id"], r) for r in rules))
+    # 语境层（C1）：测试/示例里的命中**照报、照留证据**，只是不跟正式代码挤在
+    # 同一个"结论条数"里。B7 实测 flask 13 条有 8 条在 tests/、requests 4 条全在
+    # 测试或库实现处——删掉等于闭眼，混在一起报等于把噪声算进漏洞数。
+    for f in verified:
+        f["context"] = code_context(f["file"])
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
              "closure_files": stats_note.get("closure_files", 0),
              "reused_flows": stats_note.get("reused_flows", 0),
@@ -1169,6 +1218,12 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
              "peak_memory_kb": peak_kb}
     payload = build_report_payload(root, index, map_data, None, rules, verified, dropped,
                                    cache.get("blocked", []) if cache else [], stats)
+    # 语境两档从**去重后**的集合算：指纹是 (规则, 文件, 命中行文本)，
+    # 同一文件里两处一模一样的坏写法会并成一条，用去重前的计数会算出
+    # "结论 52 / 总数 49" 这种不可能的数（DVWA 复测当场暴露过一次）。
+    _ctx = len([f for f in payload["findings"] if f.get("context")])
+    stats["context_excluded"] = _ctx
+    stats["conclusions"] = len(payload["findings"]) - _ctx
     payload["not_applicable"] = not_applicable
     payload["suppressed"] = suppressed
     payload["_rules"] = [{"id": r["id"], "title": r["title"], "note": r.get("note", ""),
@@ -1438,6 +1493,11 @@ def main():
             keep = set(bl["new_ids"])
             payload["findings"] = [f for f in payload["findings"] if f["id"] in keep]
             payload["stats"]["findings"] = len(payload["findings"])
+            # 语境两档跟着过滤后的集合重算，否则 --only-new 会出现
+            # "结论数 3 / 总数 1" 这种自相矛盾的报告行。
+            _ctx = len([f for f in payload["findings"] if f.get("context")])
+            payload["stats"]["context_excluded"] = _ctx
+            payload["stats"]["conclusions"] = len(payload["findings"]) - _ctx
             if args.json_out:
                 with io.open(args.json_out, "w", encoding="utf-8") as f:
                     f.write(json.dumps(payload, ensure_ascii=False, indent=1) + "\n")
@@ -1455,10 +1515,14 @@ def main():
           % (s["findings"], u"、".join("%s=%d" % (k, dist[k])
                                      for k in audit_rules.SEVERITIES if dist.get(k)) or u"无",
              s["dropped_by_verifier"], len(payload["blocked_by_sanitizer"])))
+    if s.get("context_excluded"):
+        print(u"结论 %d 条（正式代码）｜ 测试/示例语境另计 %d 条（证据保留，不计入结论）"
+              % (s.get("conclusions", s["findings"]), s["context_excluded"]))
     for f in payload["findings"][:12]:
-        print(u"  %2d. [%s] %-14s 置信%s %-10s %s:%d"
+        print(u"  %2d. [%s] %-14s 置信%s %-10s %s:%d%s"
               % (f["order"], f["severity"], f["rule_id"], f["confidence"]["label"],
-                 f["kind"], f["file"], f["line"]))
+                 f["kind"], f["file"], f["line"],
+                 u"  ⟵%s语境" % f["context"] if f.get("context") else u""))
     if len(payload["findings"]) > 12:
         print(u"  ……其余见报告")
     probs = s.get("sarif_problems")

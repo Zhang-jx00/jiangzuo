@@ -2,6 +2,32 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.31.0] - 2026-10-15
+
+C1：**测试/示例语境单列一档**——B7 取证量出的头号噪声源，只动"结论归属"，不动检出、不动证据。
+
+- `audit_scan.code_context(rel)`：按**路径段**与**文件名形态**判 `test` / `example` / None。
+  刻意不用子串匹配——`src/latest_posts.py`、`contest.py` 里都含 "test"（这条有专门的反面测试）。
+- 命中落在 `tests/ spec/ fixtures/ __tests__/ test_*.py *.test.js …` 或
+  `examples/ docs/ samples/` 时：仍在 `findings` 里、仍有 `file:line` 与数据流、仍进 JSON 与 SARIF
+  （`properties["jiangzuo:context"]`），但**不计进结论数**。
+  报告表格新增两行：「其中正式代码（结论数）」与「其中测试/示例语境（另计，不删证据）」，
+  并单列一节渲染另计档；stdout 同步给「结论 N 条 ｜ 另计 M 条」。
+- **修掉一个口径错误（DVWA 复测当场暴露）**：语境两档原先从**去重前**的集合算，
+  出现过「结论 52 / 总数 49」这种不可能的数。指纹是 `(规则, 文件, 命中行文本)`，
+  同文件两处一样的坏写法会并成一条 ⇒ 现在一律从去重后的 `payload["findings"]` 回算，
+  `--only-new` 过滤后也回算，并加了自洽断言测试（`findings == conclusions + context_excluded`）。
+- 三仓实测（flask/requests/DVWA 副本重clone复测，验完即删）：
+  **flask 总数 13 → 结论 4**（另计 9：8 条 `tests/` 里的 `Markup` + 1 条测试夹具密钥）、
+  **requests 4 → 结论 2**（另计 2：测试里主动 `verify=False`）、
+  **DVWA 49 → 结论 48**（只另计 1 条 `test_credentials.php`，靶场的洞一条没被藏起来）。
+  留在结论里的恰好是 C2 的两类语境问题：flask 的 CLI traceback ×3、requests 的 `CERT_NONE` 实现 ×2。
+- 语料复跑仍 16/16 高危、0/18 误报、0/15 安全样本；自扫本仓库 0 条发现；
+  性能 5.398 ms/文件（与本轮改动前 5.13/5.61 同区间，无回退），峰值 4.2 MB 不变。
+- 测试 85 → **90**（`TestAuditContext` 5 例，先红后绿）。变异校准 5 处锁全部可红；
+  其中第一次校准脚本里我写的 `False or X` 变异**根本没改任何语义**，报了个假的"锁无效"——
+  当场识破并改成顶层 `return None` 后才见到真红。这条也记进证据完整性教训：**变异脚本自己也是被测对象**。
+
 ## [0.30.0] - 2026-10-15
 
 B7：**第一次用不是我写的仓库量自己**——flask / requests / DVWA 三仓取证，

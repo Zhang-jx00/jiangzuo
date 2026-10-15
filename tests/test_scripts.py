@@ -1689,5 +1689,116 @@ class TestAuditPhpFlows(unittest.TestCase):
             self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1)
 
 
+class TestAuditContext(unittest.TestCase):
+    """C1（B7 取证量出来的头号噪声源）：测试/示例语境单列一档。
+
+    flask 13 条里 8 条在 `tests/`，requests 4 条全在测试或库实现处——
+    这些**不能删**（示例里的注入写法是真代码，删了就等于闭眼），
+    但也不能和 `app.py` 里的真洞混在同一个"结论条数"里报。
+    所以这一档只动**结论归属**，不动检出、不动证据、不动 JSON。
+    """
+
+    CMDI = ("from flask import request, Flask\nimport os\napp = Flask(__name__)\n\n"
+            "@app.route(\"/run\")\ndef run_it():\n"
+            "    return os.system(\"ls \" + request.args[\"d\"])\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name, extra=None):
+        out = os.path.join(root, "_c_%s.json" % name)
+        cmd = [os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out]
+        if extra:
+            cmd += extra
+        r = run(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_test_and_example_paths_get_a_context_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.py", self.CMDI)
+            self._write(tmp, "tests/test_app.py", self.CMDI)
+            self._write(tmp, "examples/demo/tool.py", self.CMDI)
+            data, _ = self._scan(tmp, "tag")
+            by = dict((f["file"], f.get("context")) for f in data["findings"])
+            self.assertIn("app.py", by)
+            self.assertIsNone(by["app.py"], "正式代码不该带语境标签")
+            self.assertEqual("test", by["tests/test_app.py"])
+            self.assertEqual("example", by["examples/demo/tool.py"])
+            s = data["stats"]
+            self.assertEqual(1, s["conclusions"], "结论只算正式代码那条")
+            self.assertEqual(2, s["context_excluded"])
+            self.assertEqual(3, s["findings"], "总数不缩水：降误报不是藏证据")
+
+    def test_name_substring_does_not_count_as_test_path(self):
+        """`latest`/`biggest` 里含 test 但不是测试目录——按路径段与文件名形态判。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "src/latest_posts.py", self.CMDI)
+            self._write(tmp, "contest.py", self.CMDI)
+            data, _ = self._scan(tmp, "name")
+            for f in data["findings"]:
+                self.assertIsNone(f.get("context"),
+                                  "文件名里的 test 子串不该打成测试语境：%s" % f["file"])
+            self.assertEqual(len(data["findings"]), data["stats"]["conclusions"])
+
+    def test_report_splits_the_two_groups_and_keeps_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.py", self.CMDI)
+            self._write(tmp, "tests/test_app.py", self.CMDI)
+            md = os.path.join(tmp, "r.md")
+            r = run([os.path.join(SCRIPTS, "audit_scan.py"), tmp, "--md", md])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            text = io.open(md, encoding="utf-8").read()
+            self.assertIn(u"## 测试/示例语境", text, "报告要有单独一档")
+            self.assertIn(u"tests/test_app.py", text, "另计不等于不写")
+            self.assertLess(text.index(u"`app.py:"), text.index(u"## 测试/示例语境"),
+                            "正式结论要排在另计档之前")
+            self.assertLess(text.count(u"## 测试/示例语境"), 3,
+                            "另计档只有一个总标题，别每条重复")
+
+    def test_sarif_keeps_context_as_property(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "tests/test_app.py", self.CMDI)
+            sa = os.path.join(tmp, "s.sarif")
+            r = run([os.path.join(SCRIPTS, "audit_scan.py"), tmp, "--sarif", sa])
+            self.assertEqual(r.returncode, 0, r.stdout)
+            doc = json.load(io.open(sa, encoding="utf-8"))
+            results = doc["runs"][0]["results"]
+            self.assertEqual(1, len(results), "SARIF 不能因为另计就少报")
+            props = results[0].get("properties", {})
+            self.assertEqual(u"test", props.get("jiangzuo:context"))
+
+
+    def test_context_counts_survive_dedup(self):
+        """语境两档必须从**去重后**的集合算。指纹是 (规则, 文件, 命中行文本)，
+        所以同一个文件里两处一模一样的坏写法会并成一条——DVWA 复测当场出现
+        「结论 52 / 总数 49」这种不可能的数，就是因为语境数用了去重前的集合。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "tests/dup_util.py",
+                        "from flask import request\nimport os\n\n\n"
+                        "def a():\n    return os.system(\"ls \" + request.args[\"d\"])\n\n\n"
+                        "def b():\n    return os.system(\"ls \" + request.args[\"d\"])\n")
+            self._write(tmp, "app.py",
+                        "from flask import Flask\napp = Flask(__name__)\n")
+            data, _ = self._scan(tmp, "dup")
+            s = data["stats"]
+            self.assertEqual(1, s["findings"],
+                             "两处同文本坏写法应去重成 1 条（实得 %d，说明夹具没造出重复）"
+                             % s["findings"])
+            self.assertEqual(s["findings"],
+                             s["conclusions"] + s["context_excluded"],
+                             "三档口径必须自洽：%s" % {k: s[k] for k in
+                                                       ("findings", "conclusions",
+                                                        "context_excluded")})
+            self.assertLessEqual(s["conclusions"], s["findings"],
+                                 "结论数不可能大于总数")
+
+
 if __name__ == "__main__":
     unittest.main()
