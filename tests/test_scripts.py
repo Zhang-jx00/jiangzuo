@@ -60,6 +60,34 @@ class TestValidate(unittest.TestCase):
         self.assertIn("占用报告", r.stdout)
         self.assertIn("常驻", r.stdout)
 
+    def test_validate_flags_over_budget_entry(self):
+        """红测：正文超预算必须 exit 1。这条先前只是文档里的一句话，
+        于是"再加一小段"一路把正文推到 5124 都没人拦——禁忌要有机器判据才不会复发。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+                        u"汉字" * 3000 + u"\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0, u"超预算没拦住：%s" % r.stdout)
+            self.assertIn("tokens", r.stdout)
+            self.assertIn(u"超预算", r.stdout)
+
+    def test_entry_keeps_iron_law_scope_and_gate(self):
+        """入口必须留着这两件行为判据（B6 加的），删掉就该红：
+        ① 铁律的**范围声明**（同义改写与暗示同样违规）；
+        ② 必验证的**门函数**（五步，跳一步＝没验证）。
+        没有这条锁，将来谁压缩入口时把它们当废话删掉都不会有人知道。"""
+        with io.open(os.path.join(REPO, "SKILL.md"), encoding="utf-8") as f:
+            body = f.read()
+        self.assertIn(u"同义改写与暗示同样违规", body, u"铁律范围句被删了")
+        self.assertIn(u"必验证＝门函数", body, u"验证门函数声明被删了")
+        for step in (u"①点命令", u"②全量跑", u"③读到底", u"④对得上吗", u"⑤才下结论"):
+            self.assertIn(step, body, u"门函数少了第 %s 步" % step)
+        self.assertIn(u"回执只收四态", body, u"子代理四态合同被删了")
+        for state in (u"DONE", u"CONCERNS", u"NEEDS_CONTEXT", u"BLOCKED"):
+            self.assertIn(state, body, u"四态少了 %s" % state)
+
     def test_validate_detects_broken_ref(self):
         """红测：制造一个不存在的引用，校验器必须报错。"""
         with tempfile.TemporaryDirectory() as tmp:

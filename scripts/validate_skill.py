@@ -224,6 +224,10 @@ def check_booklet_contract(skill_dir):
              "%d 本分册骨架契约全部满足 ✓" % len(refs))
 
 
+# SKILL.md 正文预算：入口每次进上下文，超了就等于把成本推给所有任务
+BODY_TOKEN_BUDGET = 5000
+
+
 def estimate_tokens(text):
     """粗略 token 估算：CJK 字符约 1 token/字，其余约 4 字符/token。"""
     cjk = len(re.findall(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", text))
@@ -347,10 +351,18 @@ def main():
         if meta is not None and rest is not None:
             body = "\n".join(rest)
             body_lines = len(rest)
+            body_tokens = estimate_tokens(body)
             if body_lines > 500:
                 warn("SKILL.md 正文 %d 行，超过建议的 500 行——考虑把内容外移到 references/" % body_lines)
             else:
                 info("SKILL.md 正文 %d 行（≤500 ✓）" % body_lines)
+            # 正文 token 预算是**硬闸**：这条先前只写在文档里没有判据，
+            # 于是"再加一小段"一路把正文推到 5124 都没人报警——禁忌没有机器判据就会复发。
+            if body_tokens > BODY_TOKEN_BUDGET:
+                err("正文 ~%d tokens 超预算 %d——先删再加（细节移 references/），不要默默放宽预算"
+                    % (body_tokens, BODY_TOKEN_BUDGET))
+            else:
+                info("SKILL.md 正文 ~%d tokens（预算 %d ✓）" % (body_tokens, BODY_TOKEN_BUDGET))
             if re.search(r"\b[A-Za-z]:[\\/]\S|/Users/\S|/home/\S", body):
                 err("正文含本机绝对路径（跨环境会失效，应使用相对路径）")
             check_frontmatter(skill_dir, text)
