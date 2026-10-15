@@ -666,10 +666,19 @@ def repo_role(map_data, index=None):
             return "app"
     # 没有路由器不等于不是应用：过程式 PHP（如 DVWA）根本没有路由表。
     # 只有"有打包清单 + 没有页面文件"才敢判成库，否则保持 app，宁可不压。
+    # 名单以**索引里的真实文件名**为准：地图的 manifests 只收 project_scan.MANIFESTS，
+    # 里面没有 setup.py/setup.cfg——只用 setup.py 打包的老库会因此被误判成 app。
     manifests = " ".join(map_data.get("manifests") or [])
+    pkg_names = {"pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "Cargo.toml",
+                 "go.mod", "pom.xml", "build.gradle", "build.gradle.kts",
+                 "composer.json", "Gemfile", "mix.exs", "pubspec.yaml"}
     has_packaging = any(h in manifests for h in
-                        ("pyproject.toml", "setup.py", "Cargo.toml", "go.mod",
-                         "pom.xml", "build.gradle"))
+                        ("pyproject.toml", "Cargo.toml", "go.mod",
+                         "pom.xml", "build.gradle", "composer.json", "Gemfile",
+                         "pubspec.yaml", "mix.exs"))
+    if index and not has_packaging:
+        has_packaging = any(os.path.basename(rec["path"]) in pkg_names
+                            for rec in index.get("files", []))
     pages = 0
     if index:
         # 只数"真页面"：docs/ 与 examples/ 里的 html 是文档，不是可运行的应用面
@@ -709,6 +718,103 @@ def code_context(rel):
     if segs & EXAMPLE_ONLY_SEGMENTS:
         return u"example"
     return None
+
+
+# 控制台/异常形态：数据出境目标是 stdout/stderr 或 raise，不是 HTTP 响应体。
+# 取自 flask/src/flask/cli.py 的真实三发：click.secho(err=True)、traceback.print_exc()、
+# raise NoAppException(f"…{traceback.format_exc()}")（最后一发的 raise 在命中行上方两行）。
+CONSOLE_SHAPE_RX = re.compile(
+    r"\bclick\.(?:secho|echo)\b|\bsys\.stderr\b|\bsys\.stdout\b|\bprint\s*\(|"
+    r"\btraceback\.print_\w+|\braise\s+[A-Z]\w*\s*\(|\bbump\.log\b|\blogger\.\w+\s*\(")
+DEF_HEAD_RX = re.compile(
+    r"^\s*(?:async\s+def\s+\w+\s*\(|def\s+\w+\s*\(|function\s*[\w]*\s*\(|"
+    r"(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w]+)\s*=>)")
+
+
+def _enclosing_optout_param(lines, line_no, names):
+    """命中往上找最近的函数头，看形参里有没有"调用方可选的开关"。
+
+    requests 的两发 `CERT_NONE` 分别长在
+    `def _urllib3_request_context(request, verify, client_cert, poolmanager)` 和
+    `def cert_verify(self, conn, url, verify, cert)` 里——**库的职责就是实现 verify 选项**，
+    实现了不等于有漏洞；而应用里 `requests.get(url, verify=False)` 是调用方自己关的，照报。
+    参数可能换行（requests 就是这么写的），所以取函数头起 4 行拼起来找。
+    """
+    head = None
+    for n, text in lines:
+        if n > line_no:
+            break
+        if DEF_HEAD_RX.match(text):
+            head = n
+    if head is None:
+        return None
+    block = u" ".join(t for n, t in lines if head <= n <= head + 3)
+    for name in names:
+        if re.search(r"[\s(,]%s\s*[:,)=\[]|%s\s*=" % (re.escape(name), re.escape(name)),
+                     block):
+            return name
+    return None
+
+
+def _context_lines(root, rel, line_no, max_bytes=None):
+    """读某个文件的代码行，读到"命中行 + 4"就停——不为一条发现吞下整个大文件。
+
+    注意不要和上面那个 `_window_lines(all_lines, center, span)` 混用：
+    那个在**已有行列表**上取窗口，这个要**开文件**（语境判定需要的行不在发现记录里）。
+    两个同名函数会互相覆盖，实测把 unless_present 的窗口取行打成 AttributeError。
+    """
+    path = os.path.join(root, rel.replace("/", os.sep))
+    out = []
+    for n, text, _trunc in auditlib.iter_code_lines(
+            path, max_bytes=max_bytes or auditlib.DEFAULT_MAX_FILE_BYTES):
+        out.append((n, text))
+        if n > int(line_no) + 4:
+            break
+    return out
+
+
+def apply_rule_contexts(root, findings, rules_by_id, map_data, role, line_cache,
+                        max_bytes=None):
+    """规则自带的语境条件（C2）：只**改结论归属**，不删发现、不改证据。
+
+    两类，都来自 v0.30 取证后结论区里剩下的五发：
+      * `console_when_routeless`：命中所在文件**没有任何路由**、且命中±3 行的上下文是
+        控制台/异常形态 → `console`。两个条件都要，少一个就可能是真泄露（路由文件里的
+        `traceback.print_exc()` 照报）。
+      * `optout_params` + 仓库角色=library：最近的函数形参里有"可关的开关"
+        （verify/insecure/...）→ `library_feature`。应用仓库同写法不享受这条。
+    """
+    route_files = set(r.get("file") for r in (map_data.get("routes") or []))
+    tagged = 0
+    for f in findings:
+        if f.get("context"):
+            continue
+        rule = rules_by_id.get(f["rule_id"]) or {}
+        rel = f["file"]
+        if rule.get("console_when_routeless") and rel not in route_files:
+            # 缓存键必须带上"读到哪一行"：只按文件缓存会停在第一条命中的窗口，
+            # 同文件里更靠后的命中读不到上下文（flask/cli.py 三发只标上一发就是这个坑，
+            # 有专门的测试守着）。
+            lines = line_cache.setdefault((rel, int(f["line"])),
+                                          _context_lines(root, rel, f["line"], max_bytes))
+            lo, hi = int(f["line"]) - 3, int(f["line"]) + 3
+            if any(CONSOLE_SHAPE_RX.search(t) for n, t in lines if lo <= n <= hi):
+                f["context"] = u"console"
+                f["context_reason"] = (u"该文件没有登记任何路由/入口，命中上下文是控制台输出或 "
+                                       u"raise（stdout/stderr），不是 HTTP 响应体")
+                tagged += 1
+                continue
+        names = rule.get("optout_params") or []
+        if names and role == "library":
+            lines = line_cache.setdefault((rel, int(f["line"])),
+                                          _context_lines(root, rel, f["line"], max_bytes))
+            pname = _enclosing_optout_param(lines, int(f["line"]), names)
+            if pname:
+                f["context"] = u"library_feature"
+                f["context_reason"] = (u"库代码：命中长在带 `%s` 形参的函数里，"
+                                       u"这是该开关的实现，不是把它关掉" % pname)
+                tagged += 1
+    return tagged
 
 
 def split_not_applicable(findings, role, rules_by_id):
@@ -1205,6 +1311,8 @@ def run(root, out_json=None, out_md=None, out_sarif=None, index_path=None,
     # 测试或库实现处——删掉等于闭眼，混在一起报等于把噪声算进漏洞数。
     for f in verified:
         f["context"] = code_context(f["file"])
+    apply_rule_contexts(root, verified, dict((r["id"], r) for r in rules),
+                        map_data, role, {})
     stats = {"graph_parsed_files": graph_parsed, "graph_gated": graph_gated,
              "closure_files": stats_note.get("closure_files", 0),
              "reused_flows": stats_note.get("reused_flows", 0),

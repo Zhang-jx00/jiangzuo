@@ -2,6 +2,43 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [0.32.0] - 2026-10-15
+
+C2：**规则加"角色 × 语境"二维条件**——把 v0.31 结论区里剩下的五发噪声按真实代码形状修掉，
+两个条件都要成立才另计，缺一个照报。
+
+- 新规则字段（数据，不是代码分支）：
+  `console_when_routeless`（JZ-ERRINFO-001）、`optout_params`（JZ-TLS-001，
+  `verify/ssl_verify/insecure/no_verify/rejectUnauthorized/strictSSL/InsecureSkipVerify`）。
+- **控制台语境**：命中所在文件**没有登记任何路由**（地图给的 route_files）**且**命中±3 行的
+  上下文是控制台/异常形态（`click.secho/echo`、`sys.stderr|stdout`、`print(`、
+  `traceback.print_*`、`raise 大写类(`、`bump.log`、`logger.x(`）→ 另计 `console`。
+  两个条件是"且"关系：服务层把异常文本 `return` 出去（无路由但也不是控制台）照报，
+  路由文件里的 `traceback.print_exc()` 也照报——两条各有测试。
+- **库实现语境**：仓库角色 = `library` **且**最近的函数形参里带"可关的开关"（参数可能换行，
+  取函数头起 4 行拼接再找）→ 另计 `library_feature`。
+  判据形状取自 requests 真实代码：`def _urllib3_request_context(request, verify, client_cert, poolmanager)`
+  里 `if verify is False: cert_reqs = "CERT_NONE"`，以及 `def cert_verify(self, conn, url, verify, cert)`
+  的 else 分支。**应用**仓库里同样的写法不享受这条（那是调用方主动关掉校验）。
+- 另计依旧不删证据：`context` / `context_reason` 进 JSON 与 SARIF，报告与 stdout 给条数。
+- **顺带修掉两个真缺陷**（都是 C2 的测试逼出来的）：
+  ① `repo_role` 的打包名单与地图 `manifests` 不一致——`has_packaging` 里写了 `setup.py`，
+  可地图只收 `project_scan.MANIFESTS`（不含 setup.py/setup.cfg），
+  **只用 setup.py 打包的老库会被误判成 app**；现在直接以索引里的真实文件名为准。
+  ② 上下文行缓存按文件键 → 停在第一条命中的窗口，同文件靠后的命中读不到上下文
+  （flask/cli.py 三发只标中一发）；缓存键改成 `(文件, 行号)`，并加"同文件多发"的测试。
+- 三仓复测（重 clone，验完即删）：**flask 13 → 结论 1**（3 发 CLI traceback 进 `console`、
+  9 发测试语境进 `test`）、**requests 4 → 结论 0**（2 发 `library_feature` + 2 发 test）、
+  **DVWA 49 → 结论 48 不变**（靶场一条没被另计掉，这是"不过度抑制"的硬约束）。
+  按**结论区**统计的误报率 ≈4/49≈8%（达标）；按**全部产出**算仍是 20/66≈30%——
+  另计档里绝大多数是"写法在测试/库语境下无害"，不是"检测错了"，两个口径分开报。
+- 测试 90 → **98**（`TestAuditRoleScope` +1、`TestAuditRuleContext` +7，全部先红后绿；
+  7 处锁变异校准，其中上一版校准脚本自己有两个毛病也一并修了：
+  循环内还原导致第二个测试跑的是还原后的代码、以及 `if names and role==library` 改成
+  `if role==library` 在 names 为空时等于没改——**变异脚本必须当场证明语义变了**）。
+- 语料复跑 16/16 高危、0/18 误报、0/15 安全样本；bench 5.246 ms/文件、峰值 4.2MB；
+  validate 0 错 0 警；preflight PASS；ship_check L1 SHIP-OK。
+
 ## [0.31.0] - 2026-10-15
 
 C1：**测试/示例语境单列一档**——B7 取证量出的头号噪声源，只动"结论归属"，不动检出、不动证据。

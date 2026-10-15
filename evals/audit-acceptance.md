@@ -198,7 +198,18 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   requests 的 `CERT_NONE`×2（库实现 `verify=False` 是职责不是漏洞）→ 归 C2。
   顺带修掉一个口径错：语境数原先从**去重前**的集合算，DVWA 上出现「结论 52 / 总数 49」，
   现在一律从去重后的集合回算，并加了 `findings == conclusions + context_excluded` 的自洽测试。
-- 语境识别：CLI/stderr 与"库实现某危险选项"这两类，给规则加"角色×语境"二维条件。
+- ~~语境识别：CLI/stderr 与"库实现某危险选项"这两类，给规则加"角色×语境"二维条件~~
+  **已做完（v0.32.0）**：`console_when_routeless`（无路由 **且** 上下文是控制台/raise）
+  与 `optout_params`（角色=library **且** 最近函数形参带可关开关）两个条件都是"且"关系。
+  复测：**flask 13 → 结论 1**（3 发 CLI traceback 归 `console`、9 发归 `test`）、
+  **requests 4 → 结论 0**（2 发 `CERT_NONE` 归 `library_feature`，它长在
+  `def cert_verify(self, conn, url, verify, cert)` 里）、**DVWA 49 → 结论 48 不变**。
+  按结论区算误报 ≈4/49≈8%（**达标**）；按全部产出算仍 ≈30%（另计档不是"检测错了"而是
+  "写法在测试/库语境下无害"）——两个口径都要报，不许只报好看的那个。
+  顺带修掉两个被测试逼出来的真缺陷：`repo_role` 的打包名单与地图 `manifests` 不一致
+  （只看 pyproject.toml 会把只有 `setup.py` 的老库误判成 app），
+  以及上下文行缓存按文件键（停在第一条命中的窗口，同文件靠后的命中读不到——
+  flask/cli.py 三发只标中一发）。
 - DVWA 未覆盖类别补规则：XXE、认证绕过、越权/直接对象引用、会话固定——
   这些在 DVWA 里是有标准答案的，适合当检出分母。
 - 可达性还有第三档没做：`include`/`require` 的变量路径目前只能靠"页面即入口"兜，

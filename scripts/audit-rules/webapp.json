@@ -210,7 +210,16 @@
     }
    ],
    "fix": "默认校验证书；自签场景用受控 CA bundle（verify=\"/path/ca.pem\"），不要用关掉校验图省事。测试环境例外要写清楚作用域，别泄漏到生产配置。",
-   "retest": "用错误 CA 的服务端应握手失败；确认代码里不再出现 verify=False / InsecureSkipVerify。"
+   "retest": "用错误 CA 的服务端应握手失败；确认代码里不再出现 verify=False / InsecureSkipVerify。",
+   "optout_params": [
+    "verify",
+    "ssl_verify",
+    "insecure",
+    "no_verify",
+    "rejectUnauthorized",
+    "strictSSL",
+    "InsecureSkipVerify"
+   ]
   },
   {
    "id": "JZ-CORS-001",
@@ -324,7 +333,8 @@
    ],
    "fix": "对外返回稳定错误码与可读文案，细节写服务端日志（带 request-id）；日志里同样不得含密钥与用户口令。",
    "retest": "构造非法输入触发异常，检查响应体只有 code/message；日志里能按 request-id 找到完整堆栈。",
-   "scope": "app"
+   "scope": "app",
+   "console_when_routeless": true
   },
   {
    "id": "JZ-AUTHGAP-001",

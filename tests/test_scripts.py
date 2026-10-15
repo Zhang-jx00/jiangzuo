@@ -1394,6 +1394,18 @@ class TestAuditRoleScope(unittest.TestCase):
                             "被压掉的必须留痕：%s" % data["stats"])
             self.assertIn(u"不适用", stdout)
 
+    def test_setup_py_only_library_is_still_judged_library(self):
+        """`repo_role` 的 has_packaging 里写了 setup.py，但地图的 manifests 只收
+        project_scan.MANIFESTS（不含 setup.py）——两边的名单不一致，
+        只用 setup.py 打包的老库（现实里很常见）会被判成 app。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "setup.py",
+                        "from setuptools import setup\nsetup(name=\"mylib\")\n")
+            self._write(tmp, "src/mylib/config.py", self.DEBUG_LIB)
+            data, _ = self._scan(tmp, "setuponly")
+            self.assertEqual("library", data["stats"]["repo_role"],
+                             "setup.py 也算打包清单：%s" % data["stats"].get("repo_role"))
+
     def test_app_repo_still_reports_the_same_pattern(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write(tmp, "app.py", "from flask import Flask\napp = Flask(__name__)\n"
@@ -1798,6 +1810,183 @@ class TestAuditContext(unittest.TestCase):
                                                         "context_excluded")})
             self.assertLessEqual(s["conclusions"], s["findings"],
                                  "结论数不可能大于总数")
+
+
+class TestAuditRuleContext(unittest.TestCase):
+    """C2（v0.31 结论区里剩下的就是这五发）：规则要能区分"角色 × 语境"。
+
+    真实形状取自 flask / requests（逐行读过，不是我编的）：
+      * flask/src/flask/cli.py:252 `raise NoAppException(f"…{traceback.format_exc()}")`
+      * cli.py:653 `click.secho(f"{traceback.format_exc()}\\n", err=True, fg="red")`
+      * cli.py:959 `traceback.print_exc()`（reloader 分支）
+      —— 都在**没有任何路由的文件**里，输出目标是控制台/异常消息，不是 HTTP 响应体。
+      * requests/src/requests/adapters.py:99 在 `def _urllib3_request_context(request, verify, …)`
+        里 `if verify is False: cert_reqs = "CERT_NONE"`
+      * adapters.py:344 在 `def cert_verify(self, conn, url, verify, cert)` 的 else 分支
+        —— 库的职责就是**实现调用方的 verify 选项**，实现了不等于有漏洞。
+    两半都必须断言：应用的 `verify=False`、路由文件里的 traceback 回显照报。
+    """
+
+    APP_ROUTE = ("from flask import Flask\napp = Flask(__name__)\n\n"
+                 "@app.route(\"/u\")\ndef u():\n    return \"ok\"\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_r_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_routeless_console_error_output_is_tagged_console(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py", self.APP_ROUTE)
+            self._write(tmp, "mycli.py",
+                        "import click\nimport traceback\n\n\n"
+                        "def load():\n"
+                        "    try:\n"
+                        "        raise ValueError(\"x\")\n"
+                        "    except Exception:\n"
+                        "        click.secho(f\"{traceback.format_exc()}\\n\", err=True)\n")
+            data, _ = self._scan(tmp, "cli")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-ERRINFO-001"]
+            self.assertEqual(1, len(hit), "CLI 里的堆栈要检出：见 %s"
+                             % [f["rule_id"] for f in data["findings"]])
+            self.assertEqual("console", hit[0]["context"],
+                             "无路由文件里的控制台输出不该算对外泄露")
+            self.assertIn("路由", hit[0]["context_reason"])
+
+    def test_raise_with_traceback_in_routeless_file_is_also_console(self):
+        """cli.py:252 那一发没有 print/secho 标记，是 `raise X(f"…{format_exc()}")`。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py", self.APP_ROUTE)
+            self._write(tmp, "tools/loader.py",
+                        "import traceback\n\n\n"
+                        "class NoAppException(Exception):\n    pass\n\n\n"
+                        "def import_app(name):\n"
+                        "    try:\n"
+                        "        raise ImportError(name)\n"
+                        "    except ImportError:\n"
+                        "        raise NoAppException(f\"raised: {traceback.format_exc()}\")\n")
+            data, _ = self._scan(tmp, "raise")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-ERRINFO-001"]
+            self.assertEqual(1, len(hit), "检出本身要在：见 %s"
+                             % [f["rule_id"] for f in data["findings"]])
+            self.assertEqual("console", hit[0]["context"])
+
+    def test_traceback_inside_route_file_stays_a_conclusion(self):
+        """反面半句：同一个写法长在**有路由**的文件里就照报——只认语境不认文件名。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py",
+                        "from flask import Flask\nimport traceback\n"
+                        "app = Flask(__name__)\n\n"
+                        "@app.route(\"/dbg\")\ndef dbg():\n"
+                        "    traceback.print_exc()\n"
+                        "    return \"x\"\n")
+            data, _ = self._scan(tmp, "inroute")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-ERRINFO-001"]
+            self.assertEqual(1, len(hit))
+            self.assertIsNone(hit[0].get("context"),
+                              "路由文件里的堆栈输出不能被另计")
+
+    def test_library_verify_option_implementation_is_tagged_feature(self):
+        lib = ("def _tls_context(request, verify, client_cert):\n"
+               "    cert_reqs = \"CERT_REQUIRED\"\n"
+               "    if verify is False:\n"
+               "        cert_reqs = \"CERT_NONE\"\n"
+               "    return cert_reqs\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "setup.py", "from setuptools import setup\nsetup(name=\"x\")\n")
+            self._write(tmp, "src/x/adapters.py", lib)
+            data, _ = self._scan(tmp, "lib")
+            self.assertEqual("library", data["stats"].get("repo_role"),
+                             "夹具应判成库，否则这测的是别的条件")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-TLS-001"]
+            self.assertEqual(1, len(hit), "TLS 命中要在：见 %s"
+                             % [f["rule_id"] for f in data["findings"]])
+            self.assertEqual("library_feature", hit[0]["context"],
+                             "库实现 verify 选项不是漏洞")
+            self.assertEqual(0, data["stats"]["conclusions"])
+
+    def test_hardcoded_disable_in_library_and_app_usage_still_reported(self):
+        """两半的反面：库里**没有** verify 形参也能关掉校验＝写死的默认值，照报；
+        应用仓库里 `verify=False` 是调用方的决定，也照报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "setup.py", "from setuptools import setup\nsetup(name=\"x\")\n")
+            self._write(tmp, "src/x/pool.py",
+                        "def make_conn(conn):\n"
+                        "    conn.cert_reqs = \"CERT_NONE\"\n")
+            data, _ = self._scan(tmp, "hard")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-TLS-001"]
+            self.assertEqual(1, len(hit))
+            self.assertIsNone(hit[0].get("context"),
+                              "没有 opt-out 形参就是写死的不安全默认，必须算结论")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py",
+                        "from flask import Flask\nimport requests\n"
+                        "app = Flask(__name__)\n\n"
+                        "@app.route(\"/f\")\ndef f():\n"
+                        "    return requests.get(\"https://x\", verify=False).text\n")
+            data, _ = self._scan(tmp, "app")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-TLS-001"]
+            self.assertEqual(1, len(hit))
+            self.assertIsNone(hit[0].get("context"),
+                              "应用里主动关掉校验就是结论")
+
+
+    def test_two_console_hits_in_same_file_both_tagged(self):
+        """行窗口缓存按文件键会读到"第一条命中的行号+4"就停，
+        同一文件里更靠后的命中就再也读不到上下文——flask/cli.py 实测三发只标上一发。
+        这条锁的是：缓存键必须带上要读到的位置。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py", self.APP_ROUTE)
+            body = []
+            for i in range(4):
+                # 每发的 sink_text 要不同：指纹是 (规则, 文件, 命中行文本)，
+                # 四行一模一样的话会被去重成一条，测不到"靠后的那一发"。
+                body.append("    try:\n        raise ValueError(\"x%d\")\n"
+                            "    except Exception:\n"
+                            "        click.secho(f\"step%d {traceback.format_exc()}\\n\", err=True)\n"
+                            % (i, i))
+            self._write(tmp, "mycli.py",
+                        "import click\nimport traceback\n\n\n"
+                        "def load():\n" + "\n".join(body))
+            data, _ = self._scan(tmp, "two")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-ERRINFO-001"]
+            self.assertGreaterEqual(len(hit), 3, "夹具要造出多发命中：%s"
+                                    % [(f["rule_id"], f["line"]) for f in data["findings"]])
+            untagged = [f for f in hit if f.get("context") != "console"]
+            self.assertEqual([], untagged,
+                             "同一文件里靠后的控制台命中不能被漏掉：%s"
+                             % [(f["line"], f.get("context")) for f in untagged])
+
+
+    def test_routeless_file_with_real_response_leak_stays_reported(self):
+        """另一半条件：「文件没路由」单独不够，**命中形状**也得是控制台/raise。
+        服务层把异常文本 return 出去，最终会进响应体——这种不能被另计掉。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "webapp.py", self.APP_ROUTE)
+            self._write(tmp, "services/report.py",
+                        "import sqlite3\n\n\n"
+                        "def rows(db, key):\n"
+                        "    con = sqlite3.connect(db)\n"
+                        "    try:\n"
+                        "        return con.execute(\"SELECT * FROM t WHERE k=\" + key).fetchall()\n"
+                        "    except Exception as e:\n"
+                        "        return \"query failed: \" + str(e) + sql\n")
+            data, _ = self._scan(tmp, "shape")
+            hit = [f for f in data["findings"] if f["rule_id"] == "JZ-ERRINFO-001"]
+            self.assertEqual(1, len(hit), "检出要在：见 %s"
+                             % [(f["rule_id"], f["file"]) for f in data["findings"]])
+            self.assertIsNone(hit[0].get("context"),
+                              "return 出去的错误文本不是控制台输出，必须算结论")
 
 
 if __name__ == "__main__":
