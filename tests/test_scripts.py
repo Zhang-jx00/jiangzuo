@@ -517,7 +517,10 @@ class TestRouting(unittest.TestCase):
              ("配色视觉排版走查", "ui-design"),
              ("整个项目有没有安全漏洞", "security-audit"),
              ("全项目体检出报告", "security-audit"),
-             ("依赖漏洞排序", "security-audit")]
+             ("依赖漏洞排序", "security-audit"),
+             # E2 拆册：新分册必须被自然短语够得着（否则登记了词表也等于没有），
+             # 而"给技能加规则删规则"仍归 self-evolution——两条边界都用测试钉住。
+             ("审计规则没生效排查", "audit-rule-authoring")]
 
     def test_natural_phrases_route_top1(self):
         misses = []

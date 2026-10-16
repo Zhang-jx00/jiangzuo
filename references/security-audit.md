@@ -45,20 +45,17 @@ python <技能目录>/scripts/audit_scan.py <项目目录> \
     暂不修的进 `templates/tech-debt.md`；大仓用 `--cache DIR --incremental` 只重算变更文件
     及其调用链邻居（规则或解析器版本一变，缓存自动作废）。
 
-## 规则治理
+## 规则治理（改规则前先换那本分册）
 
-- 规则是数据：`scripts/audit-rules/*.json`，字段含 `kind`（taint/pattern/dependency/auth_gap）、
-  `severity`、`cwe`/`owasp`、`sinks`/`sources`/`sanitizers`/`unless_present`、`fix`、`retest`。
-- 加自己的规则：`--rules my-rules.json`（同 id 覆盖内置）；`python scripts/audit_rules.py --validate`
-  会检查字段完备性与**每条正则能否编译**，坏规则当场退出码 1。
-- 停用规则要有数据：`"enabled": false` + 在 `note` 里写实测误报数
-  （`JZ-HORZ-001` 就是这么停的：夹具上 4/4 全误报）。加回用 `--enable-all`。
-- 误报多时优先 `--ignore 'tests/fixtures/**'` 排除自造夹具，而不是急着删规则。
-- **source 键要列全**：`$_REQUEST`/`$_COOKIE` 与 `$_GET` 一样可控，只写 GET|POST 就漏整类流。
-  DVWA 命令注入先是"守卫误报撞对 sink"、收紧后归零，暴露的是缺键不是收紧过严。
-  **误报修掉后要回头看真阳有没有跟着掉**。
-- 净化名单也是数据：`is_numeric/intval` 对命令注入是有效收敛（DVWA 修复档就是四段数值校验
-  + 逐段重组），对 XSS 不是（`addslashes` 拦不住属性注入）——净化只服务于自己那一类。
+规则的字段、语言桶、"为什么会静默不生效"、加/停一条规则的六步与配套证据，都在
+**《规则治理与引擎成本》**分册里（路由表里"加规则 / 规则没生效 / 扫描变慢"那行）。
+本册只讲**用**链子的人必须知道的三条边界：
+
+- 规则是数据（`kind`/`severity`/`cwe`/`sinks`/`sources`/`sanitizers`/`unless_present`/`fix`/`retest`），
+  所以"这条规则报什么"是可查的，不用读引擎代码。
+- 停用的规则也带着理由与实测误报数留在库里；读结论时先看清它是否 `enabled: false`。
+- 净化名单只服务于自己那一类：`intval/is_numeric` 对命令注入是收敛，对 XSS 不是。
+
 
 ## 验收怎么读（`evals/audit-acceptance.md`）
 
@@ -93,36 +90,18 @@ python <技能目录>/scripts/audit_scan.py <项目目录> \
   （requests 的 `CERT_NONE` 长在 `def cert_verify(self, conn, url, verify, cert)` 里＝实现调用方的选项，
   **应用**里 `requests.get(url, verify=False)` 不享受这条）。
 
-## 性能与占用（这一层的成本从哪来）
+## 性能与占用（谁该付成本）
 
-链子是**分层的**，每层只干自己那件事，贵层由便宜层门控——这是它能扫大仓的原因：
+分层成本表、门控 seed 只能取 sink、"别拿本机计时当复杂度证据"、正则复杂度时限锁，
+都在**《规则治理与引擎成本》**分册里。用链子的人只需要这三条：
 
-| 层 | 干什么 | 成本口径 |
-|---|---|---|
-| 索引 | 一次打开算内容 sha1 ＋二进制探测 | 与文件数线性 |
-| 地图 | 语言/入口/路由/依赖 | 与文件数线性（只扫清单与源码行） |
-| 粗筛 | 按语言分桶匹配 sink/source | **不相关语言的模式一条都不碰；该语言无相关模式则文件都不打开** |
-| 深挖 | 只对候选文件做邻近行核 | 与候选数相关 |
-| 数据流 | 函数体＋跨文件传参 | **只解析「候选 ∪ 被候选调用的定义文件」** |
-| 验证 | 重新打开文件核五项 | 与发现数相关 |
+- 大仓先 `audit_index.py` 出清单存盘，再 `audit_scan.py --index 清单.json` 复用；
+  续扫用 `--cache DIR --incremental`（规则或解析器一变，整份缓存自动作废）。
+- 复跑基准：`python evals/audit-fixtures/bench.py --workdir ../eval-runs/bench --files 1500 --repeat 3`，
+  **安静机读数才可比**——与扫描并发时同一份代码会读到 +30%。
+- 预算要定在"当前能过、回退能拦"的位置：常年红的闸等于没有闸
+  （`bench.py` 的默认预算曾经从有实测起就没达到过，等于给所有人教"无视红灯"）。
 
-三条实测教训（写在这里免得后人重犯）：
-
-1. **门控的 seed 必须是 sink 命中**。早期把 source 命中也当候选，
-   而 `payload`、`body` 这类裸词几乎每份代码都有 → 1500 个文件全成候选，
-   门控形同虚设。source 模式要带形态（`request.` / `req.` / `$_` / `params[`）。
-2. **别拿本机计时当复杂度证据**。同一份代码单跑一遍全阶段统一慢 3 倍，
-   其中一层我根本没改——那是环境噪声。所以回归锁的是**结构量**
-   （`graph_parsed_files` 只随候选数变，仓库×4 它不变），不是毫秒数。
-   毫秒预算只在 `bench.py` 里当人工参考。
-3. **规则里的正则是可执行代码**（v0.33 实测）。一条 `[^;]*(?:A[^;]*<|<[^;]*A)` 失配时
-   逐起点重扫＝O(n²)：600KB 行跑 106 秒，而扫描路径把单行截到 4096 字节，本机永远看不出来。
-   判据是 `TestAuditPatternCost`——每条规则的每个 pattern 都要吃 540K 对抗行且不超 500 ms，
-   **一种形状不够**：锚点集中在末尾与锚点铺满全行是两种复杂度，各测一次才拦得住。
-
-复跑基准：`python evals/audit-fixtures/bench.py --workdir ../eval-runs/bench --files 1500 --repeat 2`。
-大仓建议：先 `audit_index.py` 出清单存盘，再 `audit_scan.py --index 清单.json` 复用；
-续扫用 `--cache DIR --incremental`（只重算变更文件，规则或解析器一变整份缓存作废）。
 
 ## 误报怎么办：豁免是出口，不是静音键
 

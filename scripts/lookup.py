@@ -42,6 +42,7 @@ BOOKLET_ALIASES = {
     "references/database.md": "数据库 表 迁移 SQL",
     "references/security.md": "安全 越权 注入 密钥 权限 鉴权",
     "references/security-audit.md": "审计 体检 全项目 整个项目 项目审计 安全审计 漏洞审计 代码审计 扫描 SARIF 污点 调用图 依赖漏洞 检出率 误报",
+    "references/audit-rule-authoring.md": "审计规则 扫描规则 检出规则 规则没生效 规则不生效 静默遮蔽 撞名 语言桶 掩码行 正则编译 对抗行 时限锁 分母自陈 变异校准 成本口径 缓存作废",
     "references/debugging.md": "调试 bug 报错 排查 根因",
     "references/incident.md": "事故 线上 止血 回滚",
     "references/testing.md": "测试 单元 集成 断言 金字塔 覆盖率 分层",
