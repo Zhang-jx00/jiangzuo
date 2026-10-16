@@ -29,6 +29,7 @@ import argparse
 import io
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -83,6 +84,53 @@ def parse_frontmatter(text):
         else:
             current = None
     return meta, lines[end + 1:]
+
+
+def check_changelog_dates(skill_dir, cl_text):
+    """条目日期必须能在 git 里找到该版本号落笔的那一天。
+    2026-10-16 复核实测：33 条里有 8 条与提交日期差一天（0.23–0.29 写 10-14、提交在 10-15；
+    0.6.0 写 10-05、提交 10-06）——都是"活干过午夜"留下的。"晚于今天就报错"那道闸
+    拦不住这种差一天，所以反向也要有判据。
+    只核对提交信息里写了 v<版本号> 的版本；没写的（纯文档轮、合并提交）跳过——
+    判据不能假定每个仓库都用同一种提交习惯，否则校验器会把自己锁死。"""
+    entries = re.findall(
+        r"^##\s*\[?(\d+\.\d+\.\d+)\]?\s*[-–—]?\s*(\d{4}-\d{2}-\d{2})", cl_text, re.M)
+    if not entries:
+        return
+    try:
+        proc = subprocess.Popen(
+            ["git", "log", "--pretty=%ad|%s", "--date=short"], cwd=skill_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        out = proc.communicate(timeout=30)[0].decode("utf-8", "replace")
+        if proc.returncode != 0:
+            info("CHANGELOG 日期未与 git 核对（这里不是 git 仓库）")
+            return
+    except Exception:
+        info("CHANGELOG 日期未与 git 核对（git 不可用）")
+        return
+    by_ver = {}
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        day, subj = line.split("|", 1)
+        m = re.search(r"v(\d+\.\d+\.\d+)", subj)
+        if m:
+            by_ver.setdefault(m.group(1), set()).add(day)
+    bad, checked, skipped = [], 0, 0
+    for ver, day in entries:
+        days = by_ver.get(ver)
+        if not days:
+            skipped += 1
+            continue
+        checked += 1
+        if day not in days:
+            bad.append("%s 写 %s，git 里是 %s" % (ver, day, "/".join(sorted(days))))
+    if bad:
+        err("CHANGELOG 有 %d 条日期不在该版本的 git 提交日期里：%s ——条目日期只取该版本号"
+            "落笔那天，跨午夜就把条目跟着改到实际那天" % (len(bad), "；".join(bad)))
+    else:
+        info("CHANGELOG 日期与 git 提交日期一致（核对 %d 条，跳过 %d 条提交信息未带版本号）"
+             % (checked, skipped))
 
 
 def check_frontmatter(skill_dir, text):
@@ -389,6 +437,7 @@ def main():
                              % (version, m.group(1)))
                     elif m:
                         info("metadata.version 与 CHANGELOG 一致（%s ✓）" % version)
+                    check_changelog_dates(skill_dir, cl)
             if os.path.isdir(os.path.join(skill_dir, "evals")):
                 info("含 evals/ 评测集 ✓")
             refs = check_refs(skill_dir, text)

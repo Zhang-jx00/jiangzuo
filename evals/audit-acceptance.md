@@ -302,8 +302,8 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
 
 | 闸门 | 命令 | 本轮实测 |
 |---|---|---|
-| 回归 | `python -m unittest discover -s tests` | **121 tests OK**（89.8s，无 ResourceWarning） |
-| 结构 | `python scripts/validate_skill.py` | 12 信息 / 0 警告 / 0 错误；正文 ~5000 tokens（预算 5000 ✓） |
+| 回归 | `python -m unittest discover -s tests` | **123 tests OK**（84.3s，无 ResourceWarning） |
+| 结构 | `python scripts/validate_skill.py` | 13 信息 / 0 警告 / 0 错误；正文 ~5000 tokens（预算 5000 ✓） |
 | 变更自查 | `python scripts/preflight.py` | `RESULT: PASS（0 发现）` |
 | 交付闸门 | `python scripts/ship_check.py --level L1` | `SHIP-OK`（6 通过 / 0 警告 / 0 未过） |
 | 规则校验 | `python scripts/audit_rules.py --validate` | 31 条 RULES-OK，`rules_version=79133eec5b23`，**stderr 干净** |
@@ -324,6 +324,12 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   这条属于"数字/时间戳只能从真实输出抄"那类纪律的**执行漏洞**：纪律写在长期记忆和分册里，
   判据没落地，所以照样复发。现在 `validate_skill.py` 有判据了（晚于今天就 err），
   并用真实 CHANGELOG 复现过一次当场报错，另做两个变异校准（放行 / 把今天也算未来）都是红。
+- **第五条是第二条的反方向**：装上"日期不许来自未来"之后，再拿"日期必须对得上 git 提交日期"量一次，
+  本仓库当场露出 **8 条差一天**（0.23–0.29 写 10-14、提交在 10-15；0.6.0 写 10-05、提交 10-06）。
+  新增 `check_changelog_dates()`：条目日期必须落在该版本号在 `git log` 主题里出现的那些天内；
+  主题里没写版本号的条目**跳过**（判据不能假定所有仓库同一种提交习惯，否则把自己锁死）。
+  8 条已改齐并在 CHANGELOG 头部写明约定。锁的夹具用**过去的固定日期**——
+  不然会先被"未来日期"那道闸拦掉，测不到这条本身；两个变异（放行 / 核对到就判错）都红。
 - **捞到的第三条在自家统计字段**：本仓库自扫报 `invalid_suppressions = 12`，
   而全仓实际只有 1 条无效豁免标记。根因是 `apply_suppressions()` 里
   `invalid += inv` 写在**逐条发现**的循环体上 → 同一文件的标记被该文件的发现条数重复累加。

@@ -103,6 +103,60 @@ class TestValidate(unittest.TestCase):
             self.assertEqual(ok.returncode, 0, ok.stdout)
             self.assertNotIn(u"未来日期", ok.stdout)
 
+    def test_validate_cross_checks_changelog_date_against_git(self):
+        """条目日期必须能在 git 里找到落笔那天。
+        复核时实测有 8 条对不上（0.23–0.29 写 10-14、提交在 10-15；0.6.0 写 10-05、提交 10-06），
+        而"晚于今天就报错"那道闸完全拦不住这种"差一天"的错——方向相反也要有判据。
+        规则：条目日期 ∈ 该版本号在 git 提交信息里出现的那些提交日期集合；
+        没有对应提交（纯文档轮、没写版本号）就不判，别把校验器锁死在理想仓库上。
+        夹具用**过去的固定日期**：否则会被"未来日期"那道闸先拦掉，测不到这条本身。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*a):
+                r = subprocess.run(["git"] + list(a), cwd=tmp, timeout=60,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertEqual(r.returncode, 0, r.stdout.decode("utf-8", "replace"))
+
+            fm = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.2.0\n---\n"
+                  u"正文一句。\n")
+            def put(rel, text):
+                with io.open(os.path.join(tmp, rel), "w",
+                             encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+
+            put("SKILL.md", fm)
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "test")
+            # 用固定时间戳造两笔提交：v0.1.0 在 01-01，v0.2.0 在 01-03
+            env = dict(os.environ,
+                       GIT_AUTHOR_DATE="2026-01-01T10:00:00 +0800",
+                       GIT_COMMITTER_DATE="2026-01-01T10:00:00 +0800")
+
+            def commit_with(subject, date):
+                d = dict(env, GIT_AUTHOR_DATE=date + "T10:00:00 +0800",
+                         GIT_COMMITTER_DATE=date + "T10:00:00 +0800")
+                p = subprocess.Popen(["git", "commit", "-q", "--allow-empty", "-m", subject],
+                                     cwd=tmp, env=d, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT)
+                out, _ = p.communicate(timeout=60)
+                self.assertEqual(p.returncode, 0, out.decode("utf-8", "replace"))
+
+            commit_with("feat: v0.1.0 demo", "2026-01-01")
+            commit_with("feat: v0.2.0 demo", "2026-01-03")
+            # 红：v0.2.0 写成 01-02（提交日期集合里没有这一天）
+            put("CHANGELOG.md", u"# 更新日志\n\n## [0.2.0] - 2026-01-02\n\n内容。\n\n"
+                                u"## [0.1.0] - 2026-01-01\n\n内容。\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"条目日期与 git 不符却放行：%s" % r.stdout)
+            self.assertIn(u"git 提交日期", r.stdout)
+            self.assertIn(u"0.2.0", r.stdout)
+            # 绿：改回提交那天
+            put("CHANGELOG.md", u"# 更新日志\n\n## [0.2.0] - 2026-01-03\n\n内容。\n\n"
+                                u"## [0.1.0] - 2026-01-01\n\n内容。\n")
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
     def test_entry_keeps_iron_law_scope_and_gate(self):
         """入口必须留着这两件行为判据（B6 加的），删掉就该红：
         ① 铁律的**范围声明**（同义改写与暗示同样违规）；
