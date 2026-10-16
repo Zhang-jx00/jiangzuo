@@ -7,14 +7,19 @@
 
 校验项：
   1. SKILL.md 存在且 frontmatter 可解析，name/description 必填
-  2. name 规范（≤64 字符，建议小写 kebab-case）；description ≤1024 字符
-  3. SKILL.md 正文行数 ≤500（超限降级为警告）
+  2. name 规范（≤64 字符，建议小写 kebab-case）；description ≤1024 字符；
+     清单 entry（description + when_to_use）≤299 字符可见预算
+  3. SKILL.md 正文行数 ≤500；正文 token ≤5000（超预算直接 err——先删再加）
   4. 正文中引用的 references/ templates/ scripts/ 文件必须存在（路径含反斜杠即报错）
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
-  7. README 声明的脚本/模板/分册数量与入口行数与磁盘实物一致（防文档滞后）
+  7. README 声明的脚本/模板/分册数量、入口行数、规则条数与磁盘实物一致（防文档滞后）
   8. 每本分册都登记在 lookup.py 的 BOOKLET_ALIASES 路由词表里（防检索层漏配）
-  7. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
+  9. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
+ 10. metadata.version 与 CHANGELOG 最新条目一致；CHANGELOG 条目日期不许晚于今天
+ 11. CHANGELOG 条目日期必须能在 git 里找到该版本号落笔那天（跨午夜要跟着改）
+ 12. 表格行头不许被吃（少开头的 `| ` 却仍是 `a | b` 形状 → err）
+ 13. 文档里"上表 N 条"这类声明的条数要与表里实际数据行数对上（单表文件才判）
 
 会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
 不会做：内容质量与触发率——那要靠 evals/trigger-tests.md 与 red-tests.md 实测。
@@ -430,6 +435,66 @@ def check_lookup_aliases(skill_dir):
         info("分册全部登记进 lookup 路由词表 ✓")
 
 
+def check_md_tables(skill_dir):
+    """两条文档结构判据（都是我自己踩出来的）：
+    ① **表格行头不许被吃**——插行时拿下一行的行头当锚点又忘了写回，
+       结果那一行还是 `a | b | c` 的形状、只是开头少了 `| `；Markdown 会把它当普通段落，
+       人眼扫过去常常看不见。这个毛病在记忆里写过四次，2026-10-16 又犯一次，所以变成判据。
+       只认"**紧邻表格行的下一行**长得像表格行却没有行头"，避免把正文里的 `a | b` 误伤。
+    ② **"上表 N 条"要数得出 N**——账本条数我手抄错过一次（写 27、实 28）。
+       只在"该文件恰好一张表"时判；多表文件不猜形状。"""
+    import glob
+    bad = []
+    scanned = 0
+    for path in sorted(glob.glob(os.path.join(skill_dir, "**", "*.md"), recursive=True)):
+        norm = os.path.abspath(path)
+        if (os.sep + ".git" + os.sep) in norm or "__pycache__" in norm:
+            continue
+        rel = os.path.relpath(path, skill_dir).replace(os.sep, "/")
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        scanned += 1
+        fence = False
+        prev_row = False
+        blocks = []            # 每张表一个元素：该表的总行数（含表头与分隔行）
+        for i, line in enumerate(lines, 1):
+            st = line.strip()
+            if st.startswith("```"):
+                fence = not fence
+                prev_row = False
+                continue
+            if fence:
+                prev_row = False
+                continue
+            if st.startswith("|"):
+                if not st.endswith("|"):
+                    bad.append(u"%s:%d 表格行缺行尾 `|`：%s" % (rel, i, st[:40]))
+                if not prev_row:
+                    blocks.append(0)
+                blocks[-1] += 1
+                prev_row = True
+                continue
+            if prev_row and st.count("|") >= 2:
+                bad.append(u"%s:%d 表格行**行头被吃**（少了开头的 `| `）：%s"
+                           % (rel, i, st[:40]))
+            if st:
+                prev_row = False
+        # ② 声明条数对账：只在"该文件恰好一张表"时判，多表文件不猜形状
+        if len(blocks) == 1:
+            data_rows = max(0, blocks[0] - 2)      # 去掉表头与分隔行
+            for i, line in enumerate(lines, 1):
+                m = re.search(u"上表\\s*(\\d+)\\s*条", line)
+                if m and int(m.group(1)) != data_rows:
+                    bad.append(u"%s:%d 声明「上表 %s 条」，表里实际 %d 条数据行——"
+                               u"条数要数出来，别手抄"
+                               % (rel, i, m.group(1), data_rows))
+    if bad:
+        for msg in bad:
+            err(msg)
+    elif scanned:
+        info("文档结构核对通过（%d 个 .md：表格行头完整、声明条数与实物一致）" % scanned)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -501,6 +566,7 @@ def main():
             check_booklet_contract(skill_dir)
             check_readme_counts(skill_dir)
             check_lookup_aliases(skill_dir)
+            check_md_tables(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:

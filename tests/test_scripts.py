@@ -231,6 +231,60 @@ class TestValidate(unittest.TestCase):
             ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
             self.assertEqual(ok.returncode, 0, ok.stdout)
 
+    def test_validate_flags_eaten_table_row_head(self):
+        """表格行的行头被吃掉，必须当场红——这条我在 2026-10-16 又犯了一次
+        （往账本插行时拿下一行的行头当锚点、没写回，E1 那条的行头没了）。
+        症状很特征：那行仍然是 `a | b | c` 的形状，只是开头少了 `| `。
+        判据不能只看"开头是 | 的行"，否则整行会被当成普通段落放过。"""
+        head = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+                u"正文一句。\n")
+        good = (u"# 台账\n\n| 日期 | 结论 |\n|---|---|\n"
+                u"| 2026-01-01 | KEEP |\n| 2026-01-02 | KEEP |\n")
+        broken = (u"# 台账\n\n| 日期 | 结论 |\n|---|---|\n"
+                  u"| 2026-01-01 | KEEP |\n：行头被吃掉的一行 | KEEP |\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "docs"))
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(head)
+            with io.open(os.path.join(tmp, "docs", "ledger.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(broken)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"行头被吃却没拦住：%s" % r.stdout)
+            self.assertIn(u"行头", r.stdout)
+            with io.open(os.path.join(tmp, "docs", "ledger.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(good)
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
+    def test_validate_flags_declared_table_count_mismatch(self):
+        """文档里写"上表 N 条"就必须真数得出 N——账本这条我手抄错过一次（27 vs 28）。
+        只在"该文件只有一张表"时判，多表文件不猜（判据别假定数据形状）。"""
+        head = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+                u"正文一句。\n")
+        body = (u"# 台账\n\n| 日期 | 结论 |\n|---|---|\n"
+                u"| 2026-01-01 | KEEP |\n| 2026-01-02 | KEEP |\n\n- 上表 %s 条变异台账\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "docs"))
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(head)
+            with io.open(os.path.join(tmp, "docs", "ledger.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body % u"9")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"声明条数与表格实际行数不符却没红：%s" % r.stdout)
+            self.assertIn(u"条数", r.stdout)
+            with io.open(os.path.join(tmp, "docs", "ledger.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body % u"2")
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
     def test_entry_keeps_iron_law_scope_and_gate(self):
         """入口必须留着这两件行为判据（B6 加的），删掉就该红：
         ① 铁律的**范围声明**（同义改写与暗示同样违规）；
