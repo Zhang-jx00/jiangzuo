@@ -75,7 +75,7 @@ jiangzuo/
 │   ├── audit_rules.py     # 审计链③：声明式规则引擎（加载/校验/合并，规则是数据）
 │   ├── audit_graph.py     # 审计链④：跨文件调用图 + source→sink 污点与可达性
 │   ├── audit_scan.py      # 审计链⑤：调度+独立验证+分级+Markdown/JSON/SARIF 2.1.0+增量缓存
-│   ├── audit-rules/       # 内置规则库：30 条注入/越权/密钥/弱加密/依赖建议
+│   ├── audit-rules/       # 内置规则库：34 条声明式规则（含 1 条数据停用）
 │   ├── auditlib.py        # 审计链共享库：忽略规则/哈希/流式读取/脱敏（被上面几个 import）
 │   ├── preflight.py       # 交付自检：密钥/调试残留/冲突标记/TODO/diff 统计
 │   ├── ship_check.py      # 交付闸门：测试+静态检查+报告主张与四问+残留+常驻标准，一条命令核完

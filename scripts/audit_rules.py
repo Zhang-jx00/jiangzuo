@@ -134,10 +134,13 @@ def load_rules(extra_paths=None, problems=None, include_disabled=False,
     soft_notes = []
     compiled = []
     sources = []
+    builtin_paths = set()
     if os.path.isdir(RULES_DIR):
         for fn in sorted(os.listdir(RULES_DIR)):
             if fn.endswith(".json"):
-                sources.append(os.path.join(RULES_DIR, fn))
+                p = os.path.join(RULES_DIR, fn)
+                sources.append(p)
+                builtin_paths.add(os.path.abspath(p))
     for path in (extra_paths or []):
         if os.path.isfile(path):
             sources.append(path)
@@ -145,6 +148,7 @@ def load_rules(extra_paths=None, problems=None, include_disabled=False,
             problems.append("用户规则文件不存在：%s" % path)
 
     raw_by_id = {}
+    origin = {}          # rid -> ("builtin" | "user", 来自哪个文件)
     order = []
     for path in sources:
         try:
@@ -162,14 +166,24 @@ def load_rules(extra_paths=None, problems=None, include_disabled=False,
             soft_notes.append(u"%s 未声明 schema（按宽松模式加载；建议补 "
                               u"\"schema\": \"%s\"）" % (path, SCHEMA))
         name = os.path.basename(path)
+        is_builtin = os.path.abspath(path) in builtin_paths
         for rule in data.get("rules") or []:
             rid = rule.get("id") or name
             if rid in raw_by_id:
-                # 去重：同 id 只保留一份，后到的（用户规则）胜出
+                prev_kind, prev_name = origin.get(rid, ("builtin", "?"))
+                if prev_kind == "builtin" and is_builtin:
+                    # 用户 --add 覆盖内置是同 id 定制的既有语义；
+                    # 但两份**内置**文件撞名会让其中一条整条静默失效
+                    # （E1 实拍：crypto.json 与 webapp.json 都写了 JZ-CRYPTO-001，
+                    # 新规则一条都没生效，表现却像"规则写错了没检出"）。
+                    problems.append(u"%s：内置规则 id %s 与 %s 重复——两份内置文件撞同 id，"
+                                    u"后加载的那条会静默覆盖前者；要么合并进同一条，要么换新 id"
+                                    % (name, rid, prev_name))
                 raw_by_id[rid] = (rule, name)
             else:
                 order.append(rid)
                 raw_by_id[rid] = (rule, name)
+            origin[rid] = ("builtin" if is_builtin else "user", name)
     if osv_paths:
         osv_rules, n_bad = load_osv(osv_paths)
         for rec in osv_rules:

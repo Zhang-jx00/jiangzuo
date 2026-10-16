@@ -36,7 +36,7 @@ CATEGORY = {
     "bac": ["JZ-HORZ-001", "JZ-AUTHGAP-001"],
     "brute": ["JZ-BRUTE-001"],
     "captcha": ["JZ-CAPTCHA-001"],
-    "cryptography": ["JZ-CRYPTO-001"],
+    "cryptography": ["JZ-CRYPTO-001", "JZ-CRYPTO-002", "JZ-CRYPTO-003"],
     "csp": ["JZ-XSS-001", "JZ-XSS-002"],
     "csrf": ["JZ-CSRF-001"],
     "exec": ["JZ-CMDI-001"],

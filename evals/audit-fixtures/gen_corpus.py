@@ -126,6 +126,30 @@ VULN = {
         "import hashlib\n\n\n"
         "def store(password):\n"
         "    return hashlib.md5(password.encode()).hexdigest()\n"),
+    # E1：DVWA 的 cryptography / javascript 两个模块逼出来的两条规则，语料侧也要有正反样本，
+    # 否则新规则只有单测与靶场两处证据，CI 里滑坡了没人知道。形状取自真实 DVWA 源码。
+    "vuln_php_ecb.php": (
+        "<?php\n"
+        "function enc($plaintext, $key) {\n"
+        "    return openssl_encrypt($plaintext, 'aes-128-ecb', $key, OPENSSL_RAW_DATA);\n"
+        "}\n"),
+    "vuln_php_xor.php": (
+        "<?php\n"
+        "function xor_this($cleartext, $key) {\n"
+        "    $outText = '';\n"
+        "    for ($i = 0; $i < strlen($cleartext);) {\n"
+        "        $outText .= $cleartext[$i] ^ $key[$i % strlen($key)];\n"
+        "    }\n"
+        "    return $outText;\n"
+        "}\n"),
+    "vuln_js_token.js": (
+        "function generate_token() {\n"
+        "    var phrase = document.getElementById('phrase').value;\n"
+        "    document.getElementById('token').value = md5(rot13(phrase));\n"
+        "}\n"),
+    "vuln_js_packed.js": (
+        "var table = ['token', 'value'];\n"
+        "eval(function (p, a, c, k, e, d) { return p; }('0|1', 2, 2, 'a|b'.split('|'), 0, {}));\n"),
 }
 
 # ---------------------------------------------------------------- 对照样本（must not find）
@@ -217,6 +241,21 @@ SAFE = {
         "$stmt = $pdo->prepare(\"SELECT * FROM posts WHERE id = ?\");\n"
         "$stmt->execute([$_GET[\"id\"]]);\n"
     ),
+    "safe_php_cipher.php": (
+        "<?php\n"
+        "$iv = random_bytes(12);\n"
+        "$ct = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv);\n"
+        "$box = sodium_crypto_secretbox($plaintext, $nonce, $key);\n"
+    ),
+    "safe_js_token.js": (
+        "fetch('/api/csrf').then(function (r) { return r.json(); }).then(function (d) {\n"
+        "    document.getElementById('token').value = d.csrf_token;\n"
+        "});\n"
+        "function render(name) {\n"
+        "    var out = '';\n"
+        "    for (var i = 0; i < name.length; i++) { out += name[i]; }\n"
+        "    return out;\n"
+        "}\n"),
     "manifest.txt": "本语料由 evals/audit-fixtures/gen_corpus.py 生成，答案见 expected.json\n",
 }
 
@@ -243,6 +282,13 @@ MUST_FIND = [
     ("vuln_java_sql.java", "JZ-SQLI-003", "createNativeQuery"),
     ("vuln_php_sql.php", "JZ-SQLI-003", "mysqli_query"),
     ("vuln_py_weak.py", "JZ-CRYPTO-001", "hashlib.md5"),
+    ("vuln_php_ecb.php", "JZ-CRYPTO-003", "'aes-128-ecb'"),
+    ("vuln_php_xor.php", "JZ-CRYPTO-003", "$outText .= $cleartext[$i] ^"),
+    ("vuln_js_token.js", "JZ-JSINSEC-001", "= md5(rot13(phrase))"),
+    ("vuln_js_packed.js", "JZ-JSINSEC-001", "eval(function ("),
+    # 打包器用的就是 eval —— JZ-CODE-001（动态执行）同行命中是真阳性，答案要跟着事实走，
+    # 不是把发现压掉。
+    ("vuln_js_packed.js", "JZ-CODE-001", "eval(function ("),
     ("requirements.txt", "JZ-DEP-002", "pyyaml==5.3"),
     ("requirements.txt", "JZ-DEP-005", "requests==2.28.1"),
 ]
@@ -263,6 +309,8 @@ MUST_NOT_FIND = [
     ("safe_js_xss.jsx", "JZ-XSS-001"),
     ("safe_java_sql.java", "JZ-SQLI-003"),
     ("safe_php_sql.php", "JZ-SQLI-003"),
+    ("safe_php_cipher.php", "JZ-CRYPTO-003"),
+    ("safe_js_token.js", "JZ-JSINSEC-001"),
 ]
 
 FILLER = (

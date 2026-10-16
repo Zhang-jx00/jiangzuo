@@ -182,6 +182,55 @@ class TestValidate(unittest.TestCase):
             ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
             self.assertEqual(ok.returncode, 0, ok.stdout)
 
+    def test_validate_flags_stale_rule_counts_in_readme(self):
+        """README 写死的规则条数也要有闸——E1 加了两条规则后才发现它写的是"30 条"，
+        实物已是 34 条（含 1 条数据停用）；这个数不在 validate 的计数核对里，没人报红。
+        同一条病根第三次复发：写死的数字没判据，改的时候没人提醒。"""
+        body = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+                u"正文一句。\n")
+        one = (u'{"id": "JZ-T-%d", "title": "t", "kind": "pattern", "severity": "high",'
+               u' "languages": ["python"], "cwe": ["CWE-1"], "sinks": [{"pattern": "x%d"}],'
+               u' "fix": "f", "retest": "r"}')
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_dir = os.path.join(tmp, "scripts", "audit-rules")
+            os.makedirs(rules_dir)
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            doc = (u'{"schema": "jiangzuo-audit-rules/1", "name": "t", "rules": [%s, %s, '
+                   u'{"id": "JZ-T-3", "title": "停用", "kind": "pattern", "severity": "low", '
+                   u'"enabled": false, "languages": ["python"], "cwe": ["CWE-1"], '
+                   u'"sinks": [{"pattern": "x3"}], "fix": "f", "retest": "r"}]}\n')
+            with io.open(os.path.join(rules_dir, "t.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(doc % (one % (1, 1), one % (2, 2)))
+            # 红：README 写 99 条 / 9 条停用，实物 3 条 / 1 条停用
+            with io.open(os.path.join(tmp, "README.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# demo\n\n内置规则库：99 条声明式规则（含 9 条数据停用）\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"README 规则条数写错却没拦住：%s" % r.stdout)
+            self.assertIn(u"规则条数", r.stdout)
+            # 两支各自都要有牙：只写错总条数（停用数写对）与只写错停用数（总条数写对）
+            # ——第一版校准暴露出"废掉总条数那一支测试照样绿"，因为两支共用一句报错。
+            for wrong_total, wrong_disabled, label in [
+                    (99, 1, u"总条数"), (3, 9, u"停用数")]:
+                with io.open(os.path.join(tmp, "README.md"), "w",
+                             encoding="utf-8", newline="\n") as f:
+                    f.write(u"# demo\n\n内置规则库：%d 条声明式规则（含 %d 条数据停用）\n"
+                            % (wrong_total, wrong_disabled))
+                one_side = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+                self.assertNotEqual(one_side.returncode, 0,
+                                    u"只写错%s那一支没被拦住：%s" % (label, one_side.stdout))
+                self.assertIn(u"规则条数", one_side.stdout)
+            # 绿：改成实物数
+            with io.open(os.path.join(tmp, "README.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# demo\n\n内置规则库：3 条声明式规则（含 1 条数据停用）\n")
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
     def test_entry_keeps_iron_law_scope_and_gate(self):
         """入口必须留着这两件行为判据（B6 加的），删掉就该红：
         ① 铁律的**范围声明**（同义改写与暗示同样违规）；
@@ -819,6 +868,39 @@ class TestAuditRules(unittest.TestCase):
                                       "sinks": [{"pattern": "(?i)foo = time()|bar"}],
                                       "fix": "f", "retest": "r"}]}, f, ensure_ascii=False)
             ok = self._run_rules("--validate", "--add", good)
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
+    def test_two_builtin_files_claiming_same_id_blocks(self):
+        """内置规则文件之间撞 id 必须报错，不能静默覆盖。
+        E1 实拍：我新增 crypto.json 时用了 JZ-CRYPTO-001，而 webapp.json 里早就有同 id 的
+        弱哈希规则——按文件名排序后者胜出，**我那条规则整条没生效**，
+        测试只表现为"规则没检出"，谁都不会想到是被同名规则遮蔽了。
+        用户文件（--add）覆盖内置同 id 是有意的定制，仍要放行——两半都测。"""
+        rule = (u'{"schema": "jiangzuo-audit-rules/1", "name": "%s", "rules": [%s]}')
+        one = (u'{"id": "JZ-DUP-001", "title": "%s", "kind": "pattern", "severity": "high",'
+               u' "languages": ["python"], "cwe": ["CWE-327"],'
+               u' "sinks": [{"pattern": "%s"}], "fix": "f", "retest": "r"}')
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "a.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(rule % ("a", one % ("甲写法", "alpha_marker")))
+            with io.open(os.path.join(tmp, "b.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(rule % ("b", one % ("乙写法", "beta_marker")))
+            r = self._run_rules("--validate", "--dir", tmp)
+            self.assertEqual(r.returncode, 1,
+                             u"两个内置文件撞 id 却放行：%s" % r.stdout)
+            self.assertIn("JZ-DUP-001", r.stdout)
+            self.assertIn(u"内置规则文件", r.stdout)
+            # 反面：只有一个文件声明该 id 时不该报
+            with io.open(os.path.join(tmp, "b.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(rule % ("b", one % ("乙写法", "beta_marker")))
+            with io.open(os.path.join(tmp, "a.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(rule % ("a", one % ("甲写法", "alpha_marker")))
+            os.remove(os.path.join(tmp, "b.json"))
+            ok = self._run_rules("--validate", "--dir", tmp)
             self.assertEqual(ok.returncode, 0, ok.stdout)
 
     def test_user_rule_overrides_same_id_without_dupes(self):
@@ -2391,6 +2473,115 @@ class TestAuditDvwaClasses(unittest.TestCase):
                          % [(f["line"],) for f in data["flows"]])
         self.assertGreaterEqual(data["stats"]["blocked_by_sanitizer"], 1,
                                 "净化要留痕，不能当没发生过")
+
+
+class TestAuditCryptoAndClient(unittest.TestCase):
+    """E1：DVWA 的 cryptography 与 javascript 两个模块长期 MISS，
+    分母是靶场自己给的（`dvwa_coverage.py` 的 CATEGORY 把 cryptography 的主类别规则
+    列为 JZ-CRYPTO-001/002/003、javascript 列为 JZ-JSINSEC-001/JZ-XSS-001）。
+
+    夹具形状**逐行取自真实 DVWA**（`vulnerabilities/cryptography/source/{low,medium}.php`、
+    `vulnerabilities/javascript/source/{low.php,high.js,medium.js}`），不是我编的：
+      * `openssl_encrypt($plaintext, 'aes-128-ecb', $key, OPENSSL_PKCS1_PADDING)`（ecb_attack.php:3）
+      * `$outText .= $cleartext[$i] ^ $key[$j];`（low.php:9 手写 XOR）
+      * `eval(function(d,e,f,g,h,i){…})` Dean-Edward 打包器（high.js 尾行）
+      * `document.getElementById("token").value = md5(rot13(phrase));`（low.php 前端算令牌）
+    每条都配**反面半句**，防止把"报得多"当"检得出"：
+    GCM/普通拼接/服务端下发的令牌都不许报。
+    """
+
+    def _findings(self, files):
+        root = tempfile.mkdtemp()
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        out = os.path.join(root, "_scan.json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [(x["rule_id"], x["file"], x["line"]) for x in data["findings"]]
+
+    def test_ecb_cipher_mode_is_flagged(self):
+        hits = self._findings({"app/crypto.php": (
+            "<?php\n"
+            "function enc($plaintext, $key) {\n"
+            "    $e = openssl_encrypt($plaintext, 'aes-128-ecb', $key, OPENSSL_PKCS1_PADDING);\n"
+            "    return $e;\n"
+            "}\n")})
+        self.assertTrue([h for h in hits if h[0] == "JZ-CRYPTO-003"],
+                        "ECB 密码模式没检出：%s" % hits)
+
+    def test_authenticated_cipher_mode_is_not_flagged(self):
+        hits = self._findings({"app/crypto.php": (
+            "<?php\n"
+            "$iv = random_bytes(12);\n"
+            "$e = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv);\n")})
+        self.assertEqual([], [h for h in hits if h[0] == "JZ-CRYPTO-003"],
+                          "GCM 是正确写法，不该被弱加密规则报出：%s" % hits)
+
+    def test_home_rolled_xor_cipher_is_flagged(self):
+        hits = self._findings({"vulnerabilities/cryptography/source/low.php": (
+            "<?php\n"
+            "function xor_this($cleartext, $key) {\n"
+            "    $outText = '';\n"
+            "    for($i=0; $i<strlen($cleartext);) {\n"
+            "        for($j=0; ($j<strlen($key) && $i<strlen($cleartext)); $j++,$i++) {\n"
+            "            $outText .= $cleartext[$i] ^ $key[$j];\n"
+            "        }\n"
+            "    }\n"
+            "    return $outText;\n"
+            "}\n")})
+        self.assertTrue([h for h in hits if h[0] == "JZ-CRYPTO-003"],
+                        "手写逐字符 XOR 没检出：%s" % hits)
+
+    def test_plain_string_concat_is_not_flagged(self):
+        hits = self._findings({"app/build.php": (
+            "<?php\n"
+            "$out = '';\n"
+            "for ($i = 0; $i < count($parts); $i++) {\n"
+            "    $out .= $parts[$i];\n"
+            "}\n")})
+        self.assertEqual([], [h for h in hits if h[0] == "JZ-CRYPTO-003"],
+                          "普通拼接不是加密，不该报：%s" % hits)
+
+    def test_packed_obfuscated_js_is_flagged(self):
+        hits = self._findings({"assets/high.js": (
+            "var a=['fromCharCode','token'];\n"
+            "eval(function(p,a,c,k,e,d){e=function(c){return c.toString(36)};"
+            "while(c--){d[c]=k[c]||c}return p.replace(/\\w+/g,f)}"
+            "('0|1',36,2,'token|value'.split('|'),0,{}))\n")})
+        self.assertTrue([h for h in hits if h[0] == "JZ-JSINSEC-001"],
+                        "打包/混淆的 eval 没检出：%s" % hits)
+
+    def test_ordinary_js_call_is_not_flagged(self):
+        hits = self._findings({"assets/app.js": (
+            "function doSomething(x) { return x + 1; }\n"
+            "doSomething(2);\n")})
+        self.assertEqual([], [h for h in hits if h[0] == "JZ-JSINSEC-001"],
+                          "普通 JS 不该被客户端安全规则报出：%s" % hits)
+
+    def test_client_side_token_hash_is_flagged(self):
+        hits = self._findings({"js/token.js": (
+            "function generate_token() {\n"
+            "    var phrase = document.getElementById('phrase').value;\n"
+            "    document.getElementById('token').value = md5(rot13(phrase));\n"
+            "}\n")})
+        self.assertTrue([h for h in hits if h[0] == "JZ-JSINSEC-001"],
+                        "前端自己算令牌没检出：%s" % hits)
+
+    def test_server_provided_token_assignment_is_not_flagged(self):
+        """正确的 CSRF 写法就是前端把服务端下发的值填进字段——不能因为"前端碰了 token"就报。"""
+        hits = self._findings({"js/token.js": (
+            "fetch('/csrf').then(function(r){ return r.json(); }).then(function(d) {\n"
+            "    document.getElementById('token').value = d.csrf_token;\n"
+            "});\n")})
+        self.assertEqual([], [h for h in hits if h[0] == "JZ-JSINSEC-001"],
+                          "服务端下发令牌是标准写法，不该报：%s" % hits)
 
 
 class TestAuditPatternCost(unittest.TestCase):

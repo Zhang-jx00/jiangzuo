@@ -27,6 +27,7 @@
 """
 import argparse
 import io
+import json
 import os
 import re
 import subprocess
@@ -317,6 +318,28 @@ def print_stats(skill_dir):
             print("  典型任务读取 1-3 本 ≈ %d-%d tokens" % (rows[0][1], sum(e for _, e in rows[:3])))
 
 
+def _count_builtin_rules(skill_dir):
+    """数 scripts/audit-rules/*.json 里的规则条目与其中 `enabled: false` 的条数。
+    返回 (总数, 停用数)；没有规则目录时返回 (None, None)——没有就不判，别把校验器锁死。"""
+    d = os.path.join(skill_dir, "scripts", "audit-rules")
+    if not os.path.isdir(d):
+        return None, None
+    total = disabled = 0
+    for fn in sorted(os.listdir(d)):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with io.open(os.path.join(d, fn), "r", encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            return None, None
+        for rule in doc.get("rules") or []:
+            total += 1
+            if rule.get("enabled") is False:
+                disabled += 1
+    return total, disabled
+
+
 def check_readme_counts(skill_dir):
     """README 声明的脚本/模板/分册数量必须与磁盘实物一致。
 
@@ -362,6 +385,25 @@ def check_readme_counts(skill_dir):
                     % (m.group(1), actual_lines))
             elif not bad:
                 info("README 入口行数与实物一致（SKILL.md %d 行 ✓）" % actual_lines)
+    # 规则条数：E1 加了两条规则后才发现 README 还写着"30 条"（实物 34）。
+    # 同一个病根第三次复发——写死的数字没有判据，改的人不会被告知。
+    m = re.search(u"内置规则库：(\\d+)\\s*条声明式规则(?:（含\\s*(\\d+)\\s*条数据停用）)?", text)
+    if m:
+        total, disabled = _count_builtin_rules(skill_dir)
+        if total is None:
+            info(u"README 规则条数未核对（这里没有 scripts/audit-rules/）")
+        else:
+            wrong = []
+            if int(m.group(1)) != total:
+                wrong.append(u"总条数写 %s、实际 %s" % (m.group(1), total))
+            if m.group(2) and int(m.group(2)) != disabled:
+                wrong.append(u"停用数写 %s、实际 %s" % (m.group(2), disabled))
+            if wrong:
+                err(u"README 规则条数与实物不符：%s——加/停规则时同步改 README"
+                    u"（判据：audit-rules/*.json 的条目数与其中 enabled:false 的条数）"
+                    % u"；".join(wrong))
+            else:
+                info(u"README 规则条数与实物一致（%d 条，停用 %d ✓）" % (total, disabled))
 
 
 def check_lookup_aliases(skill_dir):

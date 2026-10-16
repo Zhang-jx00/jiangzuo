@@ -1,0 +1,40 @@
+{
+ "schema": "jiangzuo-audit-rules/1",
+ "name": "crypto",
+ "rules": [
+  {
+   "id": "JZ-CRYPTO-003",
+   "title": "弱/自拼加密：ECB 模式或手写逐字符异或",
+   "kind": "pattern",
+   "severity": "high",
+   "confidence_base": 0.6,
+   "languages": ["php", "python", "javascript", "ruby"],
+   "cwe": ["CWE-327", "CWE-326"],
+   "owasp": ["A02:2021 加密失效"],
+   "sinks": [
+    {"pattern": "(?i)[\"'](?:[a-z0-9]+-)+ecb[\"']|\\bMCRYPT_MODE_ECB\\b"},
+    {"pattern": "\\.\\=\\s*\\$\\w+\\s*\\[\\s*\\$\\w+\\s*\\]\\s*\\^\\s*\\$\\w+\\s*\\["}
+   ],
+   "fix": "ECB 换成带认证的分组模式：PHP `openssl_encrypt($p,'aes-256-gcm',$k,OPENSSL_RAW_DATA,$iv)` 并校验 tag，或直接用 `sodium_crypto_secretbox`；Python 用 `cryptography.AESGCM`；JS 用 `crypto.subtle`。手写逐字符 `^` 拼接不是加密（无 IV、无填充校验、密钥循环复用），一律换成库；base64/rot13 只是编码，不是加密。",
+   "retest": "同一明文加密两次：密文不同才说明有 IV；相同明文块产生相同密文块 = ECB 特征，改完应不再相同。再验证认证标签：随手改一个字节，解密应报错而不是解出乱码。",
+   "notes": "真实形状取自 DVWA `vulnerabilities/cryptography/source/`（`openssl_encrypt(...,'aes-128-ecb',...)`、`$outText .= $cleartext[$i] ^ $key[$j];`）。反面夹具：`aes-256-gcm`、不带 `^` 的普通拼接不报。"
+  },
+  {
+   "id": "JZ-JSINSEC-001",
+   "title": "安全判定放在客户端：前端算令牌或跑打包混淆的代码",
+   "kind": "pattern",
+   "severity": "high",
+   "confidence_base": 0.55,
+   "languages": ["javascript", "typescript", "vue", "html"],
+   "cwe": ["CWE-602", "CWE-94"],
+   "owasp": ["A07:2021 认证失效"],
+   "sinks": [
+    {"pattern": "\\.value\\s*=\\s*(?:md5|sha1|sha256|rot13|btoa|atob)\\s*\\("},
+    {"pattern": "\\beval\\s*\\(\\s*(?:function|unescape|atob|decodeURIComponent)\\s*\\("}
+   ],
+   "fix": "令牌/校验搬到服务端签发并在服务端核对：CSRF/会话令牌由后端下发（前端只把服务端给的值填进字段，别自己 `md5(...)` 算）；打包混淆（`eval(function(p,a,c,k,e,d){...})`）既保护不了逻辑也不构成鉴权，去掉混淆层并把判定挪到后端，前端只做输入提示与体验。",
+   "retest": "绕过页面直接 `curl` 提交：不带前端算出的 token 也能通过 = 前端判定从来没被服务端要求过；改后应 4xx。再手改浏览器里的 token 值重放，服务端应拒绝。",
+   "notes": "真实形状取自 DVWA `vulnerabilities/javascript/source/`：`document.getElementById('token').value = md5(rot13(phrase))`、`high.js` 尾行的 Dean-Edward 打包器 `eval(function(d,e,f,g,h,i){...})`。反面夹具：`el.value = d.csrf_token`（服务端下发）不报。"
+  }
+ ]
+}
