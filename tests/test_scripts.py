@@ -2641,6 +2641,70 @@ class TestAuditCryptoAndClient(unittest.TestCase):
                           "服务端下发令牌是标准写法，不该报：%s" % hits)
 
 
+class TestAuditMemoryProfile(unittest.TestCase):
+    """E4：把"内存亚线性不平坦、残留点是 graph 保留函数体"这句含糊话换成实测数。
+
+    实测（同形状语料，全部文件都含 sink = 候选占满的最坏情况）：
+    1200 文件峰值 18.7 MB、4800 文件 74 MB，**严格线性 ~15.4 KB/文件（峰值口径）**；
+    建图结束后驻留 7.4 KB/文件（400 文件口径）。门控路径（干净仓库、无候选）
+    ×6.3 文件只 ×1.09 内存，已经是平的。
+    所以这里只留**一条有牙齿的锁**：图层产物不许携带源码。
+    曾经想加的第二条"驻留内存 KB/文件预算"被当场否掉——
+    给 1200 个函数各多存一份行元组，驻留只从 7.4 涨到 9.0 KB/文件
+    （字符串是共享的，涨的只是元组容器），阈值只能定在永远踩不到的位置。
+    **一条永远绿的锁比没有锁更坏**（它挂着 ✅ 还教人无视红灯），故删除并把结论写进文档。
+    """
+
+    FILE = (u'"""模块 %d。"""\nfrom flask import request\nimport os\n\n\n'
+            u'def load_%d(conn, limit):\n'
+            u'    rows = []\n'
+            u'    for i in range(limit):\n'
+            u'        value = conn.fetch(i)\n'
+            u'        if value is None:\n'
+            u'            continue\n'
+            u'        rows.append(value)\n'
+            u'    return rows\n\n\n'
+            u'def run_convert(fmt):\n'
+            u'    name = request.args["name"]\n'
+            u'    os.system("convert " + name + " out." + fmt)\n'
+            u'    return "ok"\n')
+
+    def _graph(self, n):
+        sys.path.insert(0, SCRIPTS)
+        import audit_graph
+        import auditlib
+        import audit_rules
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(n):
+                with io.open(os.path.join(root, "mod_%04d.py" % i), "w",
+                             encoding="utf-8", newline="\n") as f:
+                    f.write(self.FILE % (i, i))
+            index = auditlib.build_index(root)
+            rules, _p, _no, _o = audit_rules.load_rules([])
+            taint = [r for r in rules if r.get("kind") in ("taint", "pattern")]
+            cands = set(f["path"] for f in index["files"])
+            data = audit_graph.build_graph(root, index=index, rules=taint,
+                                           candidates=cands)
+            return data, len(index["files"])
+
+    def test_graph_payload_does_not_carry_function_bodies(self):
+        """产物的函数条目只能带廉价事实：name/file/lang/start/end/params/calls。
+        带上 body/lines 就等于把整仓源码塞进每次交付的 JSON 与 SARIF——
+        那既是体积炸弹，也让"报告可以直接外发"这句话失效。"""
+        data, n = self._graph(120)
+        funcs = data["functions"]
+        self.assertGreater(len(funcs), n, "夹具该产出多个函数，否则这条测不到东西")
+        self.assertTrue(data["flows"], "夹具必须真的产出污点流，否则锁是在空图上绿")
+        heavy = sorted({k for f in funcs for k in f
+                        if k in ("body", "lines", "source", "text", "code")})
+        self.assertEqual([], heavy,
+                         u"图层产物里出现了源码字段 %s——JSON/SARIF 会整份膨胀成仓库大小"
+                         % heavy)
+        self.assertTrue(all({"name", "file", "start", "end", "params", "calls"} <= set(f)
+                            for f in funcs),
+                        "函数条目该有的廉价事实不能少（少了图就不可解释）")
+
+
 class TestAuditPatternCost(unittest.TestCase):
     """C3 自纠：我写的一条 sink 是 O(n²) 的，600KB 行要跑 106 秒。
 
