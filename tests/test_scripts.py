@@ -73,6 +73,31 @@ class TestValidate(unittest.TestCase):
             self.assertIn("tokens", r.stdout)
             self.assertIn(u"超预算", r.stdout)
 
+    def test_validate_flags_stale_entry_line_count_in_readme(self):
+        """README 里写死的"SKILL.md 多少行"必须跟着实物走。
+        2026-10-16 复核实物撞出来：README 写 220 行，文件其实 211 行——
+        同一条"文档计数滞后"的坑，脚本/模板/分册三样早已有闸，唯独入口行数没有。"""
+        body = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
+                u"第一行正文。\n第二行正文。\n第三行正文。\n")
+        n_lines = len(body.splitlines())
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            with io.open(os.path.join(tmp, "README.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# demo\n\n- SKILL.md %d 行（上限 500）\n" % (n_lines + 9))
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"README 入口行数写错却没拦住：%s" % r.stdout)
+            self.assertIn(u"入口行数", r.stdout)
+            # 绿：改成真实行数
+            with io.open(os.path.join(tmp, "README.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# demo\n\n- SKILL.md %d 行（上限 500）\n" % n_lines)
+            ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertEqual(ok.returncode, 0, ok.stdout)
+
     def test_validate_flags_future_changelog_date(self):
         """CHANGELOG 的日期只能从真实日历抄。复核时发现四条写着"明天"——
         系统日期 2026-10-15，条目却是 2026-10-16，没有任何一道闸拦得住这种笔误。

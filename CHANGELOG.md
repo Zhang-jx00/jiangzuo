@@ -8,7 +8,7 @@
 
 ## [0.36.1] - 2026-10-16
 
-D4（复核轮）：**交付前复跑全套闸门时，规则校验器自己漏出来的一条废弃写法——顺手把它变成机器判据。**
+D4（复核轮）：**交付前把全套闸门重跑一遍，一次现形六条静默缺陷——每条都变成了会红的判据。**
 
 - **缺陷**：`JZ-WEAKID-001` 第 4 条 sink 写成 `A|(?i)B`（第二个 `(?i)` 在分支中间，v0.33.0 引入）。
   Python 对此只发 `DeprecationWarning`（"Flags not at the start of the expression"），
@@ -60,7 +60,12 @@ D4（复核轮）：**交付前复跑全套闸门时，规则校验器自己漏�
   （复跑与修复在 10-15 晚，收口与打标签跨到 10-16 上午）。
   锁 `test_validate_cross_checks_changelog_date_against_git` 红→绿配对（夹具用过去的固定日期，
   否则会被"未来日期"那道闸先拦掉、测不到这条本身），两个变异（放行 / 只要核对到就判错）都红。
-- 测试 118 → **123**；validate **13 信息 / 0 警告 / 0 错误**；preflight PASS；ship_check L1 SHIP-OK；
+- **第六条同类坑（文档里的死数字）**：README 写"SKILL.md **220 行**"，实物 **211 行**。
+  脚本/模板/分册三个计数早有 `check_readme_counts` 把关，入口行数是漏网的那个。
+  现补进同一道闸（对不上直接 **err**，比那三条的 warn 更硬——它是读者会照着核对的数），README 已改 211；
+  锁 `test_validate_flags_stale_entry_line_count_in_readme` 红→绿配对，
+  两个变异（写错不报 / 写对反而报）都当场打红。
+- 测试 118 → **124**；validate **14 信息 / 0 警告 / 0 错误**；preflight PASS；ship_check L1 SHIP-OK；
   靶场复跑 16/16 & 0/18 & 0/15；SARIF 结构自检通过；bench 安静复跑 **5.544 ms/文件**
   （与扫描并发时会读到 7.0~7.6，仍达标——对外报数须标"安静机 + repeat 3"）。
 

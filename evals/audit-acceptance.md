@@ -296,14 +296,14 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   brute/captcha（缺失型：限流、令牌一次性）、javascript（客户端判定当权限）、
   cryptography（ECB/自拼 XOR 未建规则）。
 
-## v0.36.1 D4 复核（交付前把全套闸门重跑一遍，果然捞出一条）
+## v0.36.1 D4 复核（交付前把全套闸门重跑一遍，一次捞出六条）
 
 复跑环境：同一台机器、离线、无其他负载；工作树 = `dc12e54` + 本轮 v0.36.1 改动。
 
 | 闸门 | 命令 | 本轮实测 |
 |---|---|---|
-| 回归 | `python -m unittest discover -s tests` | **123 tests OK**（84.3s，无 ResourceWarning） |
-| 结构 | `python scripts/validate_skill.py` | 13 信息 / 0 警告 / 0 错误；正文 ~5000 tokens（预算 5000 ✓） |
+| 回归 | `python -m unittest discover -s tests` | **124 tests OK**（81.5s，无 ResourceWarning） |
+| 结构 | `python scripts/validate_skill.py` | 14 信息 / 0 警告 / 0 错误；正文 ~5000 tokens（预算 5000 ✓） |
 | 变更自查 | `python scripts/preflight.py` | `RESULT: PASS（0 发现）` |
 | 交付闸门 | `python scripts/ship_check.py --level L1` | `SHIP-OK`（6 通过 / 0 警告 / 0 未过） |
 | 规则校验 | `python scripts/audit_rules.py --validate` | 31 条 RULES-OK，`rules_version=79133eec5b23`，**stderr 干净** |
@@ -330,6 +330,12 @@ CI 仍用 20 挡数量级，细粒度回退交结构锁 `TestAuditCostModel`。
   主题里没写版本号的条目**跳过**（判据不能假定所有仓库同一种提交习惯，否则把自己锁死）。
   8 条已改齐并在 CHANGELOG 头部写明约定。锁的夹具用**过去的固定日期**——
   不然会先被"未来日期"那道闸拦掉，测不到这条本身；两个变异（放行 / 核对到就判错）都红。
+- **第六条还是"文档里的死数字"**：README 写"SKILL.md 220 行"，实物 **211 行**。
+  脚本/模板/分册三个计数 `check_readme_counts` 早就把关，入口行数是漏网的那个。
+  现已补进同一道闸并**按 err 处理**（比那三条的 warn 硬——它是读者会照着核对的数），README 改 211。
+  锁 `test_validate_flags_stale_entry_line_count_in_readme` 红→绿配对，
+  两个变异（写错不报 / 写对反而报）都红。
+  **一轮之内六次同一个病根**：闸查的对象和我声称的东西不是一个。立判据时先问"这句话谁能核对、怎么核对"。
 - **捞到的第三条在自家统计字段**：本仓库自扫报 `invalid_suppressions = 12`，
   而全仓实际只有 1 条无效豁免标记。根因是 `apply_suppressions()` 里
   `invalid += inv` 写在**逐条发现**的循环体上 → 同一文件的标记被该文件的发现条数重复累加。

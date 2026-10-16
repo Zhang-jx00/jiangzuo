@@ -12,7 +12,7 @@
   4. 正文中引用的 references/ templates/ scripts/ 文件必须存在（路径含反斜杠即报错）
   5. scripts/*.py 语法可编译
   6. 分册之间不再互相引用（保持引用一层深，超深仅警告）
-  7. README 声明的脚本/模板/分册数量与磁盘实物一致（防文档滞后）
+  7. README 声明的脚本/模板/分册数量与入口行数与磁盘实物一致（防文档滞后）
   8. 每本分册都登记在 lookup.py 的 BOOKLET_ALIASES 路由词表里（防检索层漏配）
   7. 分册骨架契约：何时读/前置/产出/CRITICAL 防跳步行 + 常见错误节 + ≤160 行
 
@@ -349,6 +349,19 @@ def check_readme_counts(skill_dir):
         warn("README 计数与实物不符：%s —— 增删文件时同步改 README" % "；".join(bad))
     elif seen:
         info("README 计数与实物一致（脚本/模板/分册 ✓）")
+    # 入口行数：README 里写死过 "SKILL.md 220 行"，实物 211 行（2026-10-16 复核撞出）。
+    # 这类"读者会照着核对的数"对不上就是交付面失实，所以按 err 处理，不只 warn。
+    m = re.search(r"SKILL\.md\s*(\d+)\s*行", text)
+    if m:
+        entry = os.path.join(skill_dir, "SKILL.md")
+        if os.path.isfile(entry):
+            with io.open(entry, "r", encoding="utf-8", errors="replace") as f:
+                actual_lines = len(f.read().splitlines())
+            if int(m.group(1)) != actual_lines:
+                err("README 写 SKILL.md 入口行数=%s，实际 %s 行——增删入口时同步改 README"
+                    % (m.group(1), actual_lines))
+            elif not bad:
+                info("README 入口行数与实物一致（SKILL.md %d 行 ✓）" % actual_lines)
 
 
 def check_lookup_aliases(skill_dir):
