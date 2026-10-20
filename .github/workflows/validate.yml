@@ -38,3 +38,27 @@ jobs:
         run: |
           python evals/audit-fixtures/gen_corpus.py --out "$RUNNER_TEMP/audit-bench-corpus"
           python evals/audit-fixtures/score.py --corpus "$RUNNER_TEMP/audit-bench-corpus"
+
+      # 诊断步：只在前面有步骤红的时候跑，把六道闸门**全部**在 Linux/Py3.11 上重跑一遍，
+      # 并把每道的 PASS/FAIL 与失败的用例名写成 workflow 注解。
+      # 为什么要有这一步：Actions 的作业日志要仓库管理员权限才能下载（本机匿名 REST 拿到 403
+      # "Must have admin rights to Repository"），而 check-run 注解匿名可读。2026-10-16 排查
+      # "CI 连续 22 次红而本机四闸全绿"时，除注解之外没有任何一条本机可得的取证通道。
+      # 注解单条有长度上限，所以逐条打短消息，不把整段日志拼进一条里。
+      - name: 六道闸门诊断（前一步失败时执行，失败用例名进注解）
+        if: failure()
+        run: |
+          LOG="$RUNNER_TEMP/diag.txt"; : > "$LOG"
+          gate() { label="$1"; shift; if ( "$@" ) >>"$LOG" 2>&1; then echo "PASS $label"; else echo "FAIL $label"; fi; }
+          {
+            gate validate  python scripts/validate_skill.py .
+            gate preflight python scripts/preflight.py --all --strict
+            gate unittest  python -m unittest discover -s tests
+            gate shipcheck python scripts/ship_check.py --level L1 --timeout 300
+            gate bench     python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/diag-bench" --files 400 --repeat 1 --max-ms-per-file 20 --max-mb 128
+            gate corpus    python evals/audit-fixtures/gen_corpus.py --out "$RUNNER_TEMP/diag-corpus"
+            gate score     python evals/audit-fixtures/score.py --corpus "$RUNNER_TEMP/diag-corpus"
+          } | tee -a "$LOG"
+          sed 's/%/%25/g' "$LOG" | grep -E '^(PASS|FAIL) ' | while IFS= read -r l; do printf '::error::%s\n' "$l"; done
+          sed 's/%/%25/g' "$LOG" | grep -E '^(FAIL|ERROR): [A-Za-z_]' | head -12 | while IFS= read -r l; do printf '::error::%s\n' "$l"; done
+          grep -A8 -E '^(FAIL|ERROR): [A-Za-z_]' "$LOG" | head -70 || true
