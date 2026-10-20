@@ -333,6 +333,116 @@ class TestValidate(unittest.TestCase):
         self.assertIn("README 计数与实物一致", r.stdout)
 
 
+class TestValidateExpectedNumbers(unittest.TestCase):
+    """第 11 节第 9 项：.md **代码块**里"复制即跑"的期望值必须与实物对账。
+
+    E7 实测的教训：验收记录里"本仓库自扫 结论 0"这个**对照面基线**从 v0.37.0 起
+    就一直是错的，错了一整轮没人发现——因为**没有任何判据把文档里的数字和实物对账**。
+    错的是基线，所以它不会让任何检出看起来更好，只会让人拿一把坏尺子量别人。
+
+    真源三件，全部**静态取**（不跑扫描、不生成语料、不执行被测脚本 ⇒ 跨平台同色）：
+      用例数 ← unittest 的用例计数；语料分母 ← gen_corpus.py 的两个清单长度；
+      规则条数 ← scripts/audit-rules/*.json 的条目数与停用数。
+    """
+
+    HEAD = u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n正文一句。\n"
+    GOOD = (u"# 期望\n\n```bash\n"
+            u"python -m unittest discover -s tests    # 期望 Ran 2 tests ... OK\n"
+            u"python evals/audit-fixtures/score.py --corpus ../c    "
+            u"# ACCEPT-OK 2/2 检出 & 0/3 安全样本\n"
+            u"python scripts/audit_rules.py --validate    "
+            u"# 期望 RULES-OK（2 条，另有 1 条数据停用）\n"
+            u"```\n")
+
+    def _mini(self, tmp, md_text):
+        """建一个最小技能目录：真源三件 + 一份带期望值的 .md。"""
+        sk = os.path.join(tmp, "sk")
+        for d in ("docs", "tests", os.path.join("evals", "audit-fixtures"),
+                  os.path.join("scripts", "audit-rules")):
+            os.makedirs(os.path.join(sk, d))
+
+        def put(rel, text):
+            path = os.path.join(sk, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+
+        put("SKILL.md", self.HEAD)
+        # 真源①：一个测试文件 → 用例数 = 2
+        put("tests/test_x.py",
+            u"import unittest\n\n\nclass T(unittest.TestCase):\n"
+            u"    def test_a(self):\n        pass\n\n"
+            u"    def test_b(self):\n        pass\n")
+        # 真源②：语料清单 → MUST_FIND 2 条、MUST_NOT_FIND 3 条
+        put("evals/audit-fixtures/gen_corpus.py",
+            u"MUST_FIND = [(\"a.py\", \"JZ-A-001\", \"x\"), (\"b.py\", \"JZ-B-001\", \"y\")]\n"
+            u"MUST_NOT_FIND = [(\"s1.py\", \"JZ-A-001\"), (\"s2.py\", \"JZ-B-001\"),"
+            u" (\"s3.py\", \"JZ-C-001\")]\n")
+        # 真源③：规则库 → 活跃 2 条、停用 1 条
+        put("scripts/audit-rules/a.json",
+            u"{\"rules\": [{\"id\": \"JZ-A-001\"}, {\"id\": \"JZ-B-001\"},"
+            u" {\"id\": \"JZ-C-001\", \"enabled\": false}]}")
+        put("docs/expect.md", md_text)
+        return sk
+
+    def _validate(self, sk):
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+
+    def test_wrong_expected_numbers_are_flagged(self):
+        """红：三类期望值各写错一个，必须当场红并点名错在哪；绿：改回实物数就过。"""
+        cases = [
+            (u"Ran 2 tests", u"Ran 99 tests", u"个用例"),
+            (u"ACCEPT-OK 2/2 检出 & 0/3 安全样本",
+             u"ACCEPT-OK 2/2 检出 & 0/9 安全样本", u"安全对照"),
+            (u"ACCEPT-OK 2/2 检出 & 0/3 安全样本",
+             u"ACCEPT-OK 2/3 检出 & 0/3 安全样本", u"应检出"),
+            (u"ACCEPT-OK 2/2 检出 & 0/3 安全样本",
+             u"ACCEPT-OK 1/2 检出 & 0/3 安全样本", u"分子分母不等"),
+            (u"RULES-OK（2 条，另有 1 条数据停用）",
+             u"RULES-OK（7 条，另有 1 条数据停用）", u"活跃"),
+            (u"RULES-OK（2 条，另有 1 条数据停用）",
+             u"RULES-OK（2 条，另有 5 条数据停用）", u"停用"),
+        ]
+        for good, wrong, label in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                sk = self._mini(tmp, self.GOOD.replace(good, wrong))
+                r = self._validate(sk)
+                self.assertNotEqual(r.returncode, 0,
+                                    u"写错「%s」没被拦住：%s" % (label, r.stdout))
+                self.assertIn(label, r.stdout)
+        # 绿：三类都写对 → 通过
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, self.GOOD)
+            r = self._validate(sk)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_history_numbers_outside_code_blocks_are_not_flagged(self):
+        """反面：正文/表格里的历史数字是**当时真值**，不该被红。
+
+        交付报告 §3 的 "Ran 124 tests" 是 v0.36.1 当时的数——判据只管代码块里
+        "复制即跑"的契约，管到历史记录上就是误伤。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            body = self.GOOD + u"\n历史记录：当时是 Ran 124 tests、ACCEPT-OK 16/16 检出。\n"
+            sk = self._mini(tmp, body)
+            r = self._validate(sk)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_missing_expectation_form_is_flagged(self):
+        """形态被删掉也要红——删一行就等于把这条检查静默关掉，那是"永远绿的锁"。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            body = self.GOOD.replace(
+                u"python scripts/audit_rules.py --validate    "
+                u"# 期望 RULES-OK（2 条，另有 1 条数据停用）\n", u"")
+            sk = self._mini(tmp, body)
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0,
+                                u"形态被删却没拦住：%s" % r.stdout)
+            self.assertIn(u"静默失效", r.stdout)
+
+
 class TestPreflight(unittest.TestCase):
     def test_preflight_clean_on_self(self):
         r = run([os.path.join(SCRIPTS, "preflight.py"), "--all", "--strict"])

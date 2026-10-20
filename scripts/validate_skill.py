@@ -20,8 +20,9 @@
  11. CHANGELOG 条目日期必须能在 git 里找到该版本号落笔那天（跨午夜要跟着改）
  12. 表格行头不许被吃（少开头的 `| ` 却仍是 `a | b` 形状 → err）
  13. 文档里"上表 N 条"这类声明的条数要与表里实际数据行数对上（单表文件才判）
+ 14. .md **代码块**里"复制即跑"的期望值（用例数 / 语料分母 / 规则条数）要与实物对上
 
-会做：结构硬约束、引用存在性、绝对路径、版本一致性、占用估算（--stats）。
+会做：结构硬约束、引用存在性、绝对路径、版本一致性、期望值对账、占用估算（--stats）。
 不会做：内容质量与触发率——那要靠 evals/trigger-tests.md 与 red-tests.md 实测。
 
 用法:
@@ -495,6 +496,188 @@ def check_md_tables(skill_dir):
         info("文档结构核对通过（%d 个 .md：表格行头完整、声明条数与实物一致）" % scanned)
 
 
+def _md_fenced_lines(skill_dir):
+    """产出仓库内所有 .md **围栏代码块**里的行：(相对路径, 行号, 原文)。
+
+    只取代码块：代码块 = "复制即跑"的**契约**，里面的期望值错了，照着跑的人
+    会以为工具挂了；正文与表格里的历史数字是**当时真值**（交付报告 §3 的
+    "Ran 124 tests" 是 v0.36.1 当时的数），不该被红。
+    """
+    import glob
+    for path in sorted(glob.glob(os.path.join(skill_dir, "**", "*.md"), recursive=True)):
+        norm = os.path.abspath(path)
+        if (os.sep + ".git" + os.sep) in norm or "__pycache__" in norm:
+            continue
+        rel = os.path.relpath(path, skill_dir).replace(os.sep, "/")
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        fence = None
+        for i, line in enumerate(lines, 1):
+            st = line.strip()
+            m = re.match(r"^(`{3,}|~{3,})", st)
+            if m:
+                mark = m.group(1)[0]
+                if fence is None:
+                    fence = mark
+                elif mark == fence:
+                    fence = None
+                continue
+            if fence is not None:
+                yield rel, i, line
+
+
+def _corpus_list_lengths(skill_dir):
+    """AST 静态解析 gen_corpus.py 的 MUST_FIND / MUST_NOT_FIND 长度。
+
+    **不执行脚本**（那会往磁盘写语料），只用 ast.literal_eval 取字面量长度。
+    这两个清单与 expected.json 是严格 1:1（gen_corpus 每个条目生成一条答案，
+    probe 定位不到时它自己 exit 1），所以静态长度就是运行时真值。
+    取不到返回 (None, None)——调用方按"无法判定"处理，不假装通过。
+    """
+    import ast
+    path = os.path.join(skill_dir, "evals", "audit-fixtures", "gen_corpus.py")
+    if not os.path.isfile(path):
+        return None, None
+    try:
+        with io.open(path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=path)
+    except (OSError, ValueError, SyntaxError):
+        return None, None
+    found = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            if isinstance(t, ast.Name) and t.id in ("MUST_FIND", "MUST_NOT_FIND"):
+                try:
+                    found[t.id] = len(ast.literal_eval(node.value))
+                except (ValueError, SyntaxError, TypeError):
+                    return None, None
+    return found.get("MUST_FIND"), found.get("MUST_NOT_FIND")
+
+
+def _expected_truth(skill_dir):
+    """期望值的**唯一真源**。全部静态取：不跑扫描、不生成语料、不执行被测脚本。
+
+    ⇒ 跨平台同色、秒级完成（E6 的教训：锁不能自己平台依赖）。
+    """
+    truth = {}
+    # ① 测试用例数：只加载不执行（countTestCases 不跑 setUp 与用例本体）
+    tests_dir = os.path.join(skill_dir, "tests")
+    truth["tests"] = None
+    if os.path.isdir(tests_dir):
+        try:
+            import unittest
+            import warnings
+            saved = list(sys.path)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                loader = unittest.TestLoader()
+                suite = loader.discover(tests_dir, top_level_dir=tests_dir)
+                truth["tests"] = suite.countTestCases()
+            sys.path[:] = saved
+        except Exception:
+            truth["tests"] = None
+    # ② 语料分母
+    truth["must_find"], truth["must_not_find"] = _corpus_list_lengths(skill_dir)
+    # ③ 规则条数（复用已有 helper）
+    total, disabled = _count_builtin_rules(skill_dir)
+    truth["rules_active"] = None if total is None else total - disabled
+    truth["rules_disabled"] = disabled
+    return truth
+
+
+# 三类"复制即跑"的期望值形态：(键, 正则, 给人看的名字, 真源键)
+EXPECT_FORMS = (
+    (u"tests", re.compile(r"Ran\s+(\d+)\s+tests?\b"), u"Ran N tests", u"tests"),
+    (u"corpus", re.compile(r"ACCEPT-OK\s+(\d+)/(\d+)\s*检出.*?0/(\d+)\s*安全样本"),
+     u"ACCEPT-OK A/B 检出 & 0/C 安全样本", u"must_find"),
+    (u"rules", re.compile(r"RULES-OK[（(]\s*(\d+)\s*条，另有\s*(\d+)\s*条数据停用[）)]"),
+     u"RULES-OK（N 条，另有 M 条数据停用）", u"rules_active"),
+)
+
+
+def check_expected_numbers(skill_dir):
+    """「照着跑就能看到」的期望值必须与实物一致（第 11 节第 9 项）。
+
+    E7 实测的教训：验收记录里"本仓库自扫 结论 0"这个**对照面基线**从 v0.37.0 起
+    就一直是错的，错了一整轮没人发现——因为**没有任何判据把文档里的数字和实物对账**。
+    错的是基线，所以它不会让任何检出看起来更好，只会让人拿一把坏尺子量别人。
+
+    本项把三类期望值接上唯一真源：
+      ① 测试用例数 ← unittest 的用例计数（只加载不执行）
+      ② 语料分母   ← gen_corpus.py 的 MUST_FIND / MUST_NOT_FIND 长度（AST 静态解析）
+      ③ 规则条数   ← scripts/audit-rules/*.json 的条目数与停用数
+
+    另外两件同样重要的事：
+      · **形态要写全**——一个 .md 文件只要声明了期望值，就得把适用的形态写齐；
+        少一种，这一项就静默失效了（等于没有检查）。**按文件判，不按仓库判**：
+        一个没写期望值的文件不该被要求写（判据不许假定数据形状——§10A 第 11 条）。
+      · **取不到真源不放过**——真源取不到时报错，不当"没问题"处理。
+    """
+    truth = _expected_truth(skill_dir)
+    per_file = {}
+    bad = []
+    for rel, lineno, line in _md_fenced_lines(skill_dir):
+        for kind, rx, _label, _src in EXPECT_FORMS:
+            m = rx.search(line)
+            if not m:
+                continue
+            per_file.setdefault(rel, set()).add(kind)
+            if kind == "tests":
+                claimed, real = int(m.group(1)), truth["tests"]
+                if real is None:
+                    bad.append(u"%s:%d 期望「Ran %d tests」，但用例数取不到（tests/ 目录或"
+                               u"测试模块有问题）——真源取不到不等于没问题" % (rel, lineno, claimed))
+                elif claimed != real:
+                    bad.append(u"%s:%d 期望「Ran %d tests」，实际 %d 个用例——"
+                               u"改了测试就要改这行期望值" % (rel, lineno, claimed, real))
+            elif kind == "corpus":
+                a, b, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                real_find, real_safe = truth["must_find"], truth["must_not_find"]
+                if real_find is None or real_safe is None:
+                    bad.append(u"%s:%d 期望「ACCEPT-OK %d/%d 检出 & 0/%d 安全样本」，但语料分母"
+                               u"取不到（gen_corpus.py 的清单解析不了）" % (rel, lineno, a, b, c))
+                else:
+                    if a != b:
+                        bad.append(u"%s:%d 期望「%d/%d 检出」——分子分母不等；语料现在有 %d 项应检出"
+                                   % (rel, lineno, a, b, real_find))
+                    elif b != real_find:
+                        bad.append(u"%s:%d 期望「%d/%d 检出」，实际应检出 %d 项——"
+                                   u"语料长了/改了要同步这行" % (rel, lineno, a, b, real_find))
+                    if c != real_safe:
+                        bad.append(u"%s:%d 期望「0/%d 安全样本」，实际安全对照 %d 个——"
+                                   u"语料长了/改了要同步这行" % (rel, lineno, c, real_safe))
+            elif kind == "rules":
+                n, off = int(m.group(1)), int(m.group(2))
+                real_on, real_off = truth["rules_active"], truth["rules_disabled"]
+                if real_on is None:
+                    bad.append(u"%s:%d 期望「RULES-OK（%d 条…）」，但规则库数不到"
+                               % (rel, lineno, n))
+                else:
+                    if n != real_on:
+                        bad.append(u"%s:%d 期望「RULES-OK（%d 条…）」，实际活跃 %d 条——"
+                                   u"加/停规则要同步这行" % (rel, lineno, n, real_on))
+                    if off != real_off:
+                        bad.append(u"%s:%d 期望「另有 %d 条数据停用」，实际 %d 条——"
+                                   u"停用规则要同步这行" % (rel, lineno, off, real_off))
+    # 形态要写全：声明了期望值的文件必须把适用的形态写齐，少一种就等于让这一项静默失效。
+    # **按文件判，不按仓库判**：没写期望值的文件不该被要求写（判据不许假定数据形状）。
+    for rel in sorted(per_file):
+        for kind, _rx, label, src in EXPECT_FORMS:
+            if truth.get(src) is None:
+                continue
+            if kind not in per_file[rel]:
+                bad.append(u"%s 声明了部分期望值却缺「%s」——形态不全就等于让这一项"
+                           u"静默失效（等于没有检查）" % (rel, label))
+    if bad:
+        for msg in bad:
+            err(msg)
+    else:
+        info("期望值与实物对账通过（用例数 / 语料分母 / 规则条数，%d 处声明）"
+             % sum(len(v) for v in per_file.values()))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -567,6 +750,7 @@ def main():
             check_readme_counts(skill_dir)
             check_lookup_aliases(skill_dir)
             check_md_tables(skill_dir)
+            check_expected_numbers(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:
