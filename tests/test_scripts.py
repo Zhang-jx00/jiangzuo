@@ -1970,6 +1970,79 @@ class TestAuditPhpRequestBody(unittest.TestCase):
                              "参数化写法被报成注入了：%s" % ids)
 
 
+class TestAuditPhpCrossFunction(unittest.TestCase):
+    """E10：PHP 的**跨函数形参污点**——修复前整条是坏的（复核实测，不是推断）。
+
+    真实 PHP 代码里极常见的一类形态：把 `$_GET['x']` 交给一个 helper，
+    helper 里 echo / 拼 SQL / 调命令。**修复前这类形态一条都报不出来**，
+    而且坏在**两层**：
+
+    ① **形参名归一错了**：`_params()` 把 PHP 形参 `$name` 转成 `_name`，
+       而载体名（`carriers_of`）是不带 `$` 的 `name` ⇒ 形参污点永远落不到
+       被调函数里。
+    ② **`{module}` 作用域的门槛**：`add_module_scope()` 写死"顶层行数 ≥ 3 才建作用域"，
+       于是「`<?php` + 一个函数 + 一行顶层调用」这种最常见的短文件，
+       **整段顶层代码都不进数据流**——与该函数自己的 docstring 自相矛盾。
+
+    两层都修之后：同文件与跨文件的 helper 形态都能检出。
+    """
+
+    HELPER = ("<?php\n"
+              "function show($name) {\n"
+              "    echo \"Hello \" . $name;\n"
+              "}\n")
+    CALL = "show($_GET['name']);\n"
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_cf_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_param_taint_crosses_function_boundary_same_file(self):
+        """同文件：helper 里 echo 形参 ⇒ 应报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php", self.HELPER + self.CALL)
+            data, _ = self._scan(tmp, "same")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "同文件跨函数形参污点没报出来：%s" % ids)
+
+    def test_param_taint_crosses_function_boundary_across_files(self):
+        """跨文件：helper 在另一个文件里 ⇒ 应报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "lib.php", self.HELPER)
+            self._write(tmp, "app.php",
+                        "<?php\nrequire_once 'lib.php';\n" + self.CALL)
+            data, _ = self._scan(tmp, "cross")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "跨文件跨函数形参污点没报出来：%s" % ids)
+
+    def test_unused_param_is_not_reported(self):
+        """形参没被用到 ⇒ 不该报（别把"有形参"当成"有洞"）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function show($name) {\n"
+                        "    echo \"Hello\";\n"
+                        "}\n"
+                        "show($_GET['name']);\n")
+            data, _ = self._scan(tmp, "unused")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "形参没被用到却报了：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

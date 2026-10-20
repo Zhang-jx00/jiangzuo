@@ -145,7 +145,15 @@ def _params(raw):
         item = item.strip()
         if not item or item in ("self", "cls"):
             continue
-        m = re.search(r"([A-Za-z_$]\w*)", item.replace("$", "_"))
+        # 形参名必须与**载体名**（carriers_of 不带 `$`）同名，跨函数的污点靠这个对上。
+        # 早先这里把 `$` 换成 `_`，于是 PHP 形参叫 `_name`、载体叫 `name`，
+        # 形参污点永远落不到被调函数里 ⇒ **PHP 的跨函数污点整条是坏的**
+        # （E10 复核实测：function show($name){ echo $name; } show($_GET['name']) 一条都不报）。
+        # PHP 形参的各种写法都要取到同一个名字：`$name`、`array $x`、`&$ref`、`$x = null`。
+        if "$" in item:
+            m = re.search(r"\$([A-Za-z_]\w*)", item)
+        else:
+            m = re.search(r"([A-Za-z_]\w*)", item)
         if m:
             names.append(m.group(1))
     return names
@@ -248,7 +256,12 @@ def add_module_scope(funcs, rel, lang, lines):
         for ln in range(fn["start"], fn["end"] + 1):
             covered.add(ln)
     rest = [(n, t, x) for n, t, x in lines if n not in covered]
-    if len(rest) >= 3:
+    # 门槛只该问"**有没有顶层代码**"，不该问"有几行"：PHP 文件的顶层往往只有
+    # `<?php` + 一行调用。早先写死 `>= 3`，于是「一个函数 + 一行顶层调用」的文件
+    # 整段顶层都不进数据流（E10 复核实测：`<?php` + 函数 + `show($_GET['name']);`
+    # 一条都报不出来）——这与本函数的 docstring 自相矛盾。
+    # 真正该排除的只是 PHP 开闭标签本身，它们不是代码。
+    if any(t.strip() and t.strip() not in ("<?php", "<?", "?>", "<%") for _n, t, _x in rest):
         funcs.append({"name": "{module}", "file": rel, "lang": lang,
                       "start": rest[0][0], "end": rest[-1][0], "params": [],
                       "body": rest, "indent": 0})
