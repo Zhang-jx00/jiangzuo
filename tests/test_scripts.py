@@ -2167,6 +2167,38 @@ class TestAuditContext(unittest.TestCase):
                                   "文件名里的 test 子串不该打成测试语境：%s" % f["file"])
             self.assertEqual(len(data["findings"]), data["stats"]["conclusions"])
 
+    def test_qualified_context_directory_is_recognised(self):
+        """E7：带限定词的语境目录要认得出来——`evals/audit-fixtures/` 是夹具生成器。
+
+        v0.37.0 新增的 JZ-CRYPTO-003 会命中语料生成器源码里的字面量 `'aes-128-ecb'`，
+        而 `audit-fixtures` 不在整段词表里 ⇒ 三条本该"另计"的命中被算进了结论区，
+        干净仓库这个标尺被污染（实测自扫 结论 3 / 另计 5）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.py", self.CMDI)
+            self._write(tmp, "evals/audit-fixtures/gen_corpus.py", self.CMDI)
+            data, _ = self._scan(tmp, "qualified")
+            by = dict((f["file"], f.get("context")) for f in data["findings"])
+            self.assertIn("evals/audit-fixtures/gen_corpus.py", by)
+            self.assertEqual("test", by["evals/audit-fixtures/gen_corpus.py"],
+                             "带限定词的夹具目录要算测试语境")
+            s = data["stats"]
+            self.assertEqual(1, s["conclusions"], "结论只算正式代码那条")
+            self.assertEqual(1, s["context_excluded"])
+            self.assertEqual(2, s["findings"], "总数不缩水：降误报不是藏证据")
+
+    def test_component_split_still_requires_whole_words(self):
+        """拆词后仍要**整词**匹配：`latest_posts` / `protest` / `attestation` 都不是语境。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "src/latest_posts.py", self.CMDI)
+            self._write(tmp, "src/protest_tools.py", self.CMDI)
+            self._write(tmp, "app/attestation-service/main.py", self.CMDI)
+            data, _ = self._scan(tmp, "collide")
+            for f in data["findings"]:
+                self.assertIsNone(f.get("context"),
+                                  "整词不在词表里就不该打成语境：%s" % f["file"])
+            self.assertEqual(len(data["findings"]), data["stats"]["conclusions"])
+
     def test_report_splits_the_two_groups_and_keeps_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write(tmp, "app.py", self.CMDI)

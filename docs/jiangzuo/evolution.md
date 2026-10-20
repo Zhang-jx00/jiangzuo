@@ -41,9 +41,11 @@
 | 2026-10-20 | 远端核对（github MCP + 公开 REST）发现 Actions 的 validate 作业自 `f267f80`（v0.20.0，10-14）起**连续 22 次红**，而本机四道闸门全绿；作业日志匿名下载 403（要仓库管理员权限），本机唯一可读的取证面是 check-run 注解 | 交付面把“CI 六步”写成了对外声称，却从没去核 CI 的实际结论；两条锁本身是平台依赖的：`test_index_emits_relative_posix_paths_only` 的针被归一成正斜杠形式，Windows 上输出是反斜杠——**针永远比不中**（假绿）；`test_mid_pattern_global_flag_blocks` 断言中文关键字，而措辞由解释器给（3.8 走 DeprecationWarning、3.11 走 re.error） | 工作流加一步 `if: failure()` 把六道闸门在 Linux 全跑一遍、失败用例名写成注解，一次推送即可定位；把“标志写错位置”的判定收进 `audit_rules.misplaced_global_flag` 后，同一条测试在两个解释器上应同色 | `.github/workflows/validate.yml` 加诊断步；`audit_rules.py` 静态判定＋消息统一（并把源码里两处被吃成退格符的 `\b` 还原）；`tests/test_scripts.py` 重写索引路径锁（针覆盖 4 种形式、范围收到 JSON 产物）＋判据正反 11 例 | 注解取证实测：FAIL unittest、FAIL shipcheck，PASS validate/preflight/bench/corpus/score，点名 2 条用例；变异校准：`auditlib` 的 path 改成绝对 → 索引锁当场红、还原后 sha1 逐字节一致；判据 neuter → 新锁红；本机 138 用例 OK、validate 16 信息/0 警/0 错、SHIP-OK；远端结论以本轮推送后的注解为准 | +82 / −10（工作流另 +24） | **KEEP**：红的是闸门自身的平台依赖，不是检出能力；本机第一次有了可得的 CI 取证通道 |
 
 
+| 2026-10-20 | 接手工档后按自检清单扫本仓库，自扫结论 **3 条**，而交付报告 §3.2 写的是「结论 0 条」；拉三段快照实测把转折点定位到 v0.37.0 | 语境档只按**整段**路径段匹配词表，`evals/audit-fixtures/`（语料生成器）不在表里 ⇒ 它的命中被算进结论区，**干净仓库这个标尺本身被污染**；v0.37.0 那轮抄进验收记录的「结论 0（另计 5）」当天就没对 | 目录段按 `-`/`_` 拆词后**精确匹配**词表后，`audit-fixtures` 应判为 test 语境 ⇒ 自扫结论 3→0（8 条发现一条不少，全部进另计档），且 flask/requests/DVWA 三仓数字一字未变 | `audit_scan.context_path_segments()`（新增）+ `TestAuditContext` 正反 2 例 | 三段快照实测：v0.36.1 **结论 0** / v0.37.0 **结论 3** / HEAD(修前) **结论 3**；修后自扫 8 发现/结论 0/另计 8；A/B（重 clone DVWA/flask/requests `--depth 1`）flask **13/1**、requests **4/0**、DVWA **67/66** **一字未变**；语料 **23/23 & 0/17** 不变；变异校准 **6/6 全红**（新增 3 + 修好 1 条长期恒绿的旧用例），还原逐字节一致；测试 138→140；validate/preflight/SHIP/audit_rules 全绿 | +29 / −3（`audit_scan.py`）；+32 / −0（`tests/test_scripts.py`） | **KEEP**：又一次「闸门查的对象和我声称的东西不是一个」——标尺被污染时，别的数字全对也说明不了问题；附带一条：**恒绿的校准用例比没有用例更坏**（废掉「全局标志写错位置」三道兜底里的任何一道，测试照样绿，本机 3.8 上尤其明显） |
+
 ## 回看
 
-- 上表 32 条变异台账：31 条 `KEEP`、1 条部分成立、**0 条 `ROLLBACK`**（条数与分类由脚本数出来，不手数——
+- 上表 33 条变异台账：32 条 `KEEP`、1 条部分成立、**0 条 `ROLLBACK`**（条数与分类由脚本数出来，不手数——
   这条刚被 `validate_skill.py` 变成判据：声明与表内实际行数对不上就报错，我这次就是被它当场逮到的）。
   部分成立那条（description 修复）收益远小于预期，已把方向从"继续磨措辞"改判为"竞争定位挪到安装引导"。
   2026-10-15 新增 15 条，全部来自**第三方真实仓库取证**（v0.30.0）与其后续三轮

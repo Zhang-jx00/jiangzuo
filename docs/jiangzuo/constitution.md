@@ -5,7 +5,7 @@
 > 本仓库自己就是被这个技能约束的对象——做不到就别拿去要求别人的项目。
 
 - [ ] 全量测试通过：`python -m unittest discover -s tests -q`（0 失败；新增脚本必须带 --help 冒烟与至少一个"能变红"的测试）
-- [ ] 结构校验通过：`python scripts/validate_skill.py .`（0 错误 0 警告；含 17 分册骨架契约、299 字符可见预算、README 计数一致性）
+- [ ] 结构校验通过：`python scripts/validate_skill.py .`（0 错误 0 警告；含 20 分册骨架契约、299 字符可见预算、README 计数一致性）
 - [ ] 交付前静态检查：`python scripts/preflight.py --all --strict`（critical/high = 0）
 - [ ] 交付闸门：`python scripts/ship_check.py --level L1`（技能仓库自身按 L1 过闸）
 - [ ] 入口预算：`python scripts/validate_skill.py . --stats` 的**正文 ≤5K tokens**，超了必须先删再加并在提交信息里写明净增数

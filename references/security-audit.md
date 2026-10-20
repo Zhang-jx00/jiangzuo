@@ -84,6 +84,8 @@ python <技能目录>/scripts/audit_scan.py <项目目录> \
 - **语境档（与"不适用"不同）**：命中落在 `tests/ spec/ fixtures/`、`examples/ docs/ samples/`
   或文件名形如 `test_*.py`、`*.test.js` 时照报、仍留 `文件:行`、仍进 JSON/SARIF，只是**不计进结论数**
   ——「确认发现」是总数，「其中正式代码」才是你要修的那批；判据按路径段与文件名形态，不按 "test" 子串。
+  目录名带限定词时按 `-`/`_` **拆词后整词匹配**（`audit-fixtures` → `fixtures` 命中；`latest_posts` 拆成
+  `latest`/`posts` 两边都不命中）——v0.41.0 修的就是这条：语料生成器被当正式代码，干净仓库标尺被污染。
 - **规则自带的语境条件（两个条件是"且"，缺一个照报）**：
   `console_when_routeless`＝该文件没登记路由 **且** 命中±3 行是控制台/raise 形态 → `console`（flask/cli.py 三发 traceback 就这么归位；服务层 `return "失败: " + str(e)` 不算控制台，照报）；
   `optout_params`＋角色=library＋最近函数形参带可关开关（verify/insecure/…）→ `library_feature`

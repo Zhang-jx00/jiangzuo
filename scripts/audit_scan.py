@@ -703,14 +703,37 @@ TEST_FILE_SUFFIXES = (".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.j
                       ".spec.ts", "_test.py", "_test.go", "Test.java", "Tests.java")
 
 
+def context_path_segments(rel):
+    """路径里的**目录段**拆成词，用于语境判定。
+
+    为什么要拆：目录名常带限定词——`evals/audit-fixtures/` 里的东西是夹具生成器，
+    只按整段精确匹配会漏掉它。E7 实测：v0.37.0 新增的 JZ-CRYPTO-003 会命中语料生成器
+    源码里的字面量 `'aes-128-ecb'`，而 `audit-fixtures` 不在整段词表里 ⇒
+    三条本该"另计"的命中被算进结论区，干净仓库这个标尺被污染。
+
+    拆词后仍**精确匹配词表**，不做子串匹配——`latest_posts` 拆成 latest/posts，
+    两边都不在词表；`protest`、`attestation` 这类整词也不在（B7 实测过这种撞名，
+    判据必须按词不按子串）。
+    """
+    segs = set()
+    for seg in rel.split("/")[:-1]:
+        if not seg:
+            continue
+        segs.add(seg)
+        for piece in re.split(r"[-_]", seg):
+            if piece:
+                segs.add(piece)
+    return segs
+
+
 def code_context(rel):
     """这条命中长在什么语境里：`test`／`example`／None（正式代码）。
 
-    只按**路径段**与**文件名形态**判——`src/latest_posts.py`、`contest.py`
-    里含 "test" 子串不算测试（B7 实测过这种撞名，判据必须按段不按子串）。
+    只按**路径段与文件名形态**判——`src/latest_posts.py`、`contest.py`
+    里含 "test" 子串不算测试（B7 实测过这种撞名，判据必须按词不按子串）。
     """
     parts = rel.split("/")
-    segs = set(parts[:-1])
+    segs = context_path_segments(rel)
     base = parts[-1]
     if segs & TEST_SEGMENTS or base.startswith("test_") or \
             any(base.endswith(sfx) for sfx in TEST_FILE_SUFFIXES):
