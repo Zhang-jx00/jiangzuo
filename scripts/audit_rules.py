@@ -40,9 +40,36 @@ KINDS = ("taint", "pattern", "dependency", "auth_gap")
 REQUIRED = ("id", "title", "kind", "severity", "languages", "cwe", "fix", "retest")
 KNOWN_LANGS = set(auditlib.LANG_BY_EXT.values()) | {"*"}
 
-# 控制字符（ 被 shell/字符串层吃掉后就是退格符 ）——
+# 控制字符（\b 被 shell/字符串层吃掉后就是退格符）——
 # 这类模式永远匹配不上，却会静默把规则变成哑弹，所以直接判错。
 CONTROL_RX = re.compile(u"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+# 全局标志组：(?i) (?s) (?m) (?x) (?a) (?L) (?u) 这种整串写法（带冒号的 (?i:…) 是局域标志，不算）。
+GLOBAL_FLAG_RX = re.compile(r"(?<!\\)\(\?[aiLmsux]+\)")
+
+
+def misplaced_global_flag(pat):
+    """返回第一处"不放在合法位置的全局标志组"，没有则 None。
+
+    合法位置只有两处：整个表达式开头（可以连着写几个），或紧跟在一个 `(` 之后。
+    写在分支中间（`x|(?i)y`）在有些解释器里只是 DeprecationWarning，在另一些里直接
+    re.error——判据不能跟着解释器版本变，所以这一步**自己**认，不靠 re 的警告时刻表。
+    """
+    pos = 0
+    while True:
+        m = GLOBAL_FLAG_RX.search(pat, pos)
+        if not m:
+            return None
+        if m.start() == pos or pat[:m.start()].endswith(u"("):
+            pos = m.end()
+            continue
+        return m
+
+
+def _flag_pat_message(where, pat):
+    return (u"%s：全局标志 (?i)/(?s)/(?m)/(?x) 只能放在整个表达式开头（或紧跟在一个 `(` 之后），"
+            u"写在分支中间是废弃写法，不同解释器有的警告有的直接报错 → %r" % (where, pat))
+
 
 
 def _compile_list(items, where, problems, need_window=False):
@@ -54,8 +81,13 @@ def _compile_list(items, where, problems, need_window=False):
             problems.append("%s：有条目缺 pattern 字段" % where)
             continue
         if CONTROL_RX.search(pat):
-            problems.append("%s：模式里含控制字符（多半是 \b 被某一层吃成了退格符），"
+            problems.append("%s：模式里含控制字符（多半是 \\b 被某一层吃成了退格符），"
                             "这条永远不会命中" % where)
+            continue
+        if misplaced_global_flag(pat):
+            # 自己认，不靠解释器：3.8 给 DeprecationWarning、3.11 可能直接 re.error、
+            # 将来全变成报错——规则是长期存活的数据，判据不能跟着版本换措辞。
+            problems.append(_flag_pat_message(where, pat))
             continue
         try:
             # `x|(?i)y` 这种"全局标志不在开头"的写法，今天只是 DeprecationWarning，
@@ -65,12 +97,13 @@ def _compile_list(items, where, problems, need_window=False):
                 warnings.simplefilter("error", DeprecationWarning)
                 rx = re.compile(pat)
         except re.error as exc:
-            problems.append("%s：正则无法编译（%s）→ %r" % (where, exc, pat))
+            if misplaced_global_flag(pat):
+                problems.append(_flag_pat_message(where, pat))
+            else:
+                problems.append("%s：正则无法编译（%s）→ %r" % (where, exc, pat))
             continue
         except DeprecationWarning as exc:
-            problems.append("%s：全局标志 (?i)/(?s)/(?m)/(?x) 只能放在整个表达式开头，"
-                            "写在分支中间是废弃写法（将来直接报错）→ %r（%s）"
-                            % (where, pat, exc))
+            problems.append(_flag_pat_message(where, pat) + u"（%s）" % exc)
             continue
         rec = dict(item) if isinstance(item, dict) else {"pattern": pat}
         rec["_rx"] = rx

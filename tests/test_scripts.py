@@ -677,14 +677,32 @@ class TestAuditIndex(unittest.TestCase):
             self.assertEqual("oversize", reasons.get("huge.py"))
 
     def test_index_emits_relative_posix_paths_only(self):
+        """索引 JSON（要进报告、进 CI 缓存的机器可读产物）里不许出现本机绝对路径。
+
+        2026-10-20 修好这条锁自己的两个错（CI 在 Linux 上红了六个版本才暴露）：
+        1. 针被归一化成了正斜杠形式，而 Windows 上工具输出的是反斜杠形式——
+           **两边永远对不上，这条断言在本机从来没有真正成立过**（假绿）。
+        2. 比对的文本把 stdout 也算进去，而 stdout 回显的是调用方自己传进来的
+           `--json` 落盘路径。Linux 上针恰好命中它，于是把"CLI 复述你的参数"
+           判成泄露。回显参数不是泄露，产物里带绝对路径才是。
+        """
+        forms = []
         with tempfile.TemporaryDirectory() as tmp:
             self._tree(tmp)
-            data, stdout = self._index(tmp)
-            blob = json.dumps(data, ensure_ascii=False) + stdout
-            self.assertNotIn(os.path.abspath(tmp).replace("\\", "/"), blob,
-                             "报告不得泄露本机绝对路径（跨环境失效且可能含用户名）")
+            data, _stdout = self._index(tmp)
+            blob = json.dumps(data, ensure_ascii=False)
+            for cand in (tmp, os.path.abspath(tmp), os.path.realpath(tmp),
+                         tmp.replace("\\", "/")):
+                if cand and len(cand) > 3 and cand not in forms:
+                    forms.append(cand)
+            self.assertTrue(forms, "针为空等于没测")
+            for form in forms:
+                self.assertNotIn(form, blob,
+                                 u"索引 JSON 里出现了本机绝对路径 %r（换机器就作废、可能含用户名）" % form)
             for rec in data["files"]:
                 self.assertNotIn("\\", rec["path"])
+                self.assertFalse(rec["path"].startswith("/"), rec["path"])
+                self.assertFalse(os.path.isabs(rec["path"]), rec["path"])
 
     def test_index_hash_tracks_content_not_just_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -926,6 +944,26 @@ class TestAuditRules(unittest.TestCase):
                                       "fix": "f", "retest": "r"}]}, f, ensure_ascii=False)
             ok = self._run_rules("--validate", "--add", good)
             self.assertEqual(ok.returncode, 0, ok.stdout)
+
+    def test_misplaced_global_flag_detector_is_interpreter_independent(self):
+        """判据自己认"标志写错位置"，不吃解释器的警告时刻表。
+        上一条测试在 3.8 走 DeprecationWarning 分支、在 3.11 走 re.error 分支，
+        两支的措辞由 CPython 决定——断言中文关键字时就会一边绿一边红
+        （CI 实测：Linux/3.11 红在这条上，本机 3.8 绿）。
+        所以把判定收进 audit_rules.misplaced_global_flag，正反面都在这里锁死。
+        """
+        sys.path.insert(0, SCRIPTS)
+        import audit_rules
+        hit = ["foo = time()|(?i)bar", "(?:a|(?i)b)", "a(?=b)(?i)c", "(x)(?i)y",
+               "(?i)a|b(?s)c"]
+        miss = ["(?i)foo = time()|bar", "(?i)(?s)foo", "((?i)x)", "(?i:abc)",
+                "(?i)x", "plain"]
+        for pat in hit:
+            self.assertTrue(audit_rules.misplaced_global_flag(pat),
+                            u"这种写法必须拦：%s" % pat)
+        for pat in miss:
+            self.assertIsNone(audit_rules.misplaced_global_flag(pat),
+                              u"合法写法不该被误拦：%s" % pat)
 
     def test_two_builtin_files_claiming_same_id_blocks(self):
         """内置规则文件之间撞 id 必须报错，不能静默覆盖。

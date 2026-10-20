@@ -61,4 +61,5 @@ jobs:
           } | tee -a "$LOG"
           sed 's/%/%25/g' "$LOG" | grep -E '^(PASS|FAIL) ' | while IFS= read -r l; do printf '::error::%s\n' "$l"; done
           sed 's/%/%25/g' "$LOG" | grep -E '^(FAIL|ERROR): [A-Za-z_]' | head -12 | while IFS= read -r l; do printf '::error::%s\n' "$l"; done
+          sed 's/%/%25/g' "$LOG" | grep -E '^(AssertionError|ValueError|TypeError|IndexError|ModuleNotFoundError|SyntaxError|OSError|ImportError)' | head -8 | cut -c1-200 | while IFS= read -r l; do printf '::error::%s\n' "$l"; done
           grep -A8 -E '^(FAIL|ERROR): [A-Za-z_]' "$LOG" | head -70 || true
