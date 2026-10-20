@@ -247,6 +247,29 @@ SAFE = {
         "$ct = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv);\n"
         "$box = sodium_crypto_secretbox($plaintext, $nonce, $key);\n"
     ),
+    # E9：PHP 读原始请求体（php://input）→ JSON → 拼进 SQL。
+    # 形状取自 DVWA `vulnerabilities/authbypass/change_user_details.php` 的真实源码。
+    "vuln_php_input_sql.php": (
+        "<?php\n"
+        "$raw = file_get_contents('php://input');\n"
+        "$data = json_decode($raw);\n"
+        "$name = $data->name;\n"
+        "$sql = \"SELECT * FROM users WHERE name = '\" . $name . \"'\";\n"
+        "$res = mysqli_query($conn, $sql);\n"
+    ),
+    # 同一入口但走参数化：证明新 source 不会把"有防护"的写法也报出来。
+    # 这里用 PDO 预处理而不是 mysqli_real_escape_string——后者当前**不被认作净化点**
+    # （`\breal_escape_string\b` 匹配不到 `mysqli_real_escape_string`：`_` 是词字符，`\b` 不成立），
+    # 而一刀切把它加进净化名单会压掉 DVWA sqli/medium 的**真阳性**（那是数值上下文，转义救不了）。
+    # 那个缺口要按"字符串上下文 vs 数值上下文"分开判，不能顺手加一条正则——见验收记录 E9。
+    "safe_php_input_sql.php": (
+        "<?php\n"
+        "$raw = file_get_contents('php://input');\n"
+        "$data = json_decode($raw);\n"
+        "$pdo = new PDO($dsn, $user, $pass);\n"
+        "$stmt = $pdo->prepare(\"SELECT * FROM users WHERE name = ?\");\n"
+        "$stmt->execute([$data->name]);\n"
+    ),
     "safe_js_token.js": (
         "fetch('/api/csrf').then(function (r) { return r.json(); }).then(function (d) {\n"
         "    document.getElementById('token').value = d.csrf_token;\n"
@@ -289,6 +312,8 @@ MUST_FIND = [
     # 打包器用的就是 eval —— JZ-CODE-001（动态执行）同行命中是真阳性，答案要跟着事实走，
     # 不是把发现压掉。
     ("vuln_js_packed.js", "JZ-CODE-001", "eval(function ("),
+    # E9：PHP 请求体（php://input）作为 source 的正例（DVWA authbypass 的真实形态）
+    ("vuln_php_input_sql.php", "JZ-SQLI-003", "mysqli_query"),
     ("requirements.txt", "JZ-DEP-002", "pyyaml==5.3"),
     ("requirements.txt", "JZ-DEP-005", "requests==2.28.1"),
 ]
@@ -311,6 +336,8 @@ MUST_NOT_FIND = [
     ("safe_php_sql.php", "JZ-SQLI-003"),
     ("safe_php_cipher.php", "JZ-CRYPTO-003"),
     ("safe_js_token.js", "JZ-JSINSEC-001"),
+    # E9：同一入口（php://input）但走净化 → 不该报
+    ("safe_php_input_sql.php", "JZ-SQLI-003"),
 ]
 
 FILLER = (

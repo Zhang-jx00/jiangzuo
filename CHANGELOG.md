@@ -6,6 +6,56 @@
 跟着改到实际那天，不要留"写稿那天"。这条由 `validate_skill.py` 核对，对不上即报错——
 2026-10-16 复核时按此修正了 8 条（0.23–0.29 由 10-14 改 10-15、0.6.0 由 10-05 改 10-06）。
 
+## [0.43.0] - 2026-10-20
+
+E9：**PHP 读原始请求体（php://input）也是"外部可控输入"——这一整类入口之前是盲区。**
+
+- **起因**：§11 第 2 项"DVWA 剩余 6 个 MISS 模块"。按规矩**先读靶场真实代码**再动手，
+  逐个读下来发现 6 个 MISS 里有一个是**规则词表的缺口**，不是能力边界：
+
+  | MISS 模块 | 读了源码后的判定 |
+  |---|---|
+  | **authbypass** | ✅ **可做**。真身是 `vulnerabilities/authbypass/change_user_details.php:47`：`file_get_contents('php://input')` → `json_decode` → `$data->first_name` → 拼进 SQL → `mysqli_query`。**我们的 source 词表只有 `$_GET/$_POST/$_REQUEST`，`php://input` 整类看不见** |
+  | xss_s | 存储型（写库再回显），**跨请求**——静态单文件污点流到不了，写不成 |
+  | csrf | 缺失型（表单 `method="GET"` 且无 token）。把 GET 表单也算"状态变更"会误伤 DVWA 的 impossible 档（同一份 index.php 服务所有档位），不划算 |
+  | bac | 越权＝缺少检查，静态不可证；`JZ-HORZ-001` 已停用（夹具 4/4 全误报） |
+  | brute / captcha | 缺失型（限流 / 令牌一次性），静态不可证；且 `dvwa_coverage.py` 映射的 `JZ-BRUTE-001` / `JZ-CAPTCHA-001` **在规则库里根本不存在**——这两个模块按构造就不可能命中 |
+
+- **修法**：给 **6 条 PHP 请求体规则**（SQLI-003 / CMDI-001 / CODE-001 / DESER-001 /
+  TRAVERSAL-001 / SSRF-001）各加一个 source 形态：
+  `file_get_contents\s*\(\s*['"]php://input['"]`
+  ⚠️ 必须匹配**调用形状**而不是字符串内容——落在字符串字面量里的命中会被 `match_in_string`
+  过滤掉（那是"夹具里当字符串写的漏洞写法"逼出来的教训）。
+- **实测（重 clone 三个仓库，A/B 逐条对比）**：
+  - DVWA 主类别检出 **13/19 → 14/19 = 73.7%**（authbypass 命中）
+  - DVWA 发现 67 → 69、结论 66 → 68，**新增 2 条全是真阳性**（authbypass 的 SQLi +
+    `api/src/HealthController.php:88` 的 `exec("ping -c 4 " . $target)`），**0 误报、0 消失**
+  - flask 13/结论 1、requests 4/结论 0、本仓库自扫 8/结论 0/另计 8 —— **一律不变**
+  - 语料：新增 1 正例（`vuln_php_input_sql.php`，形状取自 DVWA 真实源码）+ 1 负例
+    （同一入口但走 PDO 参数化）⇒ **24/24 检出、0/18 安全样本被误报、误报率 0/24**
+- **判据**：`TestAuditPhpRequestBody` 三条——逐族正例（6 族各一条最小 PHP 形态）、
+  「读本地文件不算请求体」、参数化仍被拦。**变异校准 12/12 全红**（新增 3 条：
+  摘掉 source / source 放宽成"任何 file_get_contents" / 把字面量改掉）。
+- **本轮量出、但**没有**一并修掉的三个缺口**（都写进待办，不静默留着）：
+  1. **JZ-XSS-002 暂不接这个 source**：它的 sink 最宽（任何 `print` 一个 tainted 变量都报），
+     加上请求体 source 后 DVWA 的 `check_token_high/impossible.php` 报出 **2 条误报**——
+     `check_token()` 校验完只回一个**常量** status JSON。根因在**引擎**（见第 2 条）不在规则，
+     先修引擎再接这条。
+  2. **引擎的"污点穿函数返回值"这条近似**：`$ret = check_token($token);` 会让 `$ret` 继承
+     `$token` 的污点。设计已想清：用户自定义函数的返回值**不继承**入参污点，
+     **除非该函数有 `return` 语句读过它的形参**（这样 `function get($k){ return $_GET[$k]; }`
+     这种原样转发的链不断）。本轮没做——它会牵动跨函数形参的名字归一（PHP 形参 `$data`
+     在 `_params()` 里被转成 `_data`，与载体名 `data` 不同名）。
+  3. **`mysqli_real_escape_string` 不被认作净化点**：`\breal_escape_string\b` 匹配不到
+     `mysqli_real_escape_string`（`_` 是词字符，`\b` 不成立），而这是 PHP 最主流的 SQL 转义函数，
+     DVWA 用了 20 多处。**但不能一刀切加进净化名单**——DVWA `sqli/medium.php` 是**数值上下文**，
+     转义救不了它，加了会压掉真阳性。要做必须**按上下文分**（字符串上下文 vs 数值上下文）。
+  4. 顺带量出：`JZ-CODE-001` 的 `\bexec\s*\(` 把 PHP 的**命令执行** `exec()` 归成了
+     "动态代码执行"，而 `JZ-CMDI-001` 的 PHP sink 缺 `exec` ⇒ 两边一起改才对，
+     否则同一条会报两次。
+- 测试 **143 → 146**；validate 17 信息/0 警告/0 错误；preflight PASS；`audit_rules --validate` RULES-OK（33）；
+  靶场 ACCEPT-OK；ship_check L1 SHIP-OK。
+
 ## [0.42.0] - 2026-10-20
 
 E8：**给"照着跑就能看到"的期望值补判据——写死的数字会悄悄错很久，而错的是基线时没人看得出来。**

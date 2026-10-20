@@ -131,6 +131,9 @@
    "sources": [
     {
      "pattern": "(?<!\\w)(?:request\\.getParameter|\\$_(?:GET|POST|REQUEST)|params\\[|c\\.Param)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     }
    ],
    "sanitizers": [
@@ -193,6 +196,9 @@
    "sources": [
     {
      "pattern": "(?<!\\w)(?:request\\.(?:args|form|json)|req\\.(?:body|query|params)|\\$_(?:GET|POST|REQUEST|COOKIE)|params\\[|argv)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     }
    ],
    "sanitizers": [
@@ -244,6 +250,9 @@
    "sources": [
     {
      "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|params\\[|sys\\.argv)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     }
    ],
    "sanitizers": [
@@ -291,6 +300,9 @@
    "sources": [
     {
      "pattern": "(?<!\\w)(?:request\\.|req\\.|\\$_|upload\\.)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     },
     {
      "pattern": "\\bopen\\s*\\([^)]*,\\s*[\\\"']rb"
@@ -349,6 +361,9 @@
    "sources": [
     {
      "pattern": "(?<!\\w)(?:request\\.(?:args|form|files)|req\\.(?:query|params|body|file)|\\$_(?:GET|POST|REQUEST|FILES|COOKIE)|params\\[)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     }
    ],
    "sanitizers": [
@@ -400,6 +415,9 @@
    "sources": [
     {
      "pattern": "\\b(?:request\\.\\w+|req\\.(?:query|body|params)|\\$_(?:GET|POST|REQUEST)|webhook_url|callback)\\b"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     },
     {
      "pattern": "\\b\\$_(?:GET|POST|REQUEST)\\s*\\["

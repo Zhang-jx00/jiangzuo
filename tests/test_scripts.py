@@ -1869,6 +1869,107 @@ class TestAuditOsv(unittest.TestCase):
         self.assertIn("RESULT: RULES-OK", r.stdout)
 
 
+class TestAuditPhpRequestBody(unittest.TestCase):
+    """E9：PHP 读原始请求体（php://input）也是"外部可控输入"——E9 之前是整类盲区。
+
+    PHP 的 JSON API 不走 $_POST，而是 `file_get_contents('php://input')` 读原始 body。
+    E9 之前 source 词表只有 $_GET/$_POST/$_REQUEST ⇒ 这一整类入口看不见。
+    DVWA `vulnerabilities/authbypass/change_user_details.php` 就是这个形态：
+    读 body → json_decode → 取字段 → 拼进 SQL → mysqli_query。
+
+    走通这条链要同时满足三件事，缺一件就断：
+      ① source 认得 `file_get_contents('php://input')`——**必须匹配调用形状**：
+         落在字符串字面量里的命中会被 match_in_string 过滤掉（那是夹具噪声逼出来的教训）；
+      ② 污点能从 `json_decode($raw)` 的返回值传到 `$data`；
+      ③ 污点能从 `$data->name` 这种对象属性取到。
+    7 条 PHP 请求体规则都接了这个 source ⇒ 逐族各测一遍，不能只测 SQLi 那族。
+    """
+
+    HEAD = ("<?php\n"
+            "$raw = file_get_contents('php://input');\n"
+            "$data = json_decode($raw);\n")
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_rb_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_request_body_reaches_each_php_rule(self):
+        cases = [
+            ("JZ-SQLI-003",
+             "$name = $data->name;\n"
+             "$sql = \"SELECT * FROM users WHERE name = '\" . $name . \"'\";\n"
+             "$res = mysqli_query($conn, $sql);\n"),
+            ("JZ-CMDI-001",
+             "$cmd = $data->cmd;\n"
+             "system(\"ls \" . $cmd);\n"),
+            ("JZ-CODE-001",
+             "$code = $data->code;\n"
+             "eval($code);\n"),
+            ("JZ-DESER-001",
+             "$obj = unserialize($raw);\n"),
+            ("JZ-TRAVERSAL-001",
+             "$page = $data->page;\n"
+             "include($page);\n"),
+            ("JZ-SSRF-001",
+             "$url = $data->url;\n"
+             "$body = file_get_contents($url);\n"),
+            # JZ-XSS-002 **暂不接**这个 source（E9 记录在案）：它的 sink 最宽
+            # （任何 print/echo 一个 tainted 变量都报），加上请求体 source 后，
+            # DVWA 的 check_token_high/impossible.php 报出 2 条**误报**——
+            # check_token() 校验完只回一个常量 status JSON，可它返回的仍是
+            # 入参派生的东西（引擎"污点穿函数返回值"这条近似）。
+            # 根因在引擎不在规则，先修引擎再接这条（见验收记录 E9 与待办）。
+        ]
+        for rule_id, body in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                self._write(tmp, "api.php", self.HEAD + body)
+                data, _ = self._scan(tmp, rule_id)
+                ids = [f["rule_id"] for f in data["findings"]]
+                self.assertIn(rule_id, ids,
+                              "请求体流到 %s 的 sink 都没报出来：%s" % (rule_id, ids))
+
+    def test_non_request_body_read_is_not_a_source(self):
+        """`file_get_contents('/etc/passwd')` 读的是本地文件，**不是请求体**。
+
+        source 词表认的是"读请求体"这个语义，不是"用了 file_get_contents"这个形状——
+        否则任何读本地文件的 PHP 都会被当成外部输入。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "read_file.php",
+                        "<?php\n"
+                        "$content = file_get_contents('/etc/passwd');\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '\" . $content . \"'\";\n"
+                        "$res = mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "notbody")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-SQLI-003", ids,
+                             "读本地文件被当成了请求体：%s" % ids)
+
+    def test_prepared_statement_still_blocks(self):
+        """同一入口但走参数化 ⇒ 不该报（语料里的 safe_php_input_sql.php 是同一件事）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "api.php",
+                        self.HEAD +
+                        "$pdo = new PDO($dsn, $user, $pass);\n"
+                        "$stmt = $pdo->prepare(\"SELECT * FROM users WHERE name = ?\");\n"
+                        "$stmt->execute([$data->name]);\n")
+            data, _ = self._scan(tmp, "prepared")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-SQLI-003", ids,
+                             "参数化写法被报成注入了：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 
