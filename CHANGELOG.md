@@ -6,6 +6,30 @@
 跟着改到实际那天，不要留"写稿那天"。这条由 `validate_skill.py` 核对，对不上即报错——
 2026-10-16 复核时按此修正了 8 条（0.23–0.29 由 10-14 改 10-15、0.6.0 由 10-05 改 10-06）。
 
+## [0.51.0] - 2026-10-21
+
+E17：PHP 的 `exec()` 是**命令执行**，不是"动态代码执行"。
+
+- **起因（复核实测）**：DVWA `vulnerabilities/api/src/HealthController.php:88` 的
+  `exec("ping -c 4 " . $target)` 被归到 **JZ-CODE-001** ⇒ **归错类**。根因两条：
+  ① `JZ-CODE-001` 的 sink 是 `\beval\s*\(|\bexec\s*\(` ⇒ `exec` 无条件命中；
+  ② `JZ-CMDI-001` 的 PHP exec sink 要求 `+`/`${` ⇒ **PHP 的 `.` 拼接压根不匹配**
+  （PHP 不用 `+` 做字符串拼接）⇒ 于是这条只被 CODE-001 认领。
+- **修法**：`JZ-CODE-001` 只留 `eval`；`JZ-CMDI-001` 的 exec sink 补上 `.` 拼接形态。
+  （Ruby 的 `Kernel#exec` 同样是命令执行 ⇒ 去掉 CODE-001 里的 exec 是修正不是漏报。）
+- **逐条 A/B（重建 E16 基线后对比）**：唯一变化是 `HealthController.php:88`
+  从 `JZ-CODE-001` 变成 **`JZ-CMDI-001`** ⇒ 归类修正；**其余 68 条逐条零差异**，
+  条数不变（DVWA 69/68、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 全不变）。
+- **判据**：`TestAuditExecClassification` **2 条**（exec 归 CMDI 且不再归 CODE-001 ／
+  eval 仍归 CODE-001），变异校准 **27/27 全红**（新增 1 条）。
+- **同时把 E17 原定主题（`mysqli_real_escape_string` 按上下文分）改判**：
+  复核 DVWA 当前 master 发现 `real_escape_string` 命中 **31 行**（用在登录/改密代码），
+  而 `sqli/source/low.php` 的 `$id = $_REQUEST['id']` **没有转义** ⇒ 那里的 SQLi 是真阳性；
+  转义过的 `csrf/test_credentials.php` 等处是**误报**（转义在**引号内**才有效），
+  但 `sqli_blind/source/medium.php` 是**转义了却在引号外**（数值上下文 ⇒ 转义救不了）⇒
+  **一刀切加净化点会压掉真阳性**，而按插入上下文生效需要"**净化点分 sink**"这种**架构级能力**
+  ⇒ 并入能力边界那一轮，不硬塞。
+
 ## [0.50.0] - 2026-10-21
 
 E16：`JZ-XSS-002` 接上 `php://input`（PHP 读原始请求体也是"外部可控输入"）。

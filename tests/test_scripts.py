@@ -2706,6 +2706,62 @@ class TestAuditPhpInputXss(unittest.TestCase):
                              "读本地文件被当成了请求体：%s" % ids)
 
 
+class TestAuditExecClassification(unittest.TestCase):
+    """E17：PHP 的 `exec()` 是**命令执行**，不是"动态代码执行"。
+
+    复核（实测）：DVWA `vulnerabilities/api/src/HealthController.php:88` 的
+    `exec("ping -c 4 " . $target)` 被归到 **JZ-CODE-001（动态代码执行）** ⇒ **归错类**。
+    根因两条：
+    ① `JZ-CODE-001` 的 sink 是 `\beval\s*\(|\bexec\s*\(` ⇒ **`exec` 无条件命中**；
+    ② `JZ-CMDI-001` 的 PHP exec sink 要求 `+` 或 `${` ⇒ **PHP 的 `.` 拼接压根不匹配**
+       （PHP 不用 `+` 做字符串拼接）⇒ 于是这条只被 CODE-001 认领。
+
+    修法：CODE-001 只留 `eval`；CMDI-001 的 exec sink 补上 `.` 拼接形态。
+    ⚠️ **Ruby 的 `Kernel#exec` 同样是命令执行**，去掉 CODE-001 里的 exec 对它是修正不是漏报。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_ex_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_php_exec_is_command_execution_not_dynamic_code(self):
+        """`exec("ping -c 4 " . $target)` ⇒ 归 JZ-CMDI-001，**不**归 JZ-CODE-001。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$target = $_GET['host'];\n"
+                        "exec(\"ping -c 4 \" . $target);\n")
+            data, _ = self._scan(tmp, "exec")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-CMDI-001", ids,
+                          "PHP 的 exec 没被认成命令执行：%s" % ids)
+            self.assertNotIn("JZ-CODE-001", ids,
+                             "PHP 的 exec 还被当成动态代码执行：%s" % ids)
+
+    def test_eval_still_reported_as_dynamic_code(self):
+        """`eval($x)` ⇒ 仍归 JZ-CODE-001（去掉 exec 不能误伤 eval）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$x = $_GET['x'];\n"
+                        "eval($x);\n")
+            data, _ = self._scan(tmp, "eval")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-CODE-001", ids,
+                          "eval 不再被认成动态代码执行：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

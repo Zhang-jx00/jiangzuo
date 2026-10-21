@@ -901,6 +901,37 @@ U+FFFD 字符** ⇒ 源码里真的混进了坏字符 ⇒ **新判据当场把�
 ③ **性能读数会偶发抖动**：本轮曾测到 10.129 ms/文件，复测 **5.265**（上一轮 5.357，同级）⇒
    CI 的性能护栏用 `--repeat 1`（**单次测量**）⇒ 偶发抖动可能让 CI 误红 ⇒ 已登记为待办。
 
+## v0.51.0 E17（PHP 的 `exec()` 是命令执行，不是"动态代码执行"）
+
+**起因（复核实测）**：DVWA `vulnerabilities/api/src/HealthController.php:88` 的
+`exec("ping -c 4 " . $target)` 被归到 **JZ-CODE-001** ⇒ **归错类**。根因两条：
+① `JZ-CODE-001` 的 sink 是 `\beval\s*\(|\bexec\s*\(` ⇒ `exec` **无条件命中**；
+② `JZ-CMDI-001` 的 PHP exec sink 要求 `+`/`${` ⇒ **PHP 的 `.` 拼接压根不匹配**
+（PHP 不用 `+` 做字符串拼接）⇒ 于是这条只被 CODE-001 认领。
+
+**修法**：`JZ-CODE-001` 只留 `eval`；`JZ-CMDI-001` 的 exec sink 补上 `.` 拼接形态。
+（Ruby 的 `Kernel#exec` 同样是命令执行 ⇒ 去掉 CODE-001 里的 exec 是**修正**不是漏报。）
+
+**逐条 A/B**（**重建 E16 基线**后对比）：
+
+| 项 | E16 | E17 | 判定 |
+|---|---|---|---|
+| `HealthController.php:88` 的 rule_id | JZ-CODE-001 | **JZ-CMDI-001** | **归类修正**（同一条、同位置） |
+| 其余 68 条 | — | — | **逐条零差异** |
+| DVWA findings / 结论 | 69 / 68 | **69 / 68** | 条数不变 |
+| flask / requests / 自扫 / 覆盖 / 语料 | 13/1 ｜ 4/0 ｜ 8/0/8 ｜ 14/19 ｜ 25/25 | **同** | 全部一字未变 |
+
+**判据**：`TestAuditExecClassification` **2 条**（exec 归 CMDI 且不再归 CODE-001 ／
+eval 仍归 CODE-001）；变异校准 **27/27 全红**（新增 1 条：把 `exec` 加回 CODE-001）。
+
+**同时把 E17 原定主题（`mysqli_real_escape_string` 按上下文分）改判**（复核证据齐全）：
+DVWA 当前 master 里 `real_escape_string` 命中 **31 行**（用在登录/改密代码）；而
+`sqli/source/low.php` 的 `$id = $_REQUEST['id']` **没有转义** ⇒ 那里的 SQLi 是**真阳性**；
+转义过的 `csrf/test_credentials.php`、`csrf/source/high.php` 是**误报**（转义在**引号内**才有效）；
+但 `sqli_blind/source/medium.php` 是**转义了却在引号外**（数值上下文 ⇒ 转义救不了）⇒
+**一刀切加净化点会压掉真阳性**；而"按插入上下文生效"需要"**净化点分 sink**"这种**架构级能力**
+⇒ 并入能力边界那一轮（不硬塞进本轮）。
+
 
 
 

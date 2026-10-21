@@ -178,7 +178,7 @@
      "pattern": "\\bsubprocess\\.(?:run|call|check_output|Popen|check_call)\\s*\\([^)]*shell\\s*=\\s*True"
     },
     {
-     "pattern": "\\b(?:exec|execSync)\\s*\\([^)]*(?:\\+|\\$\\{)"
+     "pattern": "\\b(?:exec|execSync)\\s*\\([^)]*(?:\\+|\\$\\{|\\.\\s*\\$)"
     },
     {
      "pattern": "\\b(?:system|shell_exec|passthru|popen|proc_open)\\s*\\(\\s*[\"'][^\"']*[\"']\\s*(?:\\.|\\+)"
@@ -235,7 +235,7 @@
    ],
    "sinks": [
     {
-     "pattern": "\\beval\\s*\\(|\\bexec\\s*\\("
+     "pattern": "\\beval\\s*\\("
     },
     {
      "pattern": "\\bnew\\s+Function\\s*\\(|\\bsetTimeout\\s*\\(\\s*[\"'`]|\\bsetInterval\\s*\\(\\s*[\"'`]"
