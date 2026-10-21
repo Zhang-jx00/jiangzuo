@@ -2762,6 +2762,66 @@ class TestAuditExecClassification(unittest.TestCase):
                           "eval 不再被认成动态代码执行：%s" % ids)
 
 
+class TestAuditOverwriteClearsTaint(unittest.TestCase):
+    """E18：赋值**覆盖**了目标时，摘要为空就**清掉**目标原有的污点。
+
+    实测的残留（E11 修返回摘要时留下的）：`$x = $_GET['a']; $x = check_token($x); echo $x;`
+    仍报 XSS —— 第二次赋值把 `$x` **覆盖成常量**了（`check_token` 的返回值全是常量），
+    `$x` 上原有的污点却还留着。
+
+    ⚠️ 配对那条是**防误伤**的：`passthrough` 的返回值**确实依赖**形参 ⇒ 必须**仍然报**。
+    （把"清旧污点"做成"一律清"就会把真阳性也清掉。）
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_ow_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    CONST_HELPER = ("<?php\n"
+                    "function check_token($token) {\n"
+                    "    $ret = array('status' => 'ok', 'message' => 'constant');\n"
+                    "    return json_encode($ret);\n"
+                    "}\n")
+    PASSTHROUGH = "<?php\nfunction passthrough($k) { return $k; }\n"
+
+    def test_overwrite_by_constant_returning_helper_drops_old_taint(self):
+        """被"返回常量的函数"覆盖 ⇒ 旧污点不该留着 ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        self.CONST_HELPER +
+                        "$x = $_GET['a'];\n"
+                        "$x = check_token($x);\n"
+                        "echo $x;\n")
+            data, _ = self._scan(tmp, "overwrite")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "被常量返回值覆盖后旧污点还留着：%s" % ids)
+
+    def test_overwrite_by_passthrough_keeps_taint(self):
+        """配对：返回值**确实依赖**形参 ⇒ 必须仍然报（防误伤真阳性）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        self.PASSTHROUGH +
+                        "$x = $_GET['a'];\n"
+                        "$x = passthrough($x);\n"
+                        "echo $x;\n")
+            data, _ = self._scan(tmp, "keep")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "真阳性被一起清掉了：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

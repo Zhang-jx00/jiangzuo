@@ -672,6 +672,15 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
                     tainted[rtarget] = hops + [
                         {"file": fn["file"], "line": lineno,
                          "kind": "propagate", "text": text}]
+                else:
+                    # 摘要为空 ⇒ 这个赋值把目标**覆盖成不含污点的东西**
+                    # （E18：返回值不依赖形参，如 `check_token($t)` 只回常量）
+                    # ⇒ 目标上**原有的污点不该留着**。
+                    # 不清的后果实测：`$x = $_GET['a']; $x = check_token($x); echo $x;`
+                    # 仍报 XSS（假阳性残留）。
+                    # ⚠️ 保守起见只在**确实走了摘要分支**时清（这里就是），
+                    # 且清的是"这个变量自己的旧污点"，不影响别的变量。
+                    tainted.pop(rtarget, None)
                 if src_hit:
                     # 同行内联读了 source ⇒ 照旧记一笔（修复前的 src_hit 分支也记）。
                     # 漏了这一笔，"source 与 sink 同行"这条最直白的流就丢载体
