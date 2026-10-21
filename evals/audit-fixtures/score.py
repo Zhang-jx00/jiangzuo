@@ -137,8 +137,9 @@ def score(corpus, sarif=None):
                  % (doc["version"], len(doc["runs"][0]["tool"]["driver"]["rules"]),
                     len(doc["runs"][0]["results"]), len(doc["runs"][0]["results"]) == len(findings),
                     u"通过" if ok else u"**失败**"),
-                 u"- 说明：这是**本仓库实现的字段级自检**，未跑官方 sarif-validator"
-                 u"（离线环境无该工具），所以只声称结构自检通过。"]
+                 u"- 说明：这是**本仓库实现的字段级自检**（v0.55.0 起含 SARIF 2.1.0 schema "
+                 u"允许属性白名单）；官方 validator（@microsoft/sarif-multitool）**存在但非零依赖**，"
+                 u"v0.55.0 已在本机跑通一次（0 error），CI 跑不了它 ⇒ 只声称结构自检通过。"]
         rows.append(u"- 结果：%s" % (u"通过" if ok else u"失败"))
         ok = ok
     else:

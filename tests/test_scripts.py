@@ -27,8 +27,8 @@ PY = sys.executable or "python"
 SCRIPT_NAMES = ["audit_graph.py", "audit_index.py", "audit_map.py", "audit_rules.py",
                 "review_packet.py",
                 "audit_scan.py", "evolve_report.py", "lookup.py", "new_doc.py",
-                "preflight.py", "project_scan.py", "ship_check.py",
-                "validate_skill.py"]
+                "preflight.py", "project_scan.py", "sarif_schema_extract.py",
+                "ship_check.py", "validate_skill.py"]
 
 
 def run(args, cwd=REPO):
@@ -1819,6 +1819,115 @@ class TestAuditSarifCheck(unittest.TestCase):
                 mutate(broken)
                 problems = audit_scan.sarif_selfcheck(broken)
                 self.assertTrue(problems, "坏 SARIF 没被抓出来：%s" % name)
+
+
+class TestAuditSarifSchema(unittest.TestCase):
+    """E21：SARIF 必须过官方 SARIF 2.1.0 schema。
+
+    v0.54.0 之前把 conceptualName 塞在 physicalLocation 里——官方
+    sarif-multitool validate 报 JSON1005（8 条 error），而当时的字段级自检是
+    绿的：自检压根没看 codeFlows 里的 location。这条测试把那个盲区钉死：
+    同一条里既验自家产物干净，也验三类坏数据（多属性、message 放错层、
+    codeFlows 里的坏 location）都能被抓出来，还验自定义 properties 键不被误伤。
+    """
+
+    PHP = ("<?php\n"
+           "$q = $_GET['q'];\n"
+           "$sql = \"SELECT * FROM t WHERE id = \" . $q;\n"
+           "mysql_query($sql);\n")
+
+    def _sarif(self, tmp):
+        with io.open(os.path.join(tmp, "v.php"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(self.PHP)
+        sarif = os.path.join(tmp, "r.sarif")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), tmp, "--sarif", sarif])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(sarif, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _flow_location(self, doc):
+        for res in doc["runs"][0]["results"]:
+            for cf in res.get("codeFlows") or []:
+                for tf in cf.get("threadFlows") or []:
+                    for loc in tf.get("locations") or []:
+                        return loc
+        return None
+
+    def test_real_sarif_passes_and_keeps_flow_info(self):
+        sys.path.insert(0, SCRIPTS)
+        import audit_scan
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._sarif(tmp)
+            self.assertEqual([], audit_scan.sarif_selfcheck(doc), "自家产物没过自检")
+            self.assertEqual([], audit_scan.sarif_schema_problems(doc))
+            flow_loc = self._flow_location(doc)
+            self.assertIsNotNone(flow_loc,
+                                 "夹具没产出数据流，测的就不是 codeFlows 那条路")
+            phys = flow_loc["location"]["physicalLocation"]
+            self.assertNotIn("conceptualName", phys)
+            self.assertIn("message", flow_loc["location"],
+                          "message 属于 location 层")
+            self.assertNotIn("message", phys,
+                             "message 不属于 physicalLocation 层")
+            self.assertTrue((flow_loc["location"].get("message") or {}).get("text"))
+
+    def test_bad_properties_are_caught_including_codeflows(self):
+        sys.path.insert(0, SCRIPTS)
+        import audit_scan
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._sarif(tmp)
+            cases = {
+                "physicalLocation 多属性": lambda l: l["location"]["physicalLocation"]
+                    .__setitem__("conceptualName", "x"),
+                "message 放错层": lambda l: l["location"]["physicalLocation"]
+                    .__setitem__("message", {"text": "x"}),
+            }
+            for name, mutate in cases.items():
+                broken = json.loads(json.dumps(doc))
+                loc = self._flow_location(broken)
+                self.assertIsNotNone(loc)
+                mutate(loc)
+                problems = audit_scan.sarif_selfcheck(broken)
+                self.assertTrue(problems, "坏 SARIF 没被抓出来：%s" % name)
+                self.assertTrue(any("schema 不允许" in p for p in problems),
+                                "报的不是 schema 违规：%s" % problems)
+            # results[].locations 这条路（自检本来就在看）同样要能抓 schema 违规
+            broken = json.loads(json.dumps(doc))
+            broken["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+                "conceptualName"] = "x"
+            problems = audit_scan.sarif_selfcheck(broken)
+            self.assertTrue(any("conceptualName" in p for p in problems),
+                            "locations 层的 schema 违规没被抓：%s" % problems)
+
+    def test_custom_property_keys_are_not_flagged(self):
+        """自定义键（jiangzuo:context 之类）住在 propertyBag 里，不该被当成违规。"""
+        sys.path.insert(0, SCRIPTS)
+        import audit_scan
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._sarif(tmp)
+            res = doc["runs"][0]["results"][0]
+            res.setdefault("properties", {})["jiangzuo:context"] = "main"
+            res["properties"]["custom-key"] = [1, 2, 3]
+            self.assertEqual([], audit_scan.sarif_schema_problems(doc),
+                             "自定义 properties 键被误伤了")
+
+    def test_schema_extractor_reports_mismatch_with_exit_code(self):
+        """提取器对着残缺 schema 必须退出码非零——工具"跳过"不能长得像"通过"。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            mini = os.path.join(tmp, "mini.json")
+            with io.open(mini, "w", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps({
+                    "additionalProperties": False,
+                    "properties": {"runs": {"type": "array"}},
+                    "definitions": {"location": {
+                        "additionalProperties": False,
+                        "properties": {"id": {"type": "integer"}}}}},
+                    ensure_ascii=False))
+            r = run([os.path.join(SCRIPTS, "sarif_schema_extract.py"), "--check",
+                     "--schema-file", mini])
+            self.assertNotEqual(r.returncode, 0,
+                                "白名单与残缺 schema 不一致却退出码 0：%s" % r.stdout)
+            self.assertIn("MISSING-IN-SCHEMA", r.stdout)
 
 
 class TestAuditOsv(unittest.TestCase):

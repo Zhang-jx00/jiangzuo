@@ -6,6 +6,40 @@
 跟着改到实际那天，不要留"写稿那天"。这条由 `validate_skill.py` 核对，对不上即报错——
 2026-10-16 复核时按此修正了 8 条（0.23–0.29 由 10-14 改 10-15、0.6.0 由 10-05 改 10-06）。
 
+## [0.55.0] - 2026-10-21
+
+E21：**SARIF 过官方 SARIF 2.1.0 schema** —— 修一个真错误，并把 schema 校验固化进零依赖自检。
+
+- **起因（§11 第 14 项）**：仓库里那条"官方 `sarif-validator` 并没有可执行命令行"的口径**是错的**。
+  `@microsoft/sarif-multitool` 5.8.0 提供 `sarif-multitool validate`；本轮装上跑了一遍，
+  我们的 SARIF **报 8 条 error**，全部是
+  `runs[0].results[i].codeFlows[0].threadFlows[0].locations[0].location.physicalLocation.conceptualName`
+  —— 官方 schema 对 `physicalLocation` 是 `additionalProperties=false`，**不认 `conceptualName`**。
+- **修法**：删掉 `conceptualName`，把它承载的信息（数据流环节类型）挪进 `location.message.text` 前缀
+  （`[source] …` / `[sink] …`）⇒ 信息不丢、产物合规。
+  ⚠️ 修的时候**我自己第一版就改错了**：`message` 被塞进 `physicalLocation` ——
+  `message` 属于 **`location`** 层，`physicalLocation` 不允许 ⇒ **同样是 schema 违规**。
+  正确形态：`location.physicalLocation` 与 `location.message` **平级**。
+- **判据**：把官方 schema 的「允许属性」白名单**硬编码**进 `sarif_selfcheck`
+  （新增 `scripts/sarif_schema_extract.py`：联网时可当场核对，CI 离线用硬编码那份）⇒
+  **零依赖也能抓到同类错误**。同时补上一个**旧盲区**：旧自检只查 `results[].locations`，
+  **压根没看 `codeFlows` 里的 location** —— 而这次 8 条错误**全部长在 `codeFlows` 里**。
+- **判据能红**：`TestAuditSarifSchema` **4 条**（真实产物必须干净 / 三类坏数据必须被抓 /
+  自定义 `properties` 键不得误伤 / 提取器对不上时必须退出码非零）。
+- **变异校准 32/32 全红**（新增 2 条：把 `conceptualName` 塞回去、把 `message` 放错层）。
+  ⚠️ 第二条**第一次挂错了 test_id**：挂的那条测试是"手搓一份坏 SARIF 再喂自检"，
+  **压根不经过 `to_sarif`** ⇒ 变异后照样绿 ⇒ **校准器当场报 GREEN**（"锁无效"）。
+  改挂到"真实产物路径"上才真红 ⇒ 教训同前几轮：**夹具必须真的经过被测路径**。
+- **官方 validator 复跑**：修完再跑 `sarif-multitool validate` ⇒ **0 error**。
+  ⚠️ **它的退出码不可信**：报着 8 条 error 仍返回 0、并打印 "Analysis completed successfully"
+  ⇒ 只能解析输出里的 error 行，不能看退出码。
+- **为什么值得做**：SARIF 是交付产物，schema 违规会让 GitHub code scanning **上传被拒**
+  ⇒ 这是**交付可用性**问题，不是格式洁癖。
+- **零回退**：本轮只动 SARIF 输出层与自检，**不动引擎** ⇒ 三仓/自扫/语料数字一字未变
+  （DVWA 69/68、flask 13/1、requests 4/0、自扫 8/结论0/另计8、覆盖 14/19、语料 25/25 & 0/19）。
+- 测试 **186 → 190**；变异校准 **30 → 32**；白名单与官方 schema **19 个类型逐一对齐**
+  （`SCHEMA-TABLE-OK`）；bench **5.172 ms/文件**（预算 ≤20）。
+
 ## [0.54.0] - 2026-10-21
 
 E20：**误报率口径收口** —— 把"硬误报 1/60"按**现行分母**重述，并把未判定的部分**明确标出来**。

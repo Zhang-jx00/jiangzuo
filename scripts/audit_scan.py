@@ -1136,11 +1136,12 @@ def to_sarif(payload, skill_version):
                 "region": {"startLine": max(1, int(f["line"]))}}}],
             "partialFingerprints": {"primaryLocationLineHash": f["id"]},
             "codeFlows": [{"threadFlows": [{"locations": [
-                {"location": {"physicalLocation": {
-                    "artifactLocation": {"uri": hop["file"], "uriBaseId": "%SRCROOT%"},
-                    "region": {"startLine": max(1, int(hop["line"]))},
-                    "conceptualName": hop.get("kind", "")},
-                    "message": {"text": hop.get("text", "")[:200]}}}
+                {"location": {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": hop["file"], "uriBaseId": "%SRCROOT%"},
+                        "region": {"startLine": max(1, int(hop["line"]))}},
+                    "message": {"text": "[%s] %s" % (hop.get("kind", ""),
+                                                    hop.get("text", "")[:180])}}}
                 for hop in f.get("path", [])]}]}] if f.get("path") else [],
             "properties": {"severity": f["severity"],
                            "confidence": f["confidence"]["value"],
@@ -1508,12 +1509,159 @@ def recheck_md(report):
 
 SARIF_LEVELS = {"none", "note", "warning", "error"}
 
+# ── SARIF 2.1.0 schema「允许属性」白名单 ──────────────────────────────────
+# 来源：https://json.schemastore.org/sarif-2.1.0.json
+# 由 scripts/sarif_schema_extract.py 提取（2026-10-21）后硬编码，保证零依赖。
+# 为什么要有它：这些对象的 schema 是 additionalProperties=false，多一个属性名
+# 就是官方 validator 的 JSON1005 错误。v0.54.0 之前把 conceptualName 塞在
+# physicalLocation 里，官方 sarif-multitool validate 报 8 条 error，而当时的
+# 字段级自检是绿的——自检压根没看 codeFlows 里的 location。
+SARIF_SCHEMA_PROPS = {
+    "sarifLog": {"$schema", "inlineExternalProperties", "properties",
+                 "runs", "version"},
+    "run": {"addresses", "artifacts", "automationDetails", "baselineGuid",
+            "columnKind", "conversion", "defaultEncoding",
+            "defaultSourceLanguage", "externalPropertyFileReferences", "graphs",
+            "invocations", "language", "logicalLocations", "newlineSequences",
+            "originalUriBaseIds", "policies", "properties", "redactionTokens",
+            "results", "runAggregates", "specialLocations", "taxonomies",
+            "threadFlowLocations", "tool", "translations",
+            "versionControlProvenance", "webRequests", "webResponses"},
+    "tool": {"driver", "extensions", "properties"},
+    "toolComponent": {"associatedComponent", "contents", "dottedQuadFileVersion",
+                      "downloadUri", "fullDescription", "fullName",
+                      "globalMessageStrings", "guid", "informationUri",
+                      "isComprehensive", "language",
+                      "localizedDataSemanticVersion", "locations",
+                      "minimumRequiredLocalizedDataSemanticVersion", "name",
+                      "notifications", "organization", "product", "productSuite",
+                      "properties", "releaseDateUtc", "rules", "semanticVersion",
+                      "shortDescription", "supportedTaxonomies", "taxa",
+                      "translationMetadata", "version"},
+    "result": {"analysisTarget", "attachments", "baselineState", "codeFlows",
+               "correlationGuid", "fingerprints", "fixes", "graphTraversals",
+               "graphs", "guid", "hostedViewerUri", "kind", "level", "locations",
+               "message", "occurrenceCount", "partialFingerprints", "properties",
+               "provenance", "rank", "relatedLocations", "rule", "ruleId",
+               "ruleIndex", "stacks", "suppressions", "taxa", "webRequest",
+               "webResponse", "workItemUris"},
+    "location": {"annotations", "id", "logicalLocations", "message",
+                 "physicalLocation", "properties", "relationships"},
+    "physicalLocation": {"address", "artifactLocation", "contextRegion",
+                         "properties", "region"},
+    "artifactLocation": {"description", "index", "properties", "uri", "uriBaseId"},
+    "region": {"byteLength", "byteOffset", "charLength", "charOffset",
+               "endColumn", "endLine", "message", "properties", "snippet",
+               "sourceLanguage", "startColumn", "startLine"},
+    "message": {"arguments", "id", "markdown", "properties", "text"},
+    "multiformatMessageString": {"markdown", "properties", "text"},
+    "codeFlow": {"message", "properties", "threadFlows"},
+    "threadFlow": {"id", "immutableState", "initialState", "locations", "message",
+                   "properties"},
+    "threadFlowLocation": {"executionOrder", "executionTimeUtc", "importance",
+                            "index", "kinds", "location", "module",
+                            "nestingLevel", "properties", "stack", "state",
+                            "taxa", "webRequest", "webResponse"},
+    "reportingDescriptor": {"defaultConfiguration", "deprecatedGuids",
+                            "deprecatedIds", "deprecatedNames", "fullDescription",
+                            "guid", "help", "helpUri", "id", "messageStrings",
+                            "name", "properties", "relationships",
+                            "shortDescription"},
+    "reportingConfiguration": {"enabled", "level", "parameters", "properties",
+                                "rank"},
+    "artifact": {"contents", "description", "encoding", "hashes",
+                 "lastModifiedTimeUtc", "length", "location", "mimeType",
+                 "offset", "parentIndex", "properties", "roles", "sourceLanguage"},
+    "address": {"absoluteAddress", "fullyQualifiedName", "index", "kind",
+                "length", "name", "offsetFromParent", "parentIndex", "properties",
+                "relativeAddress"},
+    "logicalLocation": {"decoratedName", "fullyQualifiedName", "index", "kind",
+                        "name", "parentIndex", "properties"},
+}
+
+# (父类型, 属性名) -> 子类型；"map:X" 表示该属性是 string->X 的映射
+SARIF_SCHEMA_CHILD = {
+    ("sarifLog", "runs"): "run",
+    ("run", "tool"): "tool",
+    ("run", "results"): "result",
+    ("run", "artifacts"): "artifact",
+    ("run", "originalUriBaseIds"): "map:artifactLocation",
+    ("tool", "driver"): "toolComponent",
+    ("tool", "extensions"): "toolComponent",
+    ("toolComponent", "rules"): "reportingDescriptor",
+    ("result", "message"): "message",
+    ("result", "locations"): "location",
+    ("result", "relatedLocations"): "location",
+    ("result", "codeFlows"): "codeFlow",
+    ("location", "physicalLocation"): "physicalLocation",
+    ("location", "message"): "message",
+    ("location", "logicalLocations"): "logicalLocation",
+    ("physicalLocation", "artifactLocation"): "artifactLocation",
+    ("physicalLocation", "region"): "region",
+    ("physicalLocation", "address"): "address",
+    ("codeFlow", "threadFlows"): "threadFlow",
+    ("codeFlow", "message"): "message",
+    ("threadFlow", "locations"): "threadFlowLocation",
+    ("threadFlow", "message"): "message",
+    ("threadFlowLocation", "location"): "location",
+    ("reportingDescriptor", "shortDescription"): "multiformatMessageString",
+    ("reportingDescriptor", "fullDescription"): "multiformatMessageString",
+    ("reportingDescriptor", "name"): "multiformatMessageString",
+    ("reportingDescriptor", "help"): "multiformatMessageString",
+    ("reportingDescriptor", "defaultConfiguration"): "reportingConfiguration",
+    ("reportingDescriptor", "messageStrings"): "map:multiformatMessageString",
+    ("artifact", "location"): "location",
+}
+
+
+def sarif_schema_problems(doc):
+    """按 SARIF 2.1.0 schema 的「允许属性」白名单查一遍。
+
+    只查 additionalProperties=false 的对象类型：多一个属性名就是官方
+    validator 的 JSON1005 错误。propertyBag（properties）这类开放键不查
+    ——查了会误伤 "jiangzuo:context" 这类自定义键。
+    """
+    problems = []
+
+    def check(kind, obj, where):
+        allowed = SARIF_SCHEMA_PROPS.get(kind)
+        if allowed is None or not isinstance(obj, dict):
+            return
+        for key in sorted(obj.keys()):
+            if key not in allowed:
+                problems.append(u"%s 含 schema 不允许的属性 %s（%s 类型）"
+                                % (where, key, kind))
+                continue
+            child = SARIF_SCHEMA_CHILD.get((kind, key))
+            if child is None:
+                continue
+            val = obj[key]
+            if child.startswith("map:"):
+                sub = child.split(":", 1)[1]
+                if isinstance(val, dict):
+                    for k2 in sorted(val.keys()):
+                        check(sub, val[k2], u"%s.%s[%s]" % (where, key, k2))
+                continue
+            if isinstance(val, list):
+                for i, item in enumerate(val):
+                    check(child, item, u"%s.%s[%d]" % (where, key, i))
+            elif isinstance(val, dict):
+                check(child, val, u"%s.%s" % (where, key))
+
+    check("sarifLog", doc, u"sarifLog")
+    return problems
+
 
 def sarif_selfcheck(doc):
     """按 GitHub code scanning 的必填口径自检（缺必填会被上传直接拒绝）。
 
-    只声称"字段级自检"：官方 sarif-validator 命令行并不存在，字段校验实际靠上传 API 拒绝，
-    所以这里通过 ≠ 官方通过。
+    再加一道 SARIF 2.1.0 schema 的「允许属性」白名单（sarif_schema_problems）：
+    官方 sarif-multitool validate 对多出来的属性报 JSON1005，而这类错误原来的
+    字段级自检看不见（codeFlows 里的 location 根本没被检查）。
+
+    口径（v0.55.0 订正）：官方 validator 是存在的——@microsoft/sarif-multitool
+    的 `sarif-multitool validate`，但它不是零依赖、得单独安装，所以线上 CI 跑
+    不了它。这里通过 ≠ 官方通过；但「schema 不允许的属性」这一类错误本地就能挡。
     """
     problems = []
     if doc.get("version") != SARIF_VERSION:
@@ -1553,6 +1701,7 @@ def sarif_selfcheck(doc):
                     problems.append(u"%s region.startLine 必须 ≥1" % where)
             if not (res.get("partialFingerprints") or {}).get("primaryLocationLineHash"):
                 problems.append(where + u" 缺 partialFingerprints（跨 run 去重靠它）")
+    problems.extend(sarif_schema_problems(doc))
     return problems
 
 
@@ -1667,7 +1816,7 @@ def main():
     probs = s.get("sarif_problems")
     if probs is not None:
         print(u"SARIF 字段级自检：%s"
-              % (u"通过（按 GitHub 必填口径；官方 validator 本机不可用，未跑）"
+              % (u"通过（GitHub 必填口径 + SARIF 2.1.0 schema 属性白名单）"
                  if not probs else u"未通过"))
         for pr in probs[:10]:
             print(u"  ✘ %s" % pr)

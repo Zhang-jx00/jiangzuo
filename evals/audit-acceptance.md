@@ -90,7 +90,7 @@ python evals/audit-fixtures/score.py --corpus ../eval-runs/audit-bench \
 2. **没有 AST**：正则 + 缩进/括号定界；同名函数按名字解析可能串味；模块级代码靠 `{module}` 伪作用域兜住。
 3. **鉴权/越权类**结论来自地图的"本文件内未见鉴权标记"，全局中间件与网关看不见 → 必须人工确认。
 4. **依赖建议集是样例基线**（6 条，含 CVE 编号），不等于 advisory feed；生产要接 `npm audit`/`pip-audit`。
-5. **SARIF 只做了字段级结构自检**，未跑官方 `sarif-validator`（本机离线无该工具）。
+5. **SARIF 的字段级自检**自 v0.55.0 起含 **SARIF 2.1.0 schema 允许属性白名单**（见 v0.55.0 节）；官方 validator（`@microsoft/sarif-multitool`）**存在但非零依赖**，v0.55.0 已在本机跑通一次（0 error），CI 跑不了它。
 6. 水平越权规则 `JZ-HORZ-001` 在夹具上 **4/4 全误报**，已按数据 `enabled: false` 停用，
    需要时 `--enable-all` 带回；这一类交回 `references/security.md` 的属主问句人审。
 
@@ -995,3 +995,37 @@ flask 1 条、requests 0 条 ⇒ 合成**现行结论区 69 条**。
 **这一轮的产出不是"修好"，是"把没判的变成判过的"** —— 口径立住了，下一轮才知道该修什么：
 7 条硬误报里 **4 条是"规则过宽"**（`preg_replace` 当动态代码执行 2 条、`error_reporting(E_ALL)` 当调试泄露 1 条、
 `$_SERVER['CONTENT_TYPE']` 当文件上传 2 条）⇒ 已排进后续轮次。
+
+## v0.55.0（E21）—— SARIF 过官方 SARIF 2.1.0 schema
+
+**这一轮做了什么**：把"我们的 SARIF 合不合规"从"字段级自检说了算"换成**官方 schema 的允许属性白名单**说了算。
+
+| 证据 | 结果 |
+|---|---|
+| 官方 `sarif-multitool validate`（**修复前**，@microsoft/sarif-multitool 5.8.0） | **8 条 error**，全部是 `runs[0].results[i].codeFlows[0].threadFlows[0].locations[0].location.physicalLocation.conceptualName`（JSON1005：schema 不允许该属性） |
+| 官方 `sarif-multitool validate`（**修复后**） | **0 error** |
+| 白名单与官方 schema 对账（`scripts/sarif_schema_extract.py --check`） | `SCHEMA-TABLE-OK 19 types` |
+| 零依赖自检（含白名单） | 真实产物 0 问题；三类坏数据全部被抓 |
+| 判据 | `TestAuditSarifSchema` **4 条** |
+| 变异校准 | **32/32 全红**（新增 2 条） |
+| 测试 | 186 → **190** |
+| 三仓/自扫/语料 | DVWA 69/68、flask 13/1、requests 4/0、自扫 8/结论0/另计8、覆盖 14/19、语料 25/25 & 0/19 —— **一字未变**（本轮只动 SARIF 输出层，不动引擎） |
+| 性能 | BENCH-OK **5.172 ms/文件**（预算 ≤20） |
+
+**口径订正（推翻旧结论）**：
+
+- 旧口径（v0.34 写进 CHANGELOG，至今散落在 7 处文档）："官方 `sarif-validator` 并没有可执行命令行（字段校验实际靠上传 API 拒绝）" ——
+  **这条是错的**。`@microsoft/sarif-multitool` 5.8.0 提供 `sarif-multitool validate`，本机已跑通。
+- 但**官方 validator 不是零依赖**（npm 包，CI 装不了）⇒ 所以把 schema 的「允许属性」白名单**硬编码**进零依赖自检，
+  CI 仍然能挡住这一类错误。**口径改为**：本地已用官方 validator 验过 **0 error**；CI 跑的是等价的白名单自检，
+  **不声称"CI 通过官方校验"**。
+- ⚠️ **官方 validator 的退出码不可信**：报着 8 条 error 仍返回 0、并打印 "Analysis completed successfully"
+  ⇒ 只能解析输出里的 error 行。
+
+**新发现的一个盲区（原判据没覆盖的地方）**：旧 `sarif_selfcheck` 只检查 `results[].locations`，
+**压根没看 `codeFlows` 里的 location** —— 而这次 8 条错误**全部长在 `codeFlows` 里**。
+⇒ 判据要覆盖"系统认为有问题"的全集，不能只查自己想到的那一处。
+
+**顺带记一条我自己的错**：修的时候第一版把 `message` 塞进了 `physicalLocation` ——
+`message` 属于 **`location`** 层，`physicalLocation` 不允许 ⇒ 同样是 schema 违规。
+是**变异校准**（"把 `message` 放错层"那一例）当场逮住的，不是眼力发现的。
