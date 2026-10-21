@@ -2645,6 +2645,67 @@ class TestValidateReplacementChars(unittest.TestCase):
         self.assertEqual(bad, [], u"仓库里还有 U+FFFD：%r" % (bad[:5],))
 
 
+class TestAuditPhpInputXss(unittest.TestCase):
+    """E16：`JZ-XSS-002` 接上 `php://input`（PHP 读原始请求体也是"外部可控输入"）。
+
+    E9 之所以没接这条：**引擎当时把"实参"当成了"返回值"**——
+    `check_token($token)` 的返回值全是常量（DVWA 真代码 `token_library_high.php`：
+    `$ret` 的每个字段都来自常量表 `$users`）⇒ 报成 XSS（**误报**）。
+    E11 修好「返回摘要」之后，这条才接得上来。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_ix_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_request_body_reaches_xss_rule(self):
+        """请求体 → 反射输出 ⇒ 该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$raw = file_get_contents('php://input');\n"
+                        "echo $raw;\n")
+            data, _ = self._scan(tmp, "xss")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "请求体没进 XSS 规则：%s" % ids)
+
+    def test_sanitized_output_is_not_reported(self):
+        """同样入口，但输出前 htmlspecialchars ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$raw = file_get_contents('php://input');\n"
+                        "echo htmlspecialchars($raw, ENT_QUOTES, 'UTF-8');\n")
+            data, _ = self._scan(tmp, "san")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "净化后的输出仍被报了：%s" % ids)
+
+    def test_local_file_read_is_not_a_source(self):
+        """读**本地文件**不是读请求体 ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$content = file_get_contents('/etc/passwd');\n"
+                        "echo $content;\n")
+            data, _ = self._scan(tmp, "file")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "读本地文件被当成了请求体：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

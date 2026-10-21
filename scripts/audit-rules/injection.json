@@ -554,6 +554,9 @@
     },
     {
      "pattern": "\\$_SERVER\\s*\\[\\s*[\"'](?:PHP_SELF|REQUEST_URI|QUERY_STRING|HTTP_)"
+    },
+    {
+     "pattern": "file_get_contents\\s*\\(\\s*['\"]php://input['\"]"
     }
    ],
    "sanitizers": [

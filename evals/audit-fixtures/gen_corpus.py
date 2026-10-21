@@ -270,6 +270,22 @@ SAFE = {
         "$stmt = $pdo->prepare(\"SELECT * FROM users WHERE name = ?\");\n"
         "$stmt->execute([$data->name]);\n"
     ),
+    # E16：PHP 请求体（php://input）→ 直接反射输出（XSS）。
+    # 形状取自 DVWA `vulnerabilities/cryptography/source/check_token_high.php`：
+    # 读请求体 → 交给 helper → print 结果。E9 之所以没接这条 source，
+    # 就是因为引擎当时把"实参"当成了"返回值"（check_token 只回常量 ⇒ 误报）；
+    # E11 修好返回摘要后，这条才接得上来。
+    "vuln_php_input_xss.php": (
+        "<?php\n"
+        "$raw = file_get_contents('php://input');\n"
+        "echo $raw;\n"
+    ),
+    # 同一入口但输出前净化 ⇒ 不该报（证明新 source 不会把"有防护"的写法也报出来）。
+    "safe_php_input_xss.php": (
+        "<?php\n"
+        "$raw = file_get_contents('php://input');\n"
+        "echo htmlspecialchars($raw, ENT_QUOTES, 'UTF-8');\n"
+    ),
     "safe_js_token.js": (
         "fetch('/api/csrf').then(function (r) { return r.json(); }).then(function (d) {\n"
         "    document.getElementById('token').value = d.csrf_token;\n"
@@ -314,6 +330,8 @@ MUST_FIND = [
     ("vuln_js_packed.js", "JZ-CODE-001", "eval(function ("),
     # E9：PHP 请求体（php://input）作为 source 的正例（DVWA authbypass 的真实形态）
     ("vuln_php_input_sql.php", "JZ-SQLI-003", "mysqli_query"),
+    # E16：PHP 请求体 → 反射输出（XSS）
+    ("vuln_php_input_xss.php", "JZ-XSS-002", "echo $raw"),
     ("requirements.txt", "JZ-DEP-002", "pyyaml==5.3"),
     ("requirements.txt", "JZ-DEP-005", "requests==2.28.1"),
 ]
@@ -338,6 +356,8 @@ MUST_NOT_FIND = [
     ("safe_js_token.js", "JZ-JSINSEC-001"),
     # E9：同一入口（php://input）但走净化 → 不该报
     ("safe_php_input_sql.php", "JZ-SQLI-003"),
+    # E16：同一入口但输出前 htmlspecialchars → 不该报
+    ("safe_php_input_xss.php", "JZ-XSS-002"),
 ]
 
 FILLER = (
