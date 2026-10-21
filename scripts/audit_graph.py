@@ -68,6 +68,9 @@ ASSIGN_RX["java"] = re.compile(r"\b(?P<type>[\w<>]+)\s+(?P<target>\w+)\s*=\s*(?P
 # 污点在累加处断掉）。`=(?!=)` 把 `==` 排除掉，否则比较行会被当成赋值。
 ASSIGN_RX["php"] = re.compile(r"\$(?P<target>\w+)\s*(?:\.=|=(?!=))\s*(?P<expr>.+)")
 ASSIGN_RX["go"] = re.compile(r"(?::=|=)\s*(?P<expr>.+)|(?P<target>\w+)\s*:=")
+# `return` 语句：用来判"这个函数的返回值依赖谁"（E11 的返回摘要）。
+# `(?<![\w$])` 防住 `$return_value` 这类标识符——`\b` 挡不住它（`$` 是非单词字符）。
+RETURN_RX = re.compile(r"(?<![\w$])return\b\s*(?P<expr>.*)$")
 
 IDENT_RX = re.compile(r"\b([A-Za-z_]\w*)\b")
 JS_LIKE = ("javascript", "typescript", "vue")
@@ -397,7 +400,173 @@ def _first_code_match(items, text):
     return None
 
 
-def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
+def _strip_literals(text):
+    """把字符串字面量换成等长空格（保留列位置）。
+
+    用途只有两个：① 认 `return` / 函数调用这些**语句结构**时不能被字面量里的
+    单词骗了；② 判断"source 是不是落在实参里"。
+    """
+    out = []
+    pos = 0
+    for m in STR_SPAN_RX.finditer(text):
+        out.append(text[pos:m.start()])
+        out.append(" " * (m.end() - m.start()))
+        pos = m.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _iter_calls(text, skip_members=False):
+    """行内函数调用：[(被调名, [实参文本…])]。括号配对，与出参传递那段同一套算法。
+
+    `skip_members=True` 时**成员方法调用**（对象上的方法）不算函数调用——
+    它们的名字与仓库内定义的函数同名只是巧合（E11 实测：语料里"对象方法 + 外部输入
+    当实参"那种写法，因为仓库内恰好有个同名函数，被误判成"调用仓库内函数"
+    ⇒ 同行 source→sink 丢载体 ⇒ 漏报）。
+    """
+    out = []
+    for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", text):
+        callee = m.group(1)
+        if skip_members and m.start() > 0 and text[m.start() - 1] == ".":
+            continue
+        inner, depth = "", 0
+        for ch in text[m.end() - 1:]:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            inner += ch
+        out.append((callee, _split_args(inner.lstrip("("))))
+    return out
+
+
+def _summary_for(callee, rule_id, summaries, name_index):
+    """取被调函数的返回摘要；同名定义**合并**（依赖取并集 ⇒ 保守，不制造漏报）。"""
+    merged = None
+    for cand in name_index.get(callee, [])[:MAX_CALL_FANOUT]:
+        s = summaries.get((cand["file"], cand["name"], rule_id))
+        if not s:
+            continue
+        if merged is None:
+            merged = {"dep_pos": set(s["dep_pos"]), "own": list(s["own"])}
+        else:
+            merged["dep_pos"] |= set(s["dep_pos"])
+            merged["own"].extend(s["own"])
+    return merged
+
+
+def _ret_summary(fn, rule, summaries, name_index):
+    """算「返回值摘要」：返回值依赖哪些**形参下标** + 返回值自带哪些污点。
+
+    为什么需要它（E11 复核实测）：修复前 `$out = check_token($t);` 里
+    **实参被当成了返回值**——`$t` 脏 ⇒ `$out` 脏 ⇒ 报 XSS；而 `check_token`
+    返回的全是常量（DVWA 真代码：`$ret` 的字段都来自常量表 `$users`）⇒ 误报。
+    反过来，被调函数**内部**的污点源（`return $_GET[$k];`）调用方又拿不到 ⇒ 漏报。
+
+    摘要 = 一条"返回值的数据依赖"，**按规则隔离**（净化点是每条规则自己的：
+    `intval` 对 SQL 注入是净化，对别的规则不是）。
+    """
+    lang = fn["lang"]
+    sources = rule["sources"]
+    sanits = rule["sanitizers"]
+    arx = ASSIGN_RX.get(lang)
+    param_pos = {}
+    for i, p in enumerate(fn["params"]):
+        param_pos.setdefault(p, i)
+    deps = {}          # 变量名 -> (依赖的形参下标集合, 自带污点 hops)
+    dep_pos = set()    # 返回值依赖的形参下标
+    own = []           # 返回值自带的污点（函数体内部产生的）
+    for lineno, text, _trunc in fn["body"]:
+        code = _strip_literals(text)
+        mret = RETURN_RX.search(code)
+        if mret:
+            expr = text[mret.start("expr"):] if mret.groupdict().get("expr") is not None else ""
+            for c in carriers_of(expr, lang):
+                if c in param_pos:
+                    dep_pos.add(param_pos[c])
+                else:
+                    d = deps.get(c)
+                    if d:
+                        dep_pos |= d[0]
+                        own.extend(d[1])
+            if _first_code_match(sources, text):
+                own.append({"file": fn["file"], "line": lineno,
+                            "kind": "source", "text": text})
+            continue
+        if not arx:
+            continue
+        m = arx.search(code)
+        if not m:
+            continue
+        target = m.groupdict().get("target") or m.groupdict().get("target2")
+        if not target:
+            continue
+        key_name = "expr" if m.groupdict().get("expr") else "expr2"
+        expr = text[m.start(key_name):]
+        code_expr = code[m.start(key_name):]
+        if _first_code_match(sanits, text):
+            # 净化 ⇒ 这条赋值不再依赖任何形参（净化点按规则隔离，这里同规则同词表）。
+            deps[target] = (set(), [])
+            continue
+        pset = set()
+        olist = []
+        for v in carriers_of(expr, lang):
+            if v in param_pos:
+                pset.add(param_pos[v])
+            else:
+                d = deps.get(v)
+                if d:
+                    pset |= d[0]
+                    olist.extend(d[1])
+        for callee, args in _iter_calls(code_expr):
+            sub = _summary_for(callee, rule["id"], summaries, name_index)
+            for i, a in enumerate(args):
+                if sub is not None and i not in sub["dep_pos"]:
+                    continue        # 该形参**不流到**返回值 ⇒ 实参不贡献
+                for v in carriers_of(a, lang):
+                    if v in param_pos:
+                        pset.add(param_pos[v])
+                    else:
+                        d = deps.get(v)
+                        if d:
+                            pset |= d[0]
+                            olist.extend(d[1])
+        if _first_code_match(sources, text):
+            olist.append({"file": fn["file"], "line": lineno,
+                          "kind": "source", "text": text})
+        deps[target] = (pset, olist)
+    return {"dep_pos": dep_pos, "own": own}
+
+
+def compute_ret_summaries(all_funcs, taint_rules, name_index):
+    """返回摘要的不动点迭代（被调函数的摘要要查别的函数的摘要 ⇒ 会递归）。
+
+    迭代到不再变化为止，最多 MAX_PASSES 轮（与污点传播同一套上限）。
+    """
+    summaries = {}
+    for _ in range(MAX_PASSES):
+        changed = False
+        for fn in all_funcs:
+            for rule in taint_rules:
+                if fn["lang"] not in rule.get("languages", []) and \
+                        "*" not in rule.get("languages", []):
+                    continue
+                s = _ret_summary(fn, rule, summaries, name_index)
+                key = (fn["file"], fn["name"], rule["id"])
+                old = summaries.get(key)
+                if old is None or old["dep_pos"] != s["dep_pos"] or \
+                        len(old["own"]) != len(s["own"]):
+                    summaries[key] = s
+                    changed = True
+        if not changed:
+            break
+    return summaries
+
+
+def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
+                     ret_summaries=None, name_index=None):
     """函数内污点传播 + 出参传递登记。tainted_params[(file,name)] = set(参数名)。"""
     key = (fn["file"], fn["name"])
     # 污点上下文**按规则隔离**：净化点是每条规则自己的（SQL 注入认 int()，
@@ -427,7 +596,90 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
             src_hit = bool(src_item)
             sink_hit = bool(sink_item)
             san_hit = bool(san_item)
-            if src_hit:
+            # E11：赋值右边**全是仓库内已知函数的调用** ⇒ 污点由被调函数的
+            # 「返回摘要」决定。**实参 ≠ 返回值**——修复前这两者被当成一回事：
+            # `$out = check_token($t);` 让 `$out` 继承了 `$t` 的污点，而
+            # `check_token` 返回的全是常量（DVWA 真代码：`$ret` 的字段都来自
+            # 常量表 `$users`）⇒ 误报；反过来被调函数**内部**的污点源
+            # （`return $_GET[$k];`）调用方又拿不到 ⇒ 漏报。
+            ret_call = None
+            if arx and ret_summaries is not None and name_index is not None:
+                m0 = arx.search(text)
+                if m0:
+                    k0 = "expr" if m0.groupdict().get("expr") else "expr2"
+                    if m0.groupdict().get(k0):
+                        rtarget = (m0.groupdict().get("target")
+                                   or m0.groupdict().get("target2"))
+                        code_expr = _strip_literals(text[m0.start(k0):])
+                        calls = _iter_calls(code_expr, skip_members=True)
+                        if calls and rtarget:
+                            subs = [_summary_for(c, rule["id"], ret_summaries,
+                                                 name_index) for c, _a in calls]
+                            if all(s is not None for s in subs):
+                                ret_call = (rtarget, text[m0.start(k0):],
+                                            code_expr, calls, subs)
+            if ret_call is not None:
+                rtarget, rexpr, rcode, rcalls, rsubs = ret_call
+                if san_hit:
+                    blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                    "line": lineno,
+                                    "sanitizer": san_item["pattern"],
+                                    "text": auditlib.redact(text.strip())[:160]})
+                    stats["blocked_by_sanitizer"] += 1
+                    if rtarget in tainted:
+                        del tainted[rtarget]
+                    continue
+                hops = []
+                arg_vars = set()
+                for _c, args in rcalls:
+                    for a in args:
+                        arg_vars.update(carriers_of(a, fn["lang"]))
+                # 实参之外的 source ⇒ 照旧直接继承（`$x = $_GET['a'] . f($b);`）
+                rest = rcode
+                for _c, args in rcalls:
+                    for a in args:
+                        rest = rest.replace(a, " ", 1)
+                if _first_code_match(sources, rest):
+                    hops = [{"file": fn["file"], "line": lineno,
+                             "kind": "source", "text": text}]
+                    stats["sources"] += 1
+                else:
+                    # 实参之外直接读到的变量 ⇒ 照旧继承
+                    direct = [v for v in carriers_of(rexpr, fn["lang"])
+                              if v in tainted and v not in arg_vars]
+                    if direct:
+                        hops = list(tainted[direct[0]])
+                    else:
+                        for (_callee, args), sub in zip(rcalls, rsubs):
+                            cand = []
+                            for i, a in enumerate(args):
+                                if i not in sub["dep_pos"]:
+                                    # 该形参**不流到**返回值 ⇒ 实参不贡献
+                                    continue
+                                av = [v for v in carriers_of(a, fn["lang"])
+                                      if v in tainted]
+                                if av:
+                                    cand.extend(tainted[av[0]])
+                                elif _first_code_match(sources, a):
+                                    cand.append({"file": fn["file"], "line": lineno,
+                                                 "kind": "source", "text": text})
+                                    stats["sources"] += 1
+                            cand.extend(sub["own"])
+                            if cand:
+                                hops = cand
+                                break
+                if hops:
+                    tainted[rtarget] = hops + [
+                        {"file": fn["file"], "line": lineno,
+                         "kind": "propagate", "text": text}]
+                if src_hit:
+                    # 同行内联读了 source ⇒ 照旧记一笔（修复前的 src_hit 分支也记）。
+                    # 漏了这一笔，"source 与 sink 同行"这条最直白的流就丢载体
+                    # （E11 靶场实测：赋值右边是对象方法调用、实参是外部输入的那种写法会漏报）。
+                    tainted.setdefault("__inline__", []).append(
+                        {"file": fn["file"], "line": lineno, "kind": "source",
+                         "text": text})
+            elif src_hit:
                 target = None
                 if arx:
                     m = arx.search(text)
@@ -457,7 +709,7 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats):
                     tainted.setdefault("__inline__", []).append(
                         {"file": fn["file"], "line": lineno, "kind": "source",
                          "text": text})
-            if arx and not src_hit:
+            elif arx:
                 m = arx.search(text)
                 if m and m.groupdict().get("target") or (m and m.groupdict().get("target2")):
                     target = m.groupdict().get("target") or m.groupdict().get("target2")
@@ -758,13 +1010,16 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
     # 通道只在"这个文件确实有变量路径的 include/require"时才打开：
     # 没有这种写法就开池，等于让全仓同名变量互相污染（那是误报制造机）。
     tainted_params.update(module_include_pool(all_funcs, taint_rules))
+    # E11：返回值摘要（不动点迭代，与污点传播同一套上限）。
+    # 必须在分析**之前**算出来——调用方要用它判断"实参是不是流到返回值"。
+    ret_summaries = compute_ret_summaries(all_funcs, taint_rules, name_index)
     for _pass in range(max_passes or MAX_PASSES):
         stats["passes"] = _pass + 1
         transfers = []
         new_found = []
         for fn in all_funcs:
             for flow in analyze_function(fn, taint_rules, tainted_params, transfers,
-                                         blocked, stats):
+                                         blocked, stats, ret_summaries, name_index):
                 new_found.append(flow)
         for flow in new_found:
             if not any(f.rule["id"] == flow.rule["id"]

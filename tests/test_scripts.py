@@ -2043,6 +2043,208 @@ class TestAuditPhpCrossFunction(unittest.TestCase):
                              "形参没被用到却报了：%s" % ids)
 
 
+class TestAuditPhpReturnValue(unittest.TestCase):
+    """E11：PHP 的**返回值**语义——修复前"实参"被当成了"返回值"。
+
+    复核实测（四个最小夹具错三个，不是推断）：
+
+    - `function check_token($t){ ...; return json_encode($ret); }` + `$out = check_token($t);`
+      ⇒ `$out` 继承了 `$t` 的污点 ⇒ 报 XSS。**但 `check_token` 的返回值全是常量**
+      （DVWA 真代码 `token_library_high.php`：`$ret` 的每个字段都来自常量表 `$users`，
+      形参只用来解密校验和取下标，不进返回值）⇒ 误报。
+    - 形参在被调函数里先被 `intval()` 净化再返回 ⇒ 净化被整条绕过 ⇒ SQLi 误报。
+    - 污点源在被调函数**内部**（`return $_GET[$k];`）⇒ 调用方拿不到 ⇒ **漏报**。
+
+    修法：给每个 (函数, 规则) 算一份「返回摘要」——返回值依赖哪些**形参下标**、
+    返回值自带哪些污点；调用方不再把"实参"直接当成"返回值"。
+    外部函数（`strtoupper` 这类）不在仓库里 ⇒ 保持原语义（保守，不制造漏报）。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_rv_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_return_value_not_inheriting_param_taint(self):
+        """返回值不依赖形参（check_token 形态）⇒ 不该报。
+
+        这是 DVWA `check_token_high/impossible.php` 的真实形态：
+        `$ret = check_token($token);` 之后 `print $ret;`——而 `check_token`
+        返回的 JSON 里每个字段都来自常量表 ⇒ 那是**误报**。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function check_token($token) {\n"
+                        "    $ret = array('status' => 'ok', 'message' => 'constant');\n"
+                        "    return json_encode($ret);\n"
+                        "}\n"
+                        "$token = $_GET['token'];\n"
+                        "$out = check_token($token);\n"
+                        "echo $out;\n")
+            data, _ = self._scan(tmp, "notdep")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "返回值不依赖形参却继承了污点：%s" % ids)
+
+    def test_return_value_inheriting_param_taint(self):
+        """返回值**确实**依赖形参（原样转发）⇒ 该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function passthrough($k) {\n"
+                        "    return $k;\n"
+                        "}\n"
+                        "$v = passthrough($_GET['name']);\n"
+                        "echo $v;\n")
+            data, _ = self._scan(tmp, "passthrough")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "返回值依赖形参却没报出来：%s" % ids)
+
+    def test_sanitizer_inside_callee_blocks_taint(self):
+        """形参在被调函数里先净化再返回 ⇒ 净化要生效，不该报 SQLi。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function clean_id($k) {\n"
+                        "    $safe = intval($k);\n"
+                        "    return $safe;\n"
+                        "}\n"
+                        "$v = clean_id($_GET['id']);\n"
+                        "$q = \"SELECT * FROM t WHERE id = \" . $v;\n"
+                        "mysqli_query($conn, $q);\n")
+            data, _ = self._scan(tmp, "sanitized")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-SQLI-003", ids,
+                             "被调函数里的净化被绕过了：%s" % ids)
+
+    def test_source_inside_callee_reaches_caller(self):
+        """污点源在被调函数**内部** ⇒ 调用方要拿到（修复前是漏报）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function get_value($k) {\n"
+                        "    return $_GET[$k];\n"
+                        "}\n"
+                        "$v = get_value('name');\n"
+                        "echo $v;\n")
+            data, _ = self._scan(tmp, "inside")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "被调函数内部的污点源没传到调用方：%s" % ids)
+
+    def test_external_function_call_still_inherits(self):
+        """**外部**函数不在仓库里 ⇒ 保持原语义（不能因为收紧就制造漏报）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$t = $_GET['name'];\n"
+                        "$out = strtoupper($t);\n"
+                        "echo $out;\n")
+            data, _ = self._scan(tmp, "external")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "外部函数的返回值不再继承污点（过度收紧 ⇒ 漏报）：%s" % ids)
+
+    def test_dvwa_check_token_shape_not_reported(self):
+        """DVWA 真代码形态（`token_library_high.php` + `check_token_high.php`）。
+
+        ⚠️ 这里把 DVWA 原版的 `file_get_contents('php://input')` 换成了 `$_GET['token']`：
+        **JZ-XSS-002 现在还没接 `php://input` 这个 source**（E9 实测接了会误报，
+        根因就是这条引擎缺陷）。用没接的 source 写判据 ⇒ 这条**恒绿**，
+        等于一条没有牙齿的锁（"永远绿的锁比没锁更坏"）。
+        等下一轮接上 `php://input` 后，这里要换回原形态并补一条新判据。
+        """
+        lib = ("<?php\n"
+               "function check_token ($data) {\n"
+               "    $users = array ();\n"
+               "    $users[1] = array (\"name\" => \"Geoffery\", \"level\" => \"admin\");\n"
+               "    $data_array = json_decode ($data, true);\n"
+               "    if (is_null ($data_array)) {\n"
+               "        $ret = array (\"status\" => 522, \"message\" => \"Data in wrong format\");\n"
+               "    } else {\n"
+               "        $ret = array (\"status\" => 200, \"user\" => $users[1][\"name\"]);\n"
+               "    }\n"
+               "    return json_encode ($ret);\n"
+               "}\n")
+        page = ("<?php\n"
+                "require_once (\"token_library_high.php\");\n"
+                "$ret = \"\";\n"
+                "$token = $_GET['token'];\n"
+                "$ret = check_token ($token);\n"
+                "print $ret;\n"
+                "exit;\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "lib.php", lib)
+            self._write(tmp, "page.php", page)
+            data, _ = self._scan(tmp, "dvwa")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "DVWA check_token 形态被误报（返回值全是常量）：%s" % ids)
+
+
+
+class TestAuditSanitizePlacement(unittest.TestCase):
+    """E11 顺带核实：净化与输出**同行**（非赋值行）时，净化判定到底生不生效。
+
+    E10 把它记成待确认的缺口（"净化点在非赋值行可能不生效"）。E11 实测**改判**：
+    `echo htmlspecialchars($name);` 不报（source 与 sink 之间出现了净化/守卫），
+    对照组 `echo $name;` 照报 ⇒ 那条缺口**不成立**。
+
+    这两条是**配对**的：只有"有净化不报 / 没净化要报"同时成立，上一条才不是假绿。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_sp_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_sanitizer_on_output_line_blocks_the_flow(self):
+        """净化与输出同行 ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$name = $_GET['name'];\n"
+                        "echo htmlspecialchars($name);\n")
+            data, _ = self._scan(tmp, "saninline")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "净化与输出同行时仍报了：%s" % ids)
+
+    def test_same_shape_without_sanitizer_is_reported(self):
+        """对照组：同样的形状但**没有净化** ⇒ 必须报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$name = $_GET['name'];\n"
+                        "echo $name;\n")
+            data, _ = self._scan(tmp, "nosan")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "没净化的同行输出没报出来：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 
