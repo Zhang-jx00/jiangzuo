@@ -798,7 +798,8 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
 
 def _stream_lines(root, rec, limit):
     return auditlib.iter_code_lines(
-        os.path.join(root, rec["path"].replace("/", os.sep)), max_bytes=limit)
+        os.path.join(root, rec["path"].replace("/", os.sep)), max_bytes=limit,
+        lang=rec["lang"])
 
 
 def _collect_calls(root, rec, limit):
@@ -987,7 +988,8 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
         # （`//echo 'i=' . $i . …` 与两处 `#print $query;`）⇒ 那是**误报**，却进了结论区；
         # 本仓库自扫也有 1 条（注释里写着 `os.system("ls " + request.args['d'])`）。
         # 顺带修掉的两个隐患：注释里的 `{`/`}` 不再破坏括号配对；注释里的函数定义不再被认成函数。
-        lines = list(auditlib.iter_code_lines(abs_path, max_bytes=limit))
+        lines = list(auditlib.iter_code_lines(abs_path, max_bytes=limit,
+                                           lang=rec["lang"]))
         if not lines:
             continue
         funcs = add_module_scope(parse_functions(rec["lang"], rec["path"], lines),

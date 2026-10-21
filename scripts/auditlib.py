@@ -457,19 +457,75 @@ def iter_lines(path, max_bytes=DEFAULT_MAX_FILE_BYTES, max_line=DEFAULT_MAX_LINE
 
 DOCSTRING_DELIMS = ('"""', "'''")
 COMMENT_PREFIXES = ("#", "//", "*", "/*")
+# 行尾注释符（**按语言分**）。
+#
+# ⚠️ **Python 的 `//` 是整除，不是注释**——用统一词表的话 `x = y // 2` 会被整行截断，
+# 那是把真代码当注释（⇒ 漏报）。E13 实测才发现这条。
+# ⚠️ PHP 另有 `#`（行尾注释）；Java/Kotlin/C#/Scala/Go/JS/TS/Vue 用 `//`。
+# ⚠️ C 系还有 `/* … */` 块注释（可跨行）——**本函数只管行尾注释**，
+#    块注释里的代码仍会被当成代码（已知边界，登记在交接文档 §11）。
+LINE_COMMENT_TOKENS = {
+    "python": ("#",),
+    "ruby": ("#",),
+    "shell": ("#",),
+    "bash": ("#",),
+    "php": ("//", "#"),
+    "javascript": ("//",),
+    "typescript": ("//",),
+    "vue": ("//",),
+    "java": ("//",),
+    "kotlin": ("//",),
+    "csharp": ("//",),
+    "scala": ("//",),
+    "go": ("//",),
+}
 # 字面量跨度必须认转义：`"...\b@app.route('x')..."` 里被转义的引号不是字符串结束，
 # 早先按"最近一个引号"配对会把后半行当成代码，屏蔽形同虚设（自扫实测 3 条误报）。
 STRING_SPAN_RX = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 
 
-def code_lines(raw_iter):
+def _cut_at_comment(seg, tokens):
+    """把 seg 里**第一个**行尾注释符之后的部分换成等长空格（保留列位置）。"""
+    for i in range(len(seg)):
+        for tok in tokens:
+            if seg.startswith(tok, i):
+                return seg[:i] + " " * (len(seg) - i)
+    return seg
+
+
+def strip_line_comments(text, lang):
+    """把行尾注释替换成等长空格（列位置不变）。
+
+    **必须先跳过字符串**：`"http://x"` 里的 `//`、`"#!/usr/bin/env python"` 里的 `#`
+    都不是注释（E13 实测：不剥字符串就会把它们当注释起点，把真代码截断 ⇒ 漏报）。
+    """
+    tokens = LINE_COMMENT_TOKENS.get(lang)
+    if not tokens:
+        return text
+    out = []
+    pos = 0
+    for m in STRING_SPAN_RX.finditer(text):
+        out.append(_cut_at_comment(text[pos:m.start()], tokens))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_cut_at_comment(text[pos:], tokens))
+    return "".join(out)
+
+
+def code_lines(raw_iter, lang=None):
     """从"原始行迭代器"产出 (行号, 原文, 剥字面量版, 是否截断)。
 
     单独拆出来是为了让**文件路径**和**已在内存里的文本**共用同一套过滤规则：
     两遍实现迟早分叉，注释/文档块的边界条件就是分叉点。
+
+    `lang` 给了就顺带**剥掉行尾注释**（E13）：`code_lines` 原本只跳**整行**注释，
+    行尾注释里的代码（`echo $x; // os.system("ls " . $x)`）仍在行内 ⇒ 会被当成真代码
+    ⇒ 误报**直接进结论区**（不像整行注释那样被独立验证挡在 dropped 层）。
     """
     block = None
     for i, raw in enumerate(raw_iter, 1):
+        if lang:
+            raw = strip_line_comments(raw, lang)
         stripped = raw.strip()
         if block:
             if block in raw:
@@ -489,7 +545,7 @@ def code_lines(raw_iter):
         yield i, raw, masked, truncated
 
 
-def iter_code_lines(path, max_bytes=None, ignore_strings=False, both=False):
+def iter_code_lines(path, max_bytes=None, ignore_strings=False, both=False, lang=None):
     """**只产出可执行代码行**：跳过注释行与三引号块，可选把单行字符串字面量剥掉。
 
     为什么必须有这一层（v0.18 自扫实测）：把漏洞样例当字符串写进测试夹具、
@@ -501,13 +557,16 @@ def iter_code_lines(path, max_bytes=None, ignore_strings=False, both=False):
     both=True 时产出 (行号, 原文, 剥字面量版, 是否截断) 四元组——
     粗筛层要同时用两种流，分两遍读就是把同一份文件开两次、逐行循环跑两遍
     （基准实测：粗筛 3.2 ms/文件里近一半是这第二遍）。
+
+    **lang 给了就顺带剥掉行尾注释**（E13）——注释符按语言分（Python 的 `//` 是整除），
+    且必须先跳过字符串。不给 lang ⇒ 旧行为（只跳整行注释）。
     """
     limit = DEFAULT_MAX_FILE_BYTES if max_bytes is None else max_bytes
     if file_size(path) > limit:
         return
     try:
         with io.open(path, "r", encoding="utf-8", errors="replace") as f:
-            for lineno, raw, masked, trunc in code_lines(f):
+            for lineno, raw, masked, trunc in code_lines(f, lang=lang):
                 line = masked if ignore_strings else raw
                 if trunc:
                     line = line[:DEFAULT_MAX_LINE_BYTES]

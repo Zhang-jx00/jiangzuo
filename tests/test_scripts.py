@@ -2385,6 +2385,107 @@ class TestAuditCommentNotCode(unittest.TestCase):
                           "注释里的 } 截断了函数体 ⇒ 漏报：%s" % ids)
 
 
+class TestAuditTailComment(unittest.TestCase):
+    """E13：**行尾注释**里的代码也不是代码（比整行注释严重——误报**直接进结论区**）。
+
+    E12（v0.46.0）把**整行**注释排除了（`iter_code_lines` 本来就会跳整行注释，
+    但图层主路径没用它）。行尾注释是另一回事：`auditlib.code_lines` 只按**行首**判断
+    注释前缀 ⇒ `echo $x; // os.system("ls " . $x)` 里的 sink 形状**仍在行内**
+    ⇒ 被当成真代码 ⇒ **误报直接进结论区**（不像整行注释那样被独立验证挡在 dropped 层）。
+
+    修法：`auditlib.strip_line_comments(text, lang)` 把行尾注释换成等长空格，
+    **注释符按语言分**、**必须先跳过字符串**。于是：
+    ⚠️ **Python 的 `//` 是整除不是注释**（统一词表会把 `x = y // 2` 整行截断 ⇒ 漏报）；
+    ⚠️ 字符串里的 `//`（`"http://x"`）与 `"#!/usr/bin/env python"` 的 `#` 都不是注释。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_tc_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    @staticmethod
+    def _reported(data):
+        """findings ＋ dropped（被独立验证拦下的）＝"引擎认为有问题"的全集。"""
+        return ([f["rule_id"] for f in data.get("findings", [])]
+                + [f["rule_id"] for f in data.get("dropped", [])])
+
+    def test_php_slash_tail_comment_is_not_code(self):
+        """PHP 的 `//` 行尾注释里的 sink ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "echo $cmd; // os.system(\"ls \" . $cmd)\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "slash")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-CMDI-001", ids,
+                             "行尾 // 注释里的 os.system 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_php_hash_tail_comment_is_not_code(self):
+        """PHP 的 `#` 行尾注释里的 sink ⇒ 也不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "echo $cmd; # os.system(\"ls \" . $cmd)\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "hash")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-CMDI-001", ids,
+                             "行尾 # 注释里的 os.system 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_same_code_without_tail_comment_is_reported(self):
+        """配对对照：不写注释 ⇒ **必须**报（否则上面两条是假绿）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "os.system(\"ls \" . $cmd);\n")
+            data, _ = self._scan(tmp, "nocmt")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-CMDI-001", ids,
+                          "不写注释时反而不报了（上面两条是假绿）：%s" % ids)
+
+    def test_python_floor_division_is_not_a_comment(self):
+        """⚠️ **Python 的 `//` 是整除，不是注释**——剥错了就把真代码截断（⇒ 漏报）。"""
+        sys.path.insert(0, SCRIPTS)
+        import auditlib
+        src = "y = x // 2\n"
+        self.assertEqual(auditlib.strip_line_comments(src, "python"), src,
+                         "Python 的 // 被当成注释了（整除被截断 ⇒ 漏报）")
+
+    def test_string_with_slashes_or_hash_is_not_a_comment(self):
+        """字符串里的 `//` 与 `#` **不是**注释（先剥字符串才能找注释符）。"""
+        sys.path.insert(0, SCRIPTS)
+        import auditlib
+        for src in ("u = 'http://x/y'\n", "$u = 'http://x/y';\n",
+                    "$u = \"a # b\";\n", "u = 'a # b'\n"):
+            lang = "php" if src.startswith("$") else "python"
+            self.assertEqual(auditlib.strip_line_comments(src, lang), src,
+                             "字符串里的注释符被当成了注释：%r" % src)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

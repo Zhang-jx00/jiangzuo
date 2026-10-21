@@ -153,7 +153,7 @@ def coarse_screen(root, index, rules, max_bytes, peak=False):
             continue      # 这门语言没有任何相关模式 → 连文件都不打开
         _match_code_lines(buckets, rec["lang"],
                           auditlib.iter_code_lines(abs_path, max_bytes=max_bytes,
-                                                   both=True),
+                                                   both=True, lang=rec["lang"]),
                           imports, per_rule, src_per_rule)
         if per_rule or src_per_rule:
             hits[rel] = {"sinks": per_rule, "sources": src_per_rule}
@@ -405,7 +405,8 @@ def deep_pattern_findings(root, index, rules, hits, max_bytes):
             skey = (rel, masked)
             if skey not in streams:
                 streams[skey] = list(auditlib.iter_code_lines(
-                    abs_path, max_bytes=max_bytes, ignore_strings=masked))
+                    abs_path, max_bytes=max_bytes, ignore_strings=masked,
+                    lang=auditlib.lang_of(rel)))
             lines = streams[skey]
             text_by_line = dict((n, t) for n, t, _x in lines)
             for lineno in linenos:
@@ -540,7 +541,8 @@ def verify(root, finding, map_data, all_lines_cache):
     skey = (rel, masked)
     if skey not in all_lines_cache:
         all_lines_cache[skey] = list(auditlib.iter_code_lines(abs_path,
-                                                             ignore_strings=masked))
+                                                             ignore_strings=masked,
+                                                             lang=auditlib.lang_of(rel)))
     lines = all_lines_cache[skey]
     text_by_line = dict((n, t) for n, t, _x in lines)
     line_text = text_by_line.get(finding["line"], "")
@@ -789,7 +791,8 @@ def _context_lines(root, rel, line_no, max_bytes=None):
     path = os.path.join(root, rel.replace("/", os.sep))
     out = []
     for n, text, _trunc in auditlib.iter_code_lines(
-            path, max_bytes=max_bytes or auditlib.DEFAULT_MAX_FILE_BYTES):
+            path, max_bytes=max_bytes or auditlib.DEFAULT_MAX_FILE_BYTES,
+            lang=auditlib.lang_of(rel)):
         out.append((n, text))
         if n > int(line_no) + 4:
             break
@@ -1448,6 +1451,9 @@ def check_fixes(root, baseline_path, rules=None, max_bytes=None):
             out.append(rec)
             continue
         if old["file"] not in line_cache:
+            # E13：这里**不剥行尾注释**——本函数拿基线里存的 sink 文本与当前行比对，
+            # 基线可能是**任何历史版本**生成的 ⇒ 口径要跟"当年存进去的样子"可比；
+            # 剥了会把"文件没改"误判成"已修复"。
             line_cache[old["file"]] = list(auditlib.iter_code_lines(abs_path))
         lines = line_cache[old["file"]]
         text_by_line = dict((n, t) for n, t, _x in lines)
