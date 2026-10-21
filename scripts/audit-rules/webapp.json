@@ -285,7 +285,7 @@
      "pattern": "(?i)debug\\s*=\\s*True|\\bFLASK_DEBUG\\s*[=:]\\s*1|app\\.run\\s*\\([^)]*debug\\s*=\\s*True"
     },
     {
-     "pattern": "display_errors\\s*=\\s*On|error_reporting\\s*\\(\\s*E_ALL\\b|show_error_msg\\s*=\\s*1"
+     "pattern": "display_errors\\s*=\\s*On|show_error_msg\\s*=\\s*1"
     },
     {
      "pattern": "DEBUG\\s+True|spring\\.devtools\\.restart\\.enabled\\s*=\\s*true|config\\.debug\\s*=\\s*true"
@@ -428,9 +428,6 @@
    "sinks": [
     {
      "pattern": "(?i)\\b(?:save|write|store|move_uploaded_file|move)\\s*\\([^)]*(?:filename|file\\.name|originalname|\\$_FILES)"
-    },
-    {
-     "pattern": "(?i)content[_-]?type[^\\n]{0,40}(?:==|in|is)\\s*[\"']?(?:image|application)"
     }
    ],
    "unless_present": [

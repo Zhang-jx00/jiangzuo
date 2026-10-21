@@ -241,7 +241,7 @@
      "pattern": "\\bnew\\s+Function\\s*\\(|\\bsetTimeout\\s*\\(\\s*[\"'`]|\\bsetInterval\\s*\\(\\s*[\"'`]"
     },
     {
-     "pattern": "\\b(?:create_function|preg_replace)\\s*\\("
+     "pattern": "\\bcreate_function\\s*\\("
     },
     {
      "pattern": "\\b(?:instance_eval|module_eval|Kernel\\.eval)\\b"

@@ -2110,6 +2110,114 @@ class TestMutCalibratorShipped(unittest.TestCase):
         self.assertIsNone(validate_skill._mut_case_count("def (:\n"))
 
 
+class TestAuditOverbroadRuleNarrowing(unittest.TestCase):
+    """E25：E20 判定出的 3 类「规则过宽」硬误报，收窄后必须**正反成对**地钉住。
+
+    E20 的判定（按 sink 行逐条判过）：`preg_replace` 被当动态代码执行（2 条）、
+    `error_reporting(E_ALL)` 被当调试信息泄露（1 条）、
+    `$_SERVER['CONTENT_TYPE']` 被当文件上传（2 条）—— 合计 **5 条**（E20 当时写成 4 条，
+    自己的算术就错了）。本轮把三条 sink 收窄，每条都要：
+      · **正面**：真正的漏洞形态**仍要报**（不许把能力一起砍掉）
+      · **反面**：DVWA 里那类形态**不再报**（这才是本轮的目的）
+    ⚠️ 只测反面 = 把规则改死了；只测正面 = 什么都没修。
+    """
+
+    def _scan(self, tmp, name, files):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        for fn, body in files.items():
+            path = os.path.join(d, fn)
+            parent = os.path.dirname(path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+        out = os.path.join(tmp, name + ".json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), d, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _rules(self, payload):
+        return set(f["rule_id"] for f in payload["findings"])
+
+    def _app_files(self, extra):
+        """让仓库被判成 app（config 型规则 scope=app ⇒ 库里会被压成"不适用"）。"""
+        files = {"app.py": "from flask import Flask\napp = Flask(__name__)\n",
+                 "templates/x.html": "<html><body>hi</body></html>\n"}
+        files.update(extra)
+        return files
+
+    def test_preg_replace_is_not_dynamic_code_execution(self):
+        """`preg_replace` 自 PHP 5.5 起没有 /e 修饰符 ⇒ 不再是动态代码执行。
+
+        ⚠️ 能力边界（**当前检不出**，不是漏报）：PHP < 5.5 的 `preg_replace('/x/e', ...)`
+        真的会执行代码，但 JZ-CODE-001 是 `ignore_strings: true` 的规则 ⇒ 它在
+        **掩码桶**（字符串字面量被剥掉）上匹配 ⇒ **看不见字符串里的 `/e` 修饰符**。
+        要认它就得让规则走**原文桶**（`ignore_strings: false`），而那会让所有 sink
+        都能在字符串内部命中 ⇒ 误报面变大 ⇒ 本轮不做，登记为能力边界。
+        ⚠️ 同理 `create_function` 的函数体也在字符串里 ⇒ 它在当前引擎下同样检不出
+        真阳性（污点链断在字符串内）⇒ 正面的"能力还在"由 `eval` 承担（下一条）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = self._scan(tmp, "pcre", {
+                "a.php": "<?php\n$name = preg_replace('/<(.*)s(.*)c(.*)r(.*)i(.*)p(.*)t/i', '', $_GET['name']);\n"})
+            self.assertNotIn("JZ-CODE-001", self._rules(bad),
+                             "不带 /e 的 preg_replace 不该再被当动态代码执行")
+            older = self._scan(tmp, "pcre_e", {
+                "a.php": "<?php\n$name = preg_replace('/(.*)e/e', '', $_GET['name']);\n"})
+            self.assertNotIn("JZ-CODE-001", self._rules(older),
+                             "掩码桶看不见字符串里的 /e —— 这是**已知能力边界**，"
+                             "不是本轮要保证的能力")
+
+    def test_error_reporting_alone_is_not_a_leak(self):
+        """`error_reporting(E_ALL)` 只设错误级别，本身不泄露；泄露的是 display_errors=On。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = self._scan(tmp, "errrep", self._app_files({
+                "a.php": "<?php\nerror_reporting(E_ALL);\n"}))
+            self.assertNotIn("JZ-DEBUG-001", self._rules(bad),
+                             "error_reporting(E_ALL) 不是调试信息泄露")
+            good = self._scan(tmp, "disp", self._app_files({
+                "a.php": "<?php\nini_set('display_errors', 'On');\ndisplay_errors = On;\n"}))
+            self.assertIn("JZ-DEBUG-001", self._rules(good),
+                          "display_errors=On 是真泄露，必须仍报")
+
+    def test_content_type_check_must_be_about_the_uploaded_file(self):
+        """`$_SERVER['CONTENT_TYPE']` 是请求头（DVWA 的 JSON API 在读它），不是上传限制。
+
+        ⚠️ 语义锁（本轮真踩过）：这条规则要报的是"上传**缺**类型/大小/文件名限制"，
+        是**否定**判断；把它写成"出现了 `$_FILES[…]['type']` 检查"就把语义**反**了
+        —— 那反而是"有类型检查"，是合规写法 ⇒ 实测在 DVWA 的**修复档**
+        `upload/source/impossible.php` 里报出一条**新误报**（逐条 A/B 逮到的）。
+        ⇒ 「缺少 X」这类否定判断在**正向 pattern** 里表达不了 ⇒ 那个 sink 整条去掉，
+        这一子形态登记为能力边界；本条只保留"上传动作 + 原始文件名"那支（sink1）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = self._scan(tmp, "ctype", {
+                "a.php": ("<?php\nif (array_key_exists (\"CONTENT_TYPE\", $_SERVER) "
+                          "&& $_SERVER['CONTENT_TYPE'] == \"application/json\") {\n"
+                          "    handle();\n}\n")})
+            self.assertNotIn("JZ-UPLOAD-001", self._rules(bad),
+                             "请求头的内容类型检查不是文件上传限制")
+            typed = self._scan(tmp, "typed", {
+                "a.php": "<?php\nif ($_FILES['f']['type'] != 'image/jpeg') { exit; }\n"})
+            self.assertNotIn("JZ-UPLOAD-001", self._rules(typed),
+                             "**已经**检查了上传文件类型 ⇒ 那是合规写法，不该报"
+                             "（语义反了就是这类错）")
+            good = self._scan(tmp, "filetype", {
+                "a.php": ("<?php\nmove_uploaded_file($_FILES['f']['tmp_name'], "
+                          "$_FILES['f']['name']);\n")})
+            self.assertIn("JZ-UPLOAD-001", self._rules(good),
+                          "上传动作 + 直接用原始文件名必须仍报")
+
+    def test_eval_still_counts_as_dynamic_code(self):
+        """防误伤：收窄 preg_replace 不能把 eval 一起收掉。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "eval", {
+                "a.php": "<?php\n$code = $_GET['c'];\neval($code);\n"})
+            self.assertIn("JZ-CODE-001", self._rules(p), "eval 必须仍归 JZ-CODE-001")
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""

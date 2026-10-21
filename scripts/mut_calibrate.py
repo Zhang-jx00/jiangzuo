@@ -27,6 +27,10 @@ import os
 import subprocess
 import sys
 
+# JSON 源码里的正则要写**两个**反斜杠，手写转义层数极易错一层
+# （E25 改规则时被坑过两次）⇒ 让机器拼。
+B = chr(92)
+
 # 仓库根 = 本文件（scripts/）的上一级。E24 起校准器**随技能一起分发**。
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -472,7 +476,39 @@ CASES = [
      "mut-calibrator-check-neutered",
      "tests.test_scripts.TestMutCalibratorShipped."
      "test_validate_reports_mut_calibrator"),
+    # ---- E25（v0.59.0）：收窄三条"规则过宽"的误报 ----
+    # 下面三条用 chr(92) 拼反斜杠：JSON 源码里的正则要写两个反斜杠，
+    # 手写转义层数极易错一层 ⇒ 让机器拼。
+    ("scripts/audit-rules/injection.json",
+     '     "pattern": "' + B + B + 'bcreate_function' + B + B + 's*' + B + B + '(' + '"',
+     '     "pattern": "' + B + B + 'b(?:create_function|preg_replace)' + B + B + 's*' + B + B + '(' + '"',
+     "code-rule-preg-replace-back",
+     "tests.test_scripts.TestAuditOverbroadRuleNarrowing."
+     "test_preg_replace_is_not_dynamic_code_execution"),
+    ("scripts/audit-rules/webapp.json",
+     '     "pattern": "display_errors' + B + B + 's*=' + B + B + 's*On'
+     + '|show_error_msg' + B + B + 's*=' + B + B + 's*1"',
+     '     "pattern": "display_errors' + B + B + 's*=' + B + B + 's*On'
+     + '|error_reporting' + B + B + 's*' + B + B + '(' + B + B + 's*E_ALL' + B + B
+     + 'b|show_error_msg' + B + B + 's*=' + B + B + 's*1"',
+     "debug-rule-error-reporting-back",
+     "tests.test_scripts.TestAuditOverbroadRuleNarrowing."
+     "test_error_reporting_alone_is_not_a_leak"),
+    ("scripts/audit-rules/webapp.json",
+     '     "pattern": "(?i)' + B + B + 'b(?:save|write|store|move_uploaded_file|move)'
+     + B + B + 's*' + B + B + '(' + '[^)]*'
+     + '(?:filename|file' + B + B + '.name|originalname|' + B + B + '$_FILES)"\n    }',
+     '     "pattern": "(?i)' + B + B + 'b(?:save|write|store|move_uploaded_file|move)'
+     + B + B + 's*' + B + B + '(' + '[^)]*'
+     + '(?:filename|file' + B + B + '.name|originalname|' + B + B + '$_FILES)"\n'
+     '    },\n    {\n'
+     '     "pattern": "(?i)content[_-]?type[^' + B + B + 'n]{0,40}'
+     + '(?:==|in|is)' + B + B + 's*[' + B + '"' + "'" + ']?(?:image|application)"\n    }',
+     "upload-rule-content-type-back",
+     "tests.test_scripts.TestAuditOverbroadRuleNarrowing."
+     "test_content_type_check_must_be_about_the_uploaded_file"),
 ]
+
 
 def check_anchors():
     """只核对锚点：每个 old 必须恰好命中 1 次，每个 new 必须 0 次。
