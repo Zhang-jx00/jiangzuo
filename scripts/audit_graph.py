@@ -427,8 +427,15 @@ def _iter_calls(text, skip_members=False):
     out = []
     for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", text):
         callee = m.group(1)
-        if skip_members and m.start() > 0 and text[m.start() - 1] == ".":
-            continue
+        if skip_members and m.start() > 0:
+            prev = text[m.start() - 1]
+            # ⚠️ PHP 的成员方法是 `->method(`（E19）：只认 `.` 会让 `$o->get($x)`
+            # 被当成"调用仓库内同名函数"⇒ 用**同名全局函数**的摘要去代表方法语义
+            # （仓库里恰好有 `function get($k){...}` 时，两个摘要会被合并）
+            # ⇒ 可能**漏报真阳性**。成员方法一律排除 ⇒ 退化成"参数直传"的保守假设
+            # （宁可多报也不漏报）。
+            if prev == "." or text[max(0, m.start() - 2):m.start()] == "->":
+                continue
         inner, depth = "", 0
         for ch in text[m.end() - 1:]:
             if ch == "(":

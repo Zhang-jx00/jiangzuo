@@ -2822,6 +2822,81 @@ class TestAuditOverwriteClearsTaint(unittest.TestCase):
                           "真阳性被一起清掉了：%s" % ids)
 
 
+class TestAuditPhpMemberCall(unittest.TestCase):
+    """E19：PHP 的**成员方法** `->method(` 不是"调用仓库内同名函数"。
+
+    复核实测（探针）：`_iter_calls(..., skip_members=True)` 对 `$o->get($x)`
+    **仍返回** `('get', ['$x'])` ⇒ 因为排除只认 `.`（Python/JS 风格），
+    **不认 PHP 的 `->`** ⇒ 成员方法被当成"调用仓库内同名函数"
+    ⇒ 当仓库里恰好有 `function get($k){...}` 时，两个摘要会被**合并**
+    ⇒ 用**全局函数**的语义去代表**方法**的语义 ⇒ 可能**漏报真阳性**。
+
+    修法：成员方法一律排除 ⇒ 退化成"参数直传"的**保守假设**（宁可多报也不漏报）。
+    ⚠️ 判据 1 是**修复前红、修复后绿**：修复前走摘要分支（同名函数返回常量 ⇒ 不继承）
+    ⇒ 漏报；修复后成员方法被排除 ⇒ 参数直传 ⇒ 报（保守）。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_mc_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_member_call_not_treated_as_repo_function(self):
+        """仓库内有同名全局函数 + 成员方法 ⇒ 成员方法不能借用全局函数的摘要。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function get($k) { return \"constant\"; }\n"
+                        "class C { public function get($k) { return \"constant\"; } }\n"
+                        "$o = new C();\n"
+                        "$x = $_GET['x'];\n"
+                        "$out = $o->get($x);\n"
+                        "echo $out;\n")
+            data, _ = self._scan(tmp, "member")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "成员方法借用了同名全局函数的摘要（漏报）：%s" % ids)
+
+    def test_member_call_returning_argument_keeps_taint(self):
+        """成员方法**返回参数** ⇒ 污点该流过去 ⇒ 必须报（配对，防误伤）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "class C { public function get($k) { return $k; } }\n"
+                        "$o = new C();\n"
+                        "$x = $_GET['x'];\n"
+                        "$out = $o->get($x);\n"
+                        "echo $out;\n")
+            data, _ = self._scan(tmp, "arg")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "成员方法返回参数却没报（漏报）：%s" % ids)
+
+    def test_plain_function_call_still_uses_summary(self):
+        """普通函数调用**仍走摘要**（别把"排除成员"写成"排除所有调用"）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function constant_ret($k) { return \"constant\"; }\n"
+                        "$x = $_GET['x'];\n"
+                        "$out = constant_ret($x);\n"
+                        "echo $out;\n")
+            data, _ = self._scan(tmp, "plain")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "普通函数没走摘要分支（返回值与形参无关却继承了污点）：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 
