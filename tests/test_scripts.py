@@ -2603,6 +2603,48 @@ class TestAuditBlockComment(unittest.TestCase):
         self.assertEqual(out, src, "字符串里的 /* 被当成了块注释：%r" % out)
 
 
+class TestValidateReplacementChars(unittest.TestCase):
+    """E15：**U+FFFD 替换字符**（= 被损坏的字符）也得有判据。
+
+    E11 收尾时发现：**E10 那轮自己写下的乱码**（`audit-acceptance.md` 里一个「同」字
+    变成了 U+FFFD）**溜过了所有判据**——文件照样能跑、结构照样合法、数字照样对得上，
+    **只有那个字符坏了**。`validate_skill.py` 查结构、查表格、查期望值，唯独不查"字符有没有坏"。
+
+    ⚠️ 本文件里**不能出现真的 U+FFFD 字符**（否则它自己会被判据逮到）⇒ 一律用 `u"\\ufffd"` 转义。
+    """
+
+    def test_replacement_char_is_flagged(self):
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "broken.md")
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(u"正常的一行\n这一行有个坏字" + chr(0xFFFD) + u"\n")
+            bad, scanned = validate_skill.find_replacement_chars(tmp)
+            self.assertTrue(bad, u"含 U+FFFD 的文件没被逮住")
+            self.assertEqual(bad[0][0], "broken.md")
+            self.assertEqual(bad[0][1], 2, u"行号报错了：%r" % (bad[0],))
+
+    def test_clean_file_is_not_flagged(self):
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ok.md")
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(u"干净的一行\n还有一行\n")
+            bad, scanned = validate_skill.find_replacement_chars(tmp)
+            self.assertEqual(bad, [], u"干净文件被误报了：%r" % (bad,))
+            self.assertEqual(scanned, 1)
+
+    def test_repository_itself_has_no_replacement_chars(self):
+        """本仓现在必须干净（E10 那处乱码已修掉）——判据上线的前提。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        repo = os.path.dirname(SCRIPTS)
+        bad, scanned = validate_skill.find_replacement_chars(repo)
+        self.assertEqual(bad, [], u"仓库里还有 U+FFFD：%r" % (bad[:5],))
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

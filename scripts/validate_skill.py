@@ -678,6 +678,51 @@ def check_expected_numbers(skill_dir):
              % sum(len(v) for v in per_file.values()))
 
 
+def find_replacement_chars(root):
+    """找出含 U+FFFD（替换字符 = 被损坏的字符）的文本文件。
+
+    E15 的由来：E11 收尾时发现 **E10 那轮自己写下的乱码**（`audit-acceptance.md` 里一个
+    「同」字变成了 U+FFFD）**溜过了所有判据**——文件照样能跑、结构照样合法、
+    数字照样对得上，**只有那个字符坏了**。`validate_skill.py` 查结构、查表格、查期望值，
+    唯独不查"字符有没有坏"。
+
+    返回 (坏处列表, 扫过的文件数)。坏处 = (相对路径, 行号, 该行摘要)。
+    """
+    suffixes = (".md", ".py", ".json", ".yml", ".yaml", ".txt", ".sh", ".ps1", ".cfg")
+    bad = []
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "__pycache__", "node_modules", ".venv")]
+        for fn in filenames:
+            if not fn.endswith(suffixes):
+                continue
+            path = os.path.join(dirpath, fn)
+            try:
+                with io.open(path, encoding="utf-8") as f:
+                    for i, line in enumerate(f, 1):
+                        if chr(0xFFFD) in line:
+                            bad.append((os.path.relpath(path, root), i,
+                                        line.strip()[:80]))
+            except (OSError, UnicodeDecodeError):
+                continue
+            scanned += 1
+    return bad, scanned
+
+
+def check_no_replacement_chars(skill_dir):
+    """第 18 项：入库文本文件里不许有 U+FFFD 替换字符（E15）。"""
+    bad, scanned = find_replacement_chars(skill_dir)
+    if bad:
+        for rel, lineno, text in bad[:10]:
+            err(u"文件 %s:%d 含 U+FFFD 替换字符（字符坏了）：%s"
+                % (rel, lineno, text))
+        err(u"共 %d 处 U+FFFD——上一轮自己写下的乱码就是这么溜过去的"
+            % len(bad))
+    else:
+        info(u"入库文本文件里没有 U+FFFD 替换字符（扫了 %d 个文件）" % scanned)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -751,6 +796,7 @@ def main():
             check_lookup_aliases(skill_dir)
             check_md_tables(skill_dir)
             check_expected_numbers(skill_dir)
+            check_no_replacement_chars(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:
