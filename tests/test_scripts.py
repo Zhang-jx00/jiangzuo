@@ -1930,6 +1930,94 @@ class TestAuditSarifSchema(unittest.TestCase):
             self.assertIn("MISSING-IN-SCHEMA", r.stdout)
 
 
+class TestAuditCapabilityBoundaries(unittest.TestCase):
+    """E22：能力边界表必须被最小夹具钉住——否则引擎演进之后那张表会开始说谎。
+
+    锁的是「引擎当前的行为」，不是「它应该怎样」：边界表说做不到的事，
+    当前行为就是做不到；哪天真做到了，这些测试会红 ⇒ 提醒改表而不是让表过期。
+    """
+
+    REFS = os.path.join(REPO, "references", "audit-rule-authoring.md")
+
+    def _scan(self, tmp, name, body):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        with io.open(os.path.join(d, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+        out = os.path.join(tmp, name + ".json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), d, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _rules(self, payload):
+        return set(f["rule_id"] for f in payload["findings"])
+
+    def test_escaped_string_is_not_treated_as_sanitizer(self):
+        """边界：净化点 pattern 匹配不到 mysqli_real_escape_string ⇒ 转义处照报。
+
+        ⚠️ 这条锁的是**已知缺陷的现状**，不是正确行为：转义只在引号内有效，
+        一刀切当净化会压掉 sqli_blind 的真阳性（见能力边界表第 2 行）。
+        真要修，得先做 sink 级上下文判定 ⇒ 届时本测试应当红，提醒改表。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "e22_escape.php",
+                           "<?php\n"
+                           "function q($c, $x) {\n"
+                           "    $x = mysqli_real_escape_string($c, $x);\n"
+                           "    mysql_query(\"SELECT * FROM t WHERE a = '$x'\");\n"
+                           "}\n"
+                           "q($conn, $_GET['a']);\n")
+            self.assertIn("JZ-SQLI-003", self._rules(p),
+                          "mysqli_real_escape_string 现在被当净化点了 ⇒ "
+                          "能力边界表第 2 行该改")
+
+    def test_js_regex_literal_swallows_same_line_code(self):
+        """边界：JS 正则字面量里的 // 被当注释 ⇒ 同行后续代码整段被漏掉。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "e22_jsregex.js",
+                           "var re = /\\/\\//; var x = request.query['q']; eval(x);\n")
+            self.assertNotIn("JZ-CODE-001", self._rules(p),
+                             "JS 正则字面量不再吞掉同行代码 ⇒ 能力边界表第 3 行该改")
+            p2 = self._scan(tmp, "e22_jscode.js",
+                            "var x = request.query['q']; eval(x);\n")
+            self.assertIn("JZ-CODE-001", self._rules(p2), "对照组：真代码必须照报")
+
+    def test_nested_block_comment_ends_at_first_closer(self):
+        """边界：块注释不支持嵌套（PHP/C 的实际语义）⇒ 第一个 */ 之后的代码是活的。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "e22_nested.php",
+                           "<?php\n"
+                           "/* /* nested */\n"
+                           "$x = $_GET['a'];\n"
+                           "echo $x;\n")
+            self.assertIn("JZ-XSS-002", self._rules(p),
+                          "嵌套块注释后的代码没被当成活代码 ⇒ 行为变了")
+
+    def test_boundary_table_has_why_and_cost(self):
+        """边界表每行都要有「为什么做不到」和「代价」两列 —— 少一列这张表就没法用。"""
+        with io.open(self.REFS, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        start = None
+        for i, line in enumerate(lines):
+            if line.startswith("| 边界 |"):
+                start = i
+                break
+        self.assertIsNotNone(start, "能力边界表不见了")
+        rows = []
+        for line in lines[start + 2:]:
+            if not line.startswith("|"):
+                break
+            rows.append(line)
+        self.assertGreaterEqual(len(rows), 5, "能力边界表少于 5 行")
+        for row in rows:
+            cells = [c.strip() for c in row.strip().strip("|").split("|")]
+            self.assertEqual(4, len(cells), "边界表列数变了：%s" % row[:60])
+            self.assertTrue(cells[1], u"缺「为什么做不到」：%s" % row[:40])
+            self.assertTrue(cells[2], u"缺「代价」：%s" % row[:40])
+            self.assertTrue(cells[3], u"缺「实测证据」：%s" % row[:40])
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""
