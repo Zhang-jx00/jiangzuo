@@ -2486,6 +2486,123 @@ class TestAuditTailComment(unittest.TestCase):
                              "字符串里的注释符被当成了注释：%r" % src)
 
 
+class TestAuditBlockComment(unittest.TestCase):
+    """E14：**块注释** `/* … */`（可跨行）里的代码也不是代码（E13 补的是行注释）。
+
+    E13 留下的边界：`code_lines` 与 `strip_line_comments` 都只管**行**注释 ⇒
+    C 系与 PHP 的 `/* … */` 里的代码仍被当成真代码。
+    ⚠️ **行注释与块注释必须单遍同时扫描**：`/* // */` 与 `// /* */` 两种写法互相截断，
+    分两步做会把注释边界搞错（这是实现里最容易写错的地方）。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_bc_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    @staticmethod
+    def _reported(data):
+        return ([f["rule_id"] for f in data.get("findings", [])]
+                + [f["rule_id"] for f in data.get("dropped", [])])
+
+    def test_multiline_block_comment_is_not_code(self):
+        """**跨行**块注释里的 sink ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "/*\n"
+                        "os.system(\"ls \" . $cmd);\n"
+                        "*/\n"
+                        "echo $cmd;\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "multi")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-CMDI-001", ids,
+                             "跨行块注释里的 os.system 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_inline_block_comment_is_not_code(self):
+        """**同行**块注释里的 sink ⇒ 也不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "echo $cmd; /* os.system(\"ls \" . $cmd) */\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "inline")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-CMDI-001", ids,
+                             "同行块注释里的 os.system 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_same_code_without_block_comment_is_reported(self):
+        """配对对照：不写块注释 ⇒ **必须**报（否则上面两条是假绿）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$cmd = $id;\n"
+                        "os.system(\"ls \" . $cmd);\n")
+            data, _ = self._scan(tmp, "nocmt")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-CMDI-001", ids,
+                          "不写块注释时反而不报了（上面两条是假绿）：%s" % ids)
+
+    def test_line_and_block_comment_do_not_cut_each_other(self):
+        """⚠️ `/* // */` 与 `// /* */` 两种写法**不能互相截断**（必须单遍扫描）。"""
+        sys.path.insert(0, SCRIPTS)
+        import auditlib
+        # `/* // */`：块注释里的 // 不是行注释 ⇒ 整段剥掉，但**块注释之后的真代码要留下**
+        out, in_block = auditlib.strip_comments("/* // */ x = 1;\n", "php")
+        self.assertNotIn("/*", out, "块注释没被剥：%r" % out)
+        self.assertNotIn("//", out, "块注释里的 // 被当成了行注释：%r" % out)
+        self.assertIn("x = 1;", out, "块注释之后的真代码被吃掉了：%r" % out)
+        self.assertFalse(in_block)
+        # `// /* */`：行注释先命中 ⇒ 后面全剥
+        out, in_block = auditlib.strip_comments("x = 1; // /* y = 2;\n", "php")
+        self.assertNotIn("//", out, "行注释没被剥：%r" % out)
+        self.assertNotIn("/*", out, "行注释里的 /* 被当成了块注释：%r" % out)
+        self.assertIn("x = 1;", out, "行注释之前的真代码被吃掉了：%r" % out)
+        self.assertFalse(in_block)
+
+    def test_block_comment_state_carries_across_lines(self):
+        """跨行块注释：状态要延续到下一行（纯函数级）。"""
+        sys.path.insert(0, SCRIPTS)
+        import auditlib
+        out, in_block = auditlib.strip_comments("/* start\n", "php")
+        self.assertTrue(in_block, "块注释没有进入状态")
+        self.assertNotIn("/*", out, "块注释首行没被剥：%r" % out)
+        out, in_block = auditlib.strip_comments("end */ x = 1;\n", "php", in_block)
+        self.assertFalse(in_block, "块注释没有正常结束")
+        self.assertNotIn("*/", out, "块注释第二行没被剥：%r" % out)
+        self.assertIn("x = 1;", out, "块注释之后的真代码被吃掉了：%r" % out)
+
+    def test_string_with_block_markers_is_not_a_comment(self):
+        """字符串里的 `/*` **不是**注释（先剥字符串才能找注释符）。"""
+        sys.path.insert(0, SCRIPTS)
+        import auditlib
+        src = "$u = \"/* not a comment */\";\n"
+        out, _ = auditlib.strip_comments(src, "php")
+        self.assertEqual(out, src, "字符串里的 /* 被当成了块注释：%r" % out)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

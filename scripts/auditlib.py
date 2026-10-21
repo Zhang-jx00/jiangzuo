@@ -462,8 +462,6 @@ COMMENT_PREFIXES = ("#", "//", "*", "/*")
 # ⚠️ **Python 的 `//` 是整除，不是注释**——用统一词表的话 `x = y // 2` 会被整行截断，
 # 那是把真代码当注释（⇒ 漏报）。E13 实测才发现这条。
 # ⚠️ PHP 另有 `#`（行尾注释）；Java/Kotlin/C#/Scala/Go/JS/TS/Vue 用 `//`。
-# ⚠️ C 系还有 `/* … */` 块注释（可跨行）——**本函数只管行尾注释**，
-#    块注释里的代码仍会被当成代码（已知边界，登记在交接文档 §11）。
 LINE_COMMENT_TOKENS = {
     "python": ("#",),
     "ruby": ("#",),
@@ -479,6 +477,19 @@ LINE_COMMENT_TOKENS = {
     "scala": ("//",),
     "go": ("//",),
 }
+# 块注释（**可跨行**）。⚠️ Python/Ruby/Shell **没有**块注释 ⇒ 不给它们配。
+# ⚠️ C 系的 `/* … */` 里有真代码时，E14 之前它会被当成真代码（已知边界，本轮修掉）。
+BLOCK_COMMENT_TOKENS = {
+    "php": ("/*", "*/"),
+    "javascript": ("/*", "*/"),
+    "typescript": ("/*", "*/"),
+    "vue": ("/*", "*/"),
+    "java": ("/*", "*/"),
+    "kotlin": ("/*", "*/"),
+    "csharp": ("/*", "*/"),
+    "scala": ("/*", "*/"),
+    "go": ("/*", "*/"),
+}
 # 字面量跨度必须认转义：`"...\b@app.route('x')..."` 里被转义的引号不是字符串结束，
 # 早先按"最近一个引号"配对会把后半行当成代码，屏蔽形同虚设（自扫实测 3 条误报）。
 STRING_SPAN_RX = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
@@ -491,6 +502,77 @@ def _cut_at_comment(seg, tokens):
             if seg.startswith(tok, i):
                 return seg[:i] + " " * (len(seg) - i)
     return seg
+
+
+def _cut_mixed(seg, line_tokens, block_tokens, in_block):
+    """**单遍**同时处理行注释与块注释（E14）。
+
+    ⚠️ **必须单遍**：`/* // */` 与 `// /* */` 两种嵌套写法互相截断——
+    分两步做（先剥行注释再剥块注释，或反过来）都会把注释的边界搞错。
+    返回 (处理后的片段, 是否仍在块注释里)。
+    """
+    out = []
+    i = 0
+    n = len(seg)
+    while i < n:
+        if in_block:
+            j = seg.find(block_tokens[1], i)
+            if j == -1:
+                out.append(" " * (n - i))
+                return "".join(out), True
+            out.append(" " * (j + len(block_tokens[1]) - i))
+            i = j + len(block_tokens[1])
+            in_block = False
+            continue
+        hit = None
+        for tok in line_tokens:
+            if seg.startswith(tok, i):
+                hit = ("line", tok)
+                break
+        if hit is None and block_tokens:
+            if seg.startswith(block_tokens[0], i):
+                hit = ("block", block_tokens[0])
+        if hit is None:
+            out.append(seg[i])
+            i += 1
+            continue
+        if hit[0] == "line":
+            out.append(seg[:i])
+            out.append(" " * (n - i))
+            return "".join(out), in_block
+        # 块注释开始：找配对的结束符
+        j = seg.find(block_tokens[1], i + len(block_tokens[0]))
+        out.append(seg[:i])
+        if j == -1:
+            out.append(" " * (n - i))
+            return "".join(out), True
+        out.append(" " * (j + len(block_tokens[1]) - i))
+        i = j + len(block_tokens[1])
+    return "".join(out), in_block
+
+
+def strip_comments(text, lang, in_block=False):
+    """把**行注释与块注释**都替换成等长空格（列位置不变）。
+
+    返回 (新文本, 是否仍在块注释里)——第二个返回值让调用方能跨行延续块注释状态。
+    **必须先跳过字符串**：`"http://x"` 里的 `//`、`"/* not a comment */"` 里的 `/*`
+    都不是注释（E13 实测：不剥字符串就会把它们当注释起点，把真代码截断 ⇒ 漏报）。
+    """
+    line_tokens = LINE_COMMENT_TOKENS.get(lang, ())
+    block_tokens = BLOCK_COMMENT_TOKENS.get(lang)
+    if not line_tokens and not block_tokens:
+        return text, in_block
+    out = []
+    pos = 0
+    for m in STRING_SPAN_RX.finditer(text):
+        seg, in_block = _cut_mixed(text[pos:m.start()], line_tokens, block_tokens,
+                                   in_block)
+        out.append(seg)
+        out.append(m.group(0))
+        pos = m.end()
+    seg, in_block = _cut_mixed(text[pos:], line_tokens, block_tokens, in_block)
+    out.append(seg)
+    return "".join(out), in_block
 
 
 def strip_line_comments(text, lang):
@@ -518,14 +600,17 @@ def code_lines(raw_iter, lang=None):
     单独拆出来是为了让**文件路径**和**已在内存里的文本**共用同一套过滤规则：
     两遍实现迟早分叉，注释/文档块的边界条件就是分叉点。
 
-    `lang` 给了就顺带**剥掉行尾注释**（E13）：`code_lines` 原本只跳**整行**注释，
-    行尾注释里的代码（`echo $x; // os.system("ls " . $x)`）仍在行内 ⇒ 会被当成真代码
+    `lang` 给了就顺带**剥掉行尾注释**（E13）与**块注释**（E14，可跨行）：
+    `code_lines` 原本只跳**整行**注释，行尾注释里的代码
+    （`echo $x; // os.system("ls " . $x)`）仍在行内 ⇒ 会被当成真代码
     ⇒ 误报**直接进结论区**（不像整行注释那样被独立验证挡在 dropped 层）。
+    块注释 `/* … */`（C 系与 PHP）**可跨行** ⇒ 状态要跨行延续 ⇒ `cmt_block`。
     """
-    block = None
+    block = None          # docstring 块状态（Python/Ruby 的三引号）
+    cmt_block = False     # 块注释状态（E14，跨行延续）
     for i, raw in enumerate(raw_iter, 1):
         if lang:
-            raw = strip_line_comments(raw, lang)
+            raw, cmt_block = strip_comments(raw, lang, cmt_block)
         stripped = raw.strip()
         if block:
             if block in raw:
