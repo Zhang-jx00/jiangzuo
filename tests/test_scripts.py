@@ -2218,6 +2218,52 @@ class TestAuditOverbroadRuleNarrowing(unittest.TestCase):
             self.assertIn("JZ-CODE-001", self._rules(p), "eval 必须仍归 JZ-CODE-001")
 
 
+class TestAuditXssConstantAssignment(unittest.TestCase):
+    """E26：给 `innerHTML` 赋**纯字符串常量**不是 XSS（E20 留下的"需人工细判"清零）。
+
+    ⚠️ 为什么这件事能在**掩码桶**里判：`JZ-XSS-001` 是 `ignore_strings: true` 的
+    pattern 规则 ⇒ 它匹配的行上字符串字面量被剥成 `''` ⇒
+    「纯常量赋值」= `innerHTML = '';`，而「常量 + 变量」= `innerHTML = '' + name;`
+    ⇒ 一条负向先行就能把两者分开。
+    ⚠️ 也因此**必须写成"把空格算进负向先行"**：`(?!['"]["']\s*;)` 会被 `\s*` 的
+    回溯绕过去（`\s*` 吃 0 个空格 ⇒ 负向先行看到 ` '';` ⇒ 通过）—— 我第一版就踩了。
+    """
+
+    def _scan(self, tmp, name, body):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        with io.open(os.path.join(d, "a.js"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+        out = os.path.join(tmp, name + ".json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), d, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return set(x["rule_id"] for x in json.load(f)["findings"])
+
+    def test_constant_assignment_is_not_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "const",
+                           "var el = document.getElementById('a');\n"
+                           "el.innerHTML = 'User details: ';\n")
+            self.assertNotIn("JZ-XSS-001", p,
+                             "给 innerHTML 赋纯字符串常量不是 XSS")
+
+    def test_constant_plus_variable_is_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "var",
+                           "var name = document.query['q'];\n"
+                           "el.innerHTML = 'User details: ' + name;\n")
+            self.assertIn("JZ-XSS-001", p,
+                          "常量 + 变量仍要报（收窄不能把真阳性砍掉）")
+
+    def test_plain_variable_assignment_is_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "plain",
+                           "var k = document.query['k'];\n"
+                           "cell.innerHTML = k;\n")
+            self.assertIn("JZ-XSS-001", p, "变量赋值必须仍报")
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""

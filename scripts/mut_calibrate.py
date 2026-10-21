@@ -507,6 +507,19 @@ CASES = [
      "upload-rule-content-type-back",
      "tests.test_scripts.TestAuditOverbroadRuleNarrowing."
      "test_content_type_check_must_be_about_the_uploaded_file"),
+    # ---- E26（v0.60.0）：给 innerHTML 赋纯字符串常量不是 XSS ----
+    # 变异：让那条负向先行**永远不成立**（在 `;` 后多插一个字符）⇒ 回到"只认
+    # `.innerHTML =`"的宽形态 ⇒ 判据必须红。
+    # ⚠️ 不能把整条 sink 换回老形态：老形态是新形态的**前缀**（新文本已存在于
+    # 文件里）⇒ 校准器会按"突变文本已存在 ⇒ 还原会连带改坏"直接 SKIP。
+    ("scripts/audit-rules/webapp.json",
+     '     "pattern": "' + B + B + '.innerHTML' + B + B + 's*=(?!' + B + B + 's*[' + B + '"'
+     + "']['" + B + '"' + ']' + B + B + 's*;)',
+     '     "pattern": "' + B + B + '.innerHTML' + B + B + 's*=(?!' + B + B + 's*[' + B + '"'
+     + "']['" + B + '"' + ']' + B + B + 's*;X)',
+     "xss-constant-innerhtml-back",
+     "tests.test_scripts.TestAuditXssConstantAssignment."
+     "test_constant_assignment_is_not_reported"),
 ]
 
 
