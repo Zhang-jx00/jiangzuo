@@ -2245,6 +2245,146 @@ class TestAuditSanitizePlacement(unittest.TestCase):
                           "没净化的同行输出没报出来：%s" % ids)
 
 
+class TestAuditCommentNotCode(unittest.TestCase):
+    """E12：注释里的代码**不是代码**——修复前图层把整行注释当成了真代码。
+
+    复核发现（v0.45.0 E11 收尾时自己的注释触发了假流，顺藤摸到的）：
+    `auditlib.iter_code_lines`（**规则层一直在用**）本来就会跳过注释行与 docstring 块，
+    但 `audit_graph.build_graph` 的主路径用的是 `auditlib.iter_lines`（**全部行**）
+    ⇒ **层间不一致** ⇒ 注释里的 source/sink 进了数据流。
+
+    实测代价（三仓逐条对比）：DVWA 有 **3 条** JZ-XSS-002 的 sink 落在**整行注释**里
+    （`vulnerabilities/sqli/source/low.php:32` 与 `medium.php:28` 的 `#print $query;`、
+    `vulnerabilities/cryptography/source/xor_theory.php:12` 的 `//echo 'i=' . $i . …`），
+    本仓库自扫有 2 条。它们当时都被独立验证当兜底挡着（没进结论区），
+    但**兜底不是机制**——行号归属稍有偏差就会漏进结论区（实测行尾注释就会，见下面的缺口）。
+
+    这四条判据全部是**修复前红、修复后绿**（第 3 条是配对的反向对照）。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_cn_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    @staticmethod
+    def _reported(data):
+        """**引擎认为有问题**的规则全集 = findings ＋ dropped（被独立验证拦下的）。
+
+        ⚠️ 只查 findings 会漏掉一整层：引擎有"独立验证"这道兜底，
+        证据链不成立的流停在 `dropped` 里、**没进 findings**——
+        E12 校准实测：注释假流修复前就停在这层，判据只看 findings ⇒ **恒绿**（没牙齿）。
+        `blocked`（被净化排除）不算：那是引擎看到了但认定安全，是正常结果。
+        """
+        return ([f["rule_id"] for f in data.get("findings", [])]
+                + [f["rule_id"] for f in data.get("dropped", [])])
+
+    def test_php_hash_comment_line_is_not_code(self):
+        """DVWA `sqli/source/low.php` 的形态：`#print $query;` 是注释 ⇒ 不该报。
+
+        真实代码长这样（source 在**上一行**，sink 在**下一行的注释里**——跨行形态）：
+            $query = "SELECT ... WHERE user_id = '$id';";
+            #print $query;
+
+        ⚠️ 夹具里**必须另有一处真 sink**（SQLi）：`audit_scan` 的**种子阶段**用
+        `iter_code_lines`（跳注释）决定"哪些文件进图层"⇒ 只剩注释里的 sink 时，
+        文件压根不进候选，图层没机会犯错 ⇒ 判据会**恒绿**（E12 校准实测）。
+        真 sink 用**另一条规则**（JZ-SQLI-003），断言只看 JZ-XSS-002。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$query = \"SELECT * FROM users WHERE user_id = '$id';\";\n"
+                        "#print $query;\n"
+                        "$sql = \"SELECT * FROM users WHERE id = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "hash")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "整行 # 注释里的 print 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_php_slash_comment_line_is_not_code(self):
+        """DVWA `xor_theory.php` 的形态：`//echo 'i=' . $i . …` 是注释 ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$outText = $_GET['t'];\n"
+                        "$outText .= 'x';\n"
+                        "//echo 'i=' . $outText . '<br />'; // For debugging\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$outText';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "slash")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "整行 // 注释里的 echo 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_inline_comment_with_source_and_sink_is_not_code(self):
+        """**同行**形态：source 与 sink 都在同一行注释里 ⇒ 也不该报。
+
+        这一条是**修复前会直接进结论区**的形态（同行内联 source 走 `__inline__` 兜底），
+        前两条（跨行）修复前停在 `dropped` 层。两种形态都锁住。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "//echo $_GET['x'];\n"
+                        "$sql = \"SELECT * FROM t WHERE c = '$id';\";\n"
+                        "mysqli_query($conn, $sql);\n")
+            data, _ = self._scan(tmp, "inline")
+            ids = self._reported(data)
+            self.assertNotIn("JZ-XSS-002", ids,
+                             "同行注释里的 source→sink 被当成了真代码：%s" % ids)
+            self.assertIn("JZ-SQLI-003", ids,
+                          "夹具里的真 sink 没进候选（种子阶段把它挡了，判据就恒绿）：%s" % ids)
+
+    def test_same_code_without_comment_is_reported(self):
+        """配对对照：同样两行、去掉注释 ⇒ **必须**报（否则上面几条是假绿）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "$id = $_GET['id'];\n"
+                        "$query = \"SELECT * FROM users WHERE user_id = '$id';\";\n"
+                        "print $query;\n")
+            data, _ = self._scan(tmp, "nocmt")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "去掉注释后反而不报了（上面几条是假绿）：%s" % ids)
+
+    def test_comment_brace_does_not_break_function_body(self):
+        """注释里的 `}` 不该截断函数体（**顺带修掉的第二个隐患**）。
+
+        修复前 `brace_end` 数括号时把注释里的 `}` 也算上 ⇒ 函数体提前结束
+        ⇒ 后面真正的 sink 行不在函数体里 ⇒ **漏报**。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        "<?php\n"
+                        "function f() {\n"
+                        "    // }\n"
+                        "    echo $_GET['x'];\n"
+                        "}\n")
+            data, _ = self._scan(tmp, "brace")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-XSS-002", ids,
+                          "注释里的 } 截断了函数体 ⇒ 漏报：%s" % ids)
+
+
 class TestAuditRoleScope(unittest.TestCase):
     """B7（第三方取证逼出来的一轮）：库代码与示例目录不该吃应用级规则的结论。
 

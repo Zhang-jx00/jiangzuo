@@ -980,7 +980,14 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
         if rec["path"] not in parse_set:
             continue
         abs_path = os.path.join(root, rec["path"].replace("/", os.sep))
-        lines = list(auditlib.iter_lines(abs_path, max_bytes=limit))
+        # **必须用 iter_code_lines（跳注释行与 docstring 块），不能用 iter_lines**。
+        # E12 实测（v0.46.0）：规则层（audit_scan 的粗筛/判定）**一直**用 iter_code_lines，
+        # 只有图层这一条路径用 iter_lines ⇒ **注释里的代码被当成了真代码**。
+        # 实测代价（三仓逐条对比）：DVWA 有 **3 条** JZ-XSS-002 命中的是**整行注释**
+        # （`//echo 'i=' . $i . …` 与两处 `#print $query;`）⇒ 那是**误报**，却进了结论区；
+        # 本仓库自扫也有 1 条（注释里写着 `os.system("ls " + request.args['d'])`）。
+        # 顺带修掉的两个隐患：注释里的 `{`/`}` 不再破坏括号配对；注释里的函数定义不再被认成函数。
+        lines = list(auditlib.iter_code_lines(abs_path, max_bytes=limit))
         if not lines:
             continue
         funcs = add_module_scope(parse_functions(rec["lang"], rec["path"], lines),
