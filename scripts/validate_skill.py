@@ -35,6 +35,7 @@ import argparse
 import io
 import json
 import os
+import ast
 import re
 import subprocess
 import sys
@@ -723,6 +724,101 @@ def check_no_replacement_chars(skill_dir):
         info(u"入库文本文件里没有 U+FFFD 替换字符（扫了 %d 个文件）" % scanned)
 
 
+
+STDLIB_OK = {"argparse", "ast", "collections", "functools", "glob", "hashlib",
+             "importlib", "io", "itertools", "json", "os", "pathlib", "platform",
+             "random", "re", "shutil", "stat", "subprocess", "sys", "tempfile",
+             "time", "typing"}
+
+
+def _mut_case_count(src):
+    """静态数出校准器的 CASES 条数（**不执行**被测脚本）。"""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == "CASES":
+                    try:
+                        return len(node.value.elts)
+                    except AttributeError:
+                        return None
+    return None
+
+
+def _mut_imports(src):
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return set()
+    mods = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                mods.add(a.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                mods.add(node.module.split(".")[0])
+    return mods
+
+
+def check_mut_calibrator(skill_dir):
+    """第 19 项：变异校准器必须随技能一起分发，且**例数不许手抄**（E24）。
+
+    为什么要有这项：校准例数是**写进 CHANGELOG / 验收记录 / 台账的数字**，
+    而它会随用例增删变——E19–E23 连续五轮把它**手数错了**（各差 1），
+    而"手数"正是本项目明令禁止的（数字只从真实命令输出抄）。
+    现在这条数字**从实物数出来**：CHANGELOG 最新条目写 N/N，N 必须等于
+    `scripts/mut_calibrate.py` 里 CASES 的条数，写错就当场红。
+    """
+    path = os.path.join(skill_dir, "scripts", "mut_calibrate.py")
+    repo_root = os.path.abspath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), ".."))
+    if os.path.abspath(skill_dir) != repo_root:
+        # 被检的**不是将作自己** ⇒ 本项不适用：别的技能不需要带**我们的**校准器。
+        # ⚠️ 同一个坑吃过一次：形态完整性第一版**按仓库判**，把一个合法的最小技能
+        # 目录判死了 ⇒ 改成**按事实判**。这里同理。
+        return None
+    if not os.path.isfile(path):
+        err("scripts/mut_calibrate.py 不见了——校准器必须随技能一起分发（E24）")
+        return None
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        src = f.read()
+    n_cases = _mut_case_count(src)
+    if n_cases is None:
+        err("scripts/mut_calibrate.py 解析不出 CASES（语法错或结构变了）")
+        return None
+    extra = sorted(m for m in _mut_imports(src) if m not in STDLIB_OK)
+    if extra:
+        err("scripts/mut_calibrate.py 依赖了非标准库模块：%s——校准器必须零依赖"
+            % ", ".join(extra))
+    # CHANGELOG 最新条目里写的 N/N 必须等于实物条数
+    changelog = os.path.join(skill_dir, "CHANGELOG.md")
+    claimed = None
+    if os.path.isfile(changelog):
+        with io.open(changelog, "r", encoding="utf-8", errors="replace") as f:
+            cl = f.read()
+        m = re.search(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", cl, re.M)
+        if m:
+            seg = re.split(r"\n## ", cl[m.end():], 1)[0]
+            mm = re.search(r"变异校准\s*\*?\*?(\d+)\s*/\s*(\d+)", seg)
+            if mm:
+                claimed = (int(mm.group(1)), int(mm.group(2)))
+    if claimed is None:
+        warn("CHANGELOG 最新条目里没写「变异校准 N/N」——例数对不上账，请补上")
+    elif claimed[0] != claimed[1]:
+        err("CHANGELOG 写的变异校准 %d/%d 分子分母不等" % claimed)
+    elif claimed[0] != n_cases:
+        err("CHANGELOG 写「变异校准 %d/%d」，实物是 %d 条用例——数字只能从真实输出抄"
+            % (claimed[0], claimed[1], n_cases))
+    else:
+        info("变异校准器已随技能分发（%d 条用例，零依赖，CHANGELOG 数字与实物一致 ✓）"
+             % n_cases)
+    return n_cases
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -797,6 +893,7 @@ def main():
             check_md_tables(skill_dir)
             check_expected_numbers(skill_dir)
             check_no_replacement_chars(skill_dir)
+            check_mut_calibrator(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:

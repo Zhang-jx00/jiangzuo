@@ -2068,6 +2068,48 @@ class TestBenchAggregation(unittest.TestCase):
                                msg="repeat=0 不该崩也不该算出 0")
 
 
+
+class TestMutCalibratorShipped(unittest.TestCase):
+    """E24：变异校准器必须随技能一起分发，且例数**不许手抄**。
+
+    ⚠️ 这条判据治的是本项目反复吃过的亏：校准例数是写进 CHANGELOG / 验收记录 /
+    台账的数字，而 E19–E23 连续五轮把它**手数错了**（各差 1）。
+    现在它由 validate 从实物数出来 ⇒ 写错当场红。
+    """
+
+    def test_validate_reports_mut_calibrator(self):
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("变异校准器已随技能分发", r.stdout)
+
+    def test_changelog_case_count_matches_real_cases(self):
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        with io.open(os.path.join(SCRIPTS, "mut_calibrate.py"), "r",
+                     encoding="utf-8") as f:
+            src = f.read()
+        n = validate_skill._mut_case_count(src)
+        self.assertIsNotNone(n, "数不出 CASES 条数")
+        self.assertGreaterEqual(n, 30, "校准用例少于 30 条——是不是被删过？")
+        with io.open(os.path.join(REPO, "CHANGELOG.md"), "r", encoding="utf-8") as f:
+            cl = f.read()
+        m = re.search(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", cl, re.M)
+        seg = re.split(r"\n## ", cl[m.end():], 1)[0]
+        mm = re.search(r"变异校准\s*\*?\*?(\d+)\s*/\s*(\d+)", seg)
+        self.assertIsNotNone(mm, "CHANGELOG 最新条目没写「变异校准 N/N」")
+        self.assertEqual(n, int(mm.group(1)),
+                         "CHANGELOG 写的校准例数与实物不一致——数字只能从真实输出抄")
+
+    def test_case_counter_really_counts(self):
+        """反例：喂一份只有 2 条用例的假源码，必须数出 2（不是恒返回一个数）。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        fake = "CASES = [('a', 'x', 'y', 'l', 't'), ('b', 'x', 'y', 'l', 't')]\n"
+        self.assertEqual(2, validate_skill._mut_case_count(fake))
+        self.assertIsNone(validate_skill._mut_case_count("x = 1\n"))
+        self.assertIsNone(validate_skill._mut_case_count("def (:\n"))
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""

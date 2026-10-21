@@ -39,6 +39,13 @@ jobs:
       - name: 审计链性能护栏（预算内完成，拦数量级回退）
         run: python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/audit-bench" --files 400 --repeat 3 --max-ms-per-file 20 --max-mb 128
 
+      # 变异校准的**锚点核对**（秒级、平台无关）：校准器随技能一起分发，
+      # 它的锚点会随实现演进而过期 ⇒ 过期的锚点会让校准**静默失效**。
+      # 这里只核对锚点还准不准（不跑测试）——完整校准要跑测试，其中个别判据
+      # 随平台换颜色（Windows 反斜杠 / Linux 正斜杠）⇒ 在 CI 上跑会误红。
+      - name: 变异校准锚点核对（锚点过期当场红）
+        run: python scripts/mut_calibrate.py --check-only
+
       - name: 审计链靶场复跑（检出率与误报率不许滑坡）
         run: |
           python evals/audit-fixtures/gen_corpus.py --out "$RUNNER_TEMP/audit-bench-corpus"
