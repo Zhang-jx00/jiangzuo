@@ -961,3 +961,37 @@ DVWA 当前 master 里 `real_escape_string` 命中 **31 行**（用在登录/改
 
 **判据**：`TestAuditPhpMemberCall` **3 条**；变异校准 **30/30 全红**（新增 1 条：
 去掉 `->` 的排除 ⇒ 判据红，证明它确实是"修复前红、修复后绿"）。
+
+## v0.54.0 E20（误报率口径收口：把"硬误报 1/60"按现行分母重述）
+
+**起因（§11 第 13 项）**：验收记录里那句"硬误报 1/60 ≈ 1.7%"是 **v0.30 那一节**的判定，
+分母 60 = DVWA 59 + flask 1，而 **DVWA 那部分从来没逐条判过** ⇒ 这个比率一直在拿
+"只判过的部分"冒充"全量结论区"。
+
+**本轮做法**：把 DVWA 结论区 **68 条**（69 findings − 1 另计）**按规则**逐条过一遍（14 条规则），
+flask 1 条、requests 0 条 ⇒ 合成**现行结论区 69 条**。
+⚠️ 判定依据是 **sink 行**（未逐条读完整证据链）——这一点写进台账，**不冒充人工审阅**。
+
+| 规则 | 条数 | 判定 | 依据 |
+|---|---|---|---|
+| JZ-CMDI-001 | 7 | 真阳性 | DVWA exec 模块靶场（`shell_exec`/`exec` 带请求参数） |
+| JZ-CODE-001 | 4 | 2 真阳性 + **2 硬误报** | `eval('?>' . file_get_contents(...))` 是 LFI→RCE 链（真）；`preg_replace(...)` **不是动态代码执行**（PHP 5.5+ 已移除 `/e` 修饰符）⇒ 规则过宽 |
+| JZ-CRYPTO-003 | 5 | 真阳性 | `aes-128-ecb` / XOR 弱加密 |
+| JZ-CSRF-001 | 6 | 真阳性 | 表单无 CSRF token（含 `PHP_SELF` 反射） |
+| JZ-DEBUG-001 | 1 | **硬误报** | `error_reporting(E_ALL)` 只是打开错误报告，不是泄露 |
+| JZ-JSINSEC-001 | 2 | 真阳性 | `sha256(token + …)` 拼接弱化 |
+| JZ-REDIR-001 | 3 | 真阳性 | `header("location: " . 请求参数)` |
+| JZ-SECRET-001 | 1 | 真阳性 | 硬编码口令 |
+| JZ-SQLI-003 | 18 | 16 真阳性 + **2 硬误报** | `csrf/source/high.php:44` 与 `csrf/test_credentials.php:22` 的 `$user`/`$pass_new` **已 `mysqli_real_escape_string`** ⇒ 转义在**引号内**有效；其余未转义（`sqli_blind/medium` 转义了但在**引号外**＝数值上下文 ⇒ 仍成立） |
+| JZ-TRAVERSAL-001 | 1 | 真阳性 | `include($file)` |
+| JZ-UPLOAD-001 | 3 | **2 硬误报** + 1 需人工细判 | `$_SERVER['CONTENT_TYPE']` 只是内容类型检查、`move_uploaded_file` 是正常上传处理 ⇒ 都不是漏洞点；"上传是否可利用"另判 |
+| JZ-WEAKID-001 | 6 | 真阳性 | `md5(uniqid())` / `time()` / 递增计数 |
+| JZ-XSS-001 | 14 | 12 真阳性 + 2 需人工细判 | 两条 `innerHTML = 'User details: unknown user'` 是**常量**（同行无 tainted 变量）⇒ 需看证据链 |
+| JZ-XSS-002 | 2 | 真阳性 | JSONP 回调未校验 / 反射 XSS 低危档 |
+
+**现行口径**：**硬误报 8 / 69 ≈ 11.6%**（7 条 DVWA + 1 条 flask），**需人工细判 3 条单列**。
+⚠️ 与旧的"1/60 ≈ 1.7%"**不可比**（旧的分母与判定范围都不同）——**不要**把两个数放在一起说"退步了"。
+
+**这一轮的产出不是"修好"，是"把没判的变成判过的"** —— 口径立住了，下一轮才知道该修什么：
+7 条硬误报里 **4 条是"规则过宽"**（`preg_replace` 当动态代码执行 2 条、`error_reporting(E_ALL)` 当调试泄露 1 条、
+`$_SERVER['CONTENT_TYPE']` 当文件上传 2 条）⇒ 已排进后续轮次。
