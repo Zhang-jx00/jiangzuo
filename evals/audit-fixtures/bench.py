@@ -108,6 +108,30 @@ def stage(fn):
     return dt, peak, out
 
 
+def aggregate_rows(rows, repeat):
+    """把多次重复的计时聚合成「最快一次的秒 + 峰值内存」。
+
+    ⚠️ **时间取各次最小值（最快一次），不是均值、也不是累加**——这不是随手选的：
+    - 累加：repeat=N 时读数随 repeat 线性放大，看着像"变慢了"。
+    - 均值：**对离群值不稳健**。本机实测（2026-10-21，400 文件各跑 3 轮）：
+      单次读数 4.605/4.642/4.780（极差 3.8%），
+      两轮均值 4.819/4.821/5.376（极差 **11.6%**）⇒ **均值反而更抖**。
+    - 最小值：**性能测量里的噪声只会让读数变大**（别的进程抢 CPU）⇒ 取最快一次
+      得到的是"这台机器最快能跑多快"，噪声不会造成误红；而真正的回退会让
+      **每一次**都变慢 ⇒ 最小值照样超预算 ⇒ 回退仍然拦得住。
+    ⚠️ 峰值内存取各次**最大**值（峰值不平均）。
+    ⚠️ repeat 至少为 1：原来这里直接除以 args.repeat，`--repeat 0` 会 ZeroDivisionError
+    （`range(max(1, 0))` 明明跑了一轮）。
+    """
+    repeat = max(1, int(repeat))
+    agg = {}
+    for name, dt, pk in rows:
+        cur = agg.setdefault(name, [None, 0])
+        cur[0] = dt if cur[0] is None else min(cur[0], dt)
+        cur[1] = max(cur[1], pk)
+    return agg
+
+
 def main():
     ap = argparse.ArgumentParser(description=u"审计链性能基准（将作）")
     ap.add_argument("--workdir", required=True)
@@ -148,17 +172,13 @@ def main():
         full = payload
 
     n = full["stats"]["files_total"]
-    agg = {}
-    for name, dt, pk in rows:
-        cur = agg.setdefault(name, [0.0, 0])
-        cur[0] += dt / args.repeat
-        cur[1] = max(cur[1], pk)
+    agg = aggregate_rows(rows, args.repeat)
     total_dt = agg["整链 audit_scan.run"][0]
     ms_file = total_dt * 1000.0 / max(1, n)
     peak_mb = agg["整链 audit_scan.run"][1] / 1024.0
 
-    print(u"# 审计链性能基准（%d 文件，重复 %d 次取均值/峰值）\n" % (n, args.repeat))
-    print(u"| 阶段 | 秒 | 峰值内存 | 每文件 ms |")
+    print(u"# 审计链性能基准（%d 文件，重复 %d 次取**最快一次**/峰值）\n" % (n, args.repeat))
+    print(u"| 阶段 | 秒（最快一次） | 峰值内存 | 每文件 ms |")
     print(u"|---|---|---|---|")
     for name in ("索引 build_index", "地图 build_map", "图 build_graph（无门控对照）",
                  "粗筛 coarse_screen", "整链 audit_scan.run"):

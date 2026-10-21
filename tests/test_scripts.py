@@ -2018,6 +2018,56 @@ class TestAuditCapabilityBoundaries(unittest.TestCase):
             self.assertTrue(cells[3], u"缺「实测证据」：%s" % row[:40])
 
 
+class TestBenchAggregation(unittest.TestCase):
+    """E23：性能护栏不许退回"单次测量"，而"取均值"这件事本身要被机器判据钉住。
+
+    E16 实测：共享机器上单次 bench 读数在 4.4–10.1 ms/文件之间跳 ⇒ 单次测量
+    **既会误红**（CI 红了但代码没退化）**也会误绿**（退化一次没被抓住）。
+    CI 因此改成 `--repeat 2` 取均值；本类把"不许退回单次"变成会红的判据。
+    """
+
+    WORKFLOW = os.path.join(REPO, ".github", "workflows", "validate.yml")
+    BENCH_DIR = os.path.join(REPO, "evals", "audit-fixtures")
+
+    def test_ci_bench_uses_repeat_at_least_two(self):
+        with io.open(self.WORKFLOW, "r", encoding="utf-8") as f:
+            text = f.read()
+        repeats = re.findall(r"--repeat\s+(\d+)", text)
+        self.assertTrue(repeats, "CI 的 bench 步没写 --repeat")
+        for r in repeats:
+            self.assertGreaterEqual(int(r), 2,
+                "CI 的 bench 用 --repeat %s（单次测量）⇒ 读数随机器负载跳变" % r)
+
+    def test_aggregate_rows_takes_fastest_not_mean_or_sum(self):
+        """时间必须取**最快一次**。
+
+        ⚠️ 这条不是随手挑的统计量：本机实测（2026-10-21，400 文件各 3 轮）
+        单次读数 4.605/4.642/4.780（极差 3.8%），而两轮**均值**是
+        4.819/4.821/5.376（极差 11.6%）⇒ **均值反而更抖**（对离群值不稳健）。
+        取最快一次的理由：性能噪声只会让读数**变大** ⇒ 最小值抗噪、不会误红；
+        真回退会让每次都慢 ⇒ 最小值照样超预算 ⇒ 回退仍拦得住。
+        """
+        sys.path.insert(0, self.BENCH_DIR)
+        import bench
+        rows = [("整链 audit_scan.run", 4.0, 100),
+                ("整链 audit_scan.run", 6.0, 200),
+                ("索引 build_index", 2.0, 50),
+                ("索引 build_index", 4.0, 80)]
+        agg = bench.aggregate_rows(rows, 2)
+        self.assertAlmostEqual(4.0, agg["整链 audit_scan.run"][0], places=6,
+                               msg="时间必须取最快一次（4），不是均值 5，也不是累加 10")
+        self.assertEqual(200, agg["整链 audit_scan.run"][1],
+                         "峰值内存取最大值，不是平均")
+        self.assertAlmostEqual(2.0, agg["索引 build_index"][0], places=6)
+
+    def test_aggregate_rows_survives_repeat_zero(self):
+        sys.path.insert(0, self.BENCH_DIR)
+        import bench
+        agg = bench.aggregate_rows([("x", 3.0, 10)], 0)
+        self.assertAlmostEqual(3.0, agg["x"][0], places=6,
+                               msg="repeat=0 不该崩也不该算出 0")
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""

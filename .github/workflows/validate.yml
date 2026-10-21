@@ -31,8 +31,13 @@ jobs:
       # 不是"慢了两成"。真正锁死成本的是 tests/test_scripts.py 里的
       # TestAuditCostModel（结构量：干净仓库图层解析 0 个文件、
       # 仓库×4 而候选不变时解析数不变）——那个不受机器快慢影响。
+      # ⚠️ --repeat 3（取最快一次，不是单次也不是均值）：共享 runner 的负载会抖，
+      # E16 实测单次读数在 4.4–10.1 ms/文件之间跳 ⇒ 单次测量会误红也会误绿。
+      # ⚠️ **不是均值**：E23 实测均值反而更抖（极差 11.6% vs 单次 3.8%）——
+      # 均值对离群值不稳健。取"最快一次"（min）：性能噪声只会让读数变大 ⇒ 抗噪、
+      # 不会误红；而真回退会让每一次都慢 ⇒ min 照样超预算 ⇒ 回退仍拦得住。
       - name: 审计链性能护栏（预算内完成，拦数量级回退）
-        run: python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/audit-bench" --files 400 --repeat 1 --max-ms-per-file 20 --max-mb 128
+        run: python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/audit-bench" --files 400 --repeat 3 --max-ms-per-file 20 --max-mb 128
 
       - name: 审计链靶场复跑（检出率与误报率不许滑坡）
         run: |
@@ -55,7 +60,7 @@ jobs:
             gate preflight python scripts/preflight.py --all --strict
             gate unittest  python -m unittest discover -s tests
             gate shipcheck python scripts/ship_check.py --level L1 --timeout 300
-            gate bench     python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/diag-bench" --files 400 --repeat 1 --max-ms-per-file 20 --max-mb 128
+            gate bench     python evals/audit-fixtures/bench.py --workdir "$RUNNER_TEMP/diag-bench" --files 400 --repeat 3 --max-ms-per-file 20 --max-mb 128
             gate corpus    python evals/audit-fixtures/gen_corpus.py --out "$RUNNER_TEMP/diag-corpus"
             gate score     python evals/audit-fixtures/score.py --corpus "$RUNNER_TEMP/diag-corpus"
           } | tee -a "$LOG"
