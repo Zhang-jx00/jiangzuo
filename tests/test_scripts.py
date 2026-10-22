@@ -1955,11 +1955,13 @@ class TestAuditCapabilityBoundaries(unittest.TestCase):
         return set(f["rule_id"] for f in payload["findings"])
 
     def test_escaped_string_is_not_treated_as_sanitizer(self):
-        """边界：净化点 pattern 匹配不到 mysqli_real_escape_string ⇒ 转义处照报。
+        """边界：**值直接内插在 sink 调用里**时，SQL 上下文判定落不到 ⇒ 转义处照报。
 
-        ⚠️ 这条锁的是**已知缺陷的现状**，不是正确行为：转义只在引号内有效，
-        一刀切当净化会压掉 sqli_blind 的真阳性（见能力边界表第 2 行）。
-        真要修，得先做 sink 级上下文判定 ⇒ 届时本测试应当红，提醒改表。
+        ⚠️ E30 之后这条边界**变窄了**：转义类净化点现在按引号内/引号外两档生效
+        （赋值行上的形态已经判得了，见 `TestAuditSqlQuoteContext`）。
+        ⚠️ 但**这个形态仍然判不了**：`mysql_query("... WHERE a = '$x'")` 里值是
+        **直接内插在 sink 调用里**的，没有独立的赋值行可判 ⇒ 引擎照报。
+        ⇒ 本测试从"锁住旧缺陷"改成"锁住**剩下的这条**边界"（能力边界表第 2 行 ①）。
         """
         with tempfile.TemporaryDirectory() as tmp:
             p = self._scan(tmp, "e22_escape.php",
@@ -2872,6 +2874,108 @@ class TestAuditPhpReturnValue(unittest.TestCase):
             self.assertNotIn("JZ-XSS-002", ids,
                              "DVWA check_token 形态被误报（返回值全是常量）：%s" % ids)
 
+
+
+class TestAuditSqlQuoteContext(unittest.TestCase):
+    """E30：**净化点按 sink 上下文生效** —— 转义只在**引号内**有效。
+
+    为什么需要它（E17/E22 两次登记的缺口）：DVWA 两处形态**几乎一样**
+    （都调了 `mysqli_real_escape_string`），但判定必须不同：
+
+    - `csrf/source/high.php:43`：`"UPDATE ... password = '" . $pass_new . "' ..."`
+      ⇒ 值落在**引号内** ⇒ 转义把 `'` 变成 `\\'` ⇒ 注入不成立 ⇒ **不该报**；
+    - `sqli_blind/source/medium.php:13`：`"SELECT ... WHERE user_id = $id;"`
+      ⇒ 值落在**引号外**（数值上下文）⇒ 转义救不了任何东西 ⇒ **仍须报**。
+
+    ⇒ 一刀切把转义当净化点＝**拿真阳性换误报**（E17 实测过这个坑）。
+
+    ⚠️ 还有一条机制事实（E22 实测、到本轮才修）：旧净化点 pattern
+    `\\breal_escape_string\\b` **匹配不到** `mysqli_real_escape_string`
+    （`_` 是单词字符 ⇒ 无词边界）⇒ **这个净化点从来没生效过**。
+    """
+
+    def _write(self, root, rel, text):
+        path = os.path.join(root, rel.replace("/", os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def _scan(self, root, name):
+        out = os.path.join(root, "_qc_%s.json" % name)
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), root, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f), r.stdout
+
+    def test_quote_context_is_quoted(self):
+        """DVWA 真实形态：拼接，前一段字面量以 `'` 收尾 ⇒ 值落在引号内。"""
+        sys.path.insert(0, SCRIPTS)
+        import audit_graph
+        line = '''$insert = "UPDATE `users` SET password = '" . $pass_new . "' WHERE user = '"'''
+        self.assertEqual("quoted",
+                         audit_graph.sql_quote_context(line, "pass_new", "php"))
+
+    def test_quote_context_is_bare(self):
+        """DVWA 真实形态：双引号串里裸插 ⇒ 值落在引号外（数值上下文）。"""
+        sys.path.insert(0, SCRIPTS)
+        import audit_graph
+        line = '''$query = "SELECT first_name, last_name FROM users WHERE user_id = $id;"'''
+        self.assertEqual("bare",
+                         audit_graph.sql_quote_context(line, "id", "php"))
+
+    def test_escape_sanitizer_actually_matches_mysqli(self):
+        """净化点必须真能匹配 `mysqli_real_escape_string`（旧的词边界 bug）。
+
+        ⚠️ 旧 pattern `\\breal_escape_string\\b` 匹配不到它（`_` 是单词字符
+        ⇒ 无词边界）⇒ 这个净化点**从来没生效过** ⇒ E22 把它记成了能力边界。
+        """
+        sys.path.insert(0, SCRIPTS)
+        import audit_rules
+        rules, problems, _notes, _skipped = audit_rules.load_rules()
+        self.assertEqual([], problems, "规则库自检有问题")
+        rule = [r for r in rules if r["id"] == "JZ-SQLI-003"][0]
+        hit = [s for s in rule["sanitizers"]
+               if s["_rx"].search("$id = mysqli_real_escape_string($conn, $id);")]
+        self.assertTrue(hit,
+                        "没有净化点匹配 mysqli_real_escape_string（旧 pattern 的词边界 bug）")
+        self.assertEqual("sql_quoted", hit[0].get("context"),
+                         "转义净化点必须标成条件净化点（否则引号外的真阳性会被吃掉）")
+
+    def test_escaped_value_in_quotes_is_not_reported(self):
+        """正例：转义 + 引号内 ⇒ 不是注入 ⇒ 不该报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        '''<?php
+$id = $_GET['id'];
+$id = mysqli_real_escape_string($conn, $id);
+$query = "SELECT * FROM users WHERE user_id = '" . $id . "'";
+mysqli_query($conn, $query);
+''')
+            data, _ = self._scan(tmp, "quoted")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertNotIn("JZ-SQLI-003", ids,
+                             "转义且落在引号内却报了：%s" % ids)
+
+    def test_escaped_value_outside_quotes_is_still_reported(self):
+        """反例（防误伤）：转义 + 引号外 ⇒ 仍须报。
+
+        ⚠️ 这一条是 E30 的**主要风险**：把转义一刀切当净化点 ⇒ 真阳性被吃掉
+        （DVWA `sqli_blind/source/medium.php:15` 就是这个形态）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "app.php",
+                        '''<?php
+$id = $_GET['id'];
+$id = mysqli_real_escape_string($conn, $id);
+$query = "SELECT * FROM users WHERE user_id = $id;";
+mysqli_query($conn, $query);
+''')
+            data, _ = self._scan(tmp, "bare")
+            ids = [f["rule_id"] for f in data["findings"]]
+            self.assertIn("JZ-SQLI-003", ids,
+                          "引号外的转义没报（真阳性被吃掉了）")
 
 
 class TestAuditSanitizePlacement(unittest.TestCase):

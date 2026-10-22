@@ -152,12 +152,26 @@ def run_case(rel, old, new, label, test_id):
         io.open(path, "wb").write(out)
         # 还原证明：①sha1 与突变前逐字节一致 ②文件非空 ③还原后**不含**突变文本
         # ④变异态里每个突变文本恰好出现一次（否则"还原"可能还原到了别处）
-        ok = (sha(path) == token
-              and len(io.open(path, "rb").read()) > 0
-              and all(now.count(n.encode("utf-8")) == 0 for _, n in pairs)
-              and all(mutated.count(n.encode("utf-8")) == 1 for _, n in pairs))
+        # E30：**失败时要说清是哪一条不满足** —— 只报"不一致"的话，
+        # 还原失败（E30 那轮就撞上过一次，**只在全量跑时**才出现，单跑复现不了）
+        # 根本无从下手。
+        why = []
+        if sha(path) != token:
+            why.append("sha1 与突变前不一致（%s != %s）" % (sha(path)[:10], token[:10]))
+        if len(io.open(path, "rb").read()) <= 0:
+            why.append("还原后文件为空")
+        for _o, n in pairs:
+            if now.count(n.encode("utf-8")) != 0:
+                why.append("还原后仍含突变文本 %d 次" % now.count(n.encode("utf-8")))
+        for _o, n in pairs:
+            if mutated.count(n.encode("utf-8")) != 1:
+                why.append("变异态里突变文本出现 %d 次（应为 1）"
+                           % mutated.count(n.encode("utf-8")))
+        ok = not why
         print("%-24s 还原=%s（sha1 %s…）" % ("", "逐字节一致" if ok else "!! 不一致 !!",
                                              sha(path)[:10]))
+        for w in why:
+            print("%-24s   ↳ %s" % ("", w))
         if not ok:
             raise SystemExit("还原失败，停止后续用例")
 
@@ -277,19 +291,22 @@ CASES = [
      "php-input-source-too-broad",
      "tests.test_scripts.TestAuditPhpRequestBody."
      "test_non_request_body_read_is_not_a_source"),
+    # ⚠️ E30 修：这个锚点原来**跨进了 sanitizers 块** ⇒ E30 改了净化点后它就过期
+    # （`--check-only` 当场报 STALE-ANCHOR —— 这正是这条机制的价值）。
+    # ⇒ 改成只覆盖 sources 块的前缀（仍唯一），不再随净化点变动。
     ("scripts/audit-rules/injection.json",
-     "     \"pattern\": \"file_get_contents\\\\s*\\\\(\\\\s*['\\\"]php://input['\\\"]\"\n"
-     "    }\n"
-     "   ],\n"
-     "   \"sanitizers\": [\n"
+     "   \"sources\": [\n"
      "    {\n"
-     "     \"pattern\": \"\\\\b(?:setString|setInt|bindValue)\\\\s*\\\\(|\\\\breal_escape_string\\\\b|\\\\bPreparedStatement\\\\b|\\\\$\\\\d\"",
-     "     \"pattern\": \"file_get_contents\\\\s*\\\\(\\\\s*['\\\"]php://inputX['\\\"]\"\n"
-     "    }\n"
-     "   ],\n"
-     "   \"sanitizers\": [\n"
+     "     \"pattern\": \"(?<!\\\\w)(?:request\\\\.getParameter|\\\\$_(?:GET|POST|REQUEST)|params\\\\[|c\\\\.Param)\"\n"
+     "    },\n"
      "    {\n"
-     "     \"pattern\": \"\\\\b(?:setString|setInt|bindValue)\\\\s*\\\\(|\\\\breal_escape_string\\\\b|\\\\bPreparedStatement\\\\b|\\\\$\\\\d\"",
+     "     \"pattern\": \"file_get_contents\\\\s*\\\\(\\\\s*['\\\"]php://input['\\\"]\"",
+     "   \"sources\": [\n"
+     "    {\n"
+     "     \"pattern\": \"(?<!\\\\w)(?:request\\\\.getParameter|\\\\$_(?:GET|POST|REQUEST)|params\\\\[|c\\\\.Param)\"\n"
+     "    },\n"
+     "    {\n"
+     "     \"pattern\": \"file_get_contents\\\\s*\\\\(\\\\s*['\\\"]php://inputX['\\\"]\"",
      "php-input-literal-changed",
      "tests.test_scripts.TestAuditPhpRequestBody."
      "test_request_body_reaches_each_php_rule"),
@@ -473,11 +490,11 @@ CASES = [
     # 变异①：把净化点 pattern 改成能匹配 mysqli_real_escape_string ⇒
     # "转义处照报"这条边界不再成立 ⇒ 判据必须红（提醒改表）。
     ("scripts/audit-rules/injection.json",
-     "\\\\breal_escape_string\\\\b",
-     "\\\\bmysqli_?real_escape_string\\\\b",
-     "escape-sanitizer-now-matches",
-     "tests.test_scripts.TestAuditCapabilityBoundaries."
-     "test_escaped_string_is_not_treated_as_sanitizer"),
+     '     "pattern": "\\\\b(?:mysql|mysqli)_(?:real_)?escape_string\\\\s*\\\\(|\\\\breal_escape_string\\\\s*\\\\(",',
+     '     "pattern": "\\\\b(?:mysql)_(?:real_)?escape_string\\\\s*\\\\(|\\\\breal_escape_string\\\\s*\\\\(",',
+     "escape-sanitizer-back-to-dead",
+     "tests.test_scripts.TestAuditSqlQuoteContext."
+     "test_escape_sanitizer_actually_matches_mysqli"),
     # 变异②：把边界表一行的「代价」列**整列清空** ⇒ 结构判据必须红。
     # ⚠️ 第一版只抹掉了代价列里的**半句**，列仍非空 ⇒ 判据照样绿 ⇒ 校准器当场报 GREEN
     # （"锁无效"）—— 这条 GREEN 是真信号：判据只查"非空"，不查"内容"。
@@ -635,6 +652,28 @@ CASES = [
      "verdict-section-two-row-count-neutered",
      "tests.test_scripts.TestVerdictTable."
      "test_section_two_rows_must_match_the_bucket_table"),
+    # ---- E30（v0.64.0）：净化点按 sink 上下文生效（转义只在引号内有效）----
+    # ① 上下文判定被改成"永远当引号外" ⇒ 引号内的真·误报又回来 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     '            return "quoted" if (in_single or in_double) else "bare"',
+     '            return "bare"',
+     "sql-quote-context-always-bare",
+     "tests.test_scripts.TestAuditSqlQuoteContext."
+     "test_escaped_value_in_quotes_is_not_reported"),
+    # ② 条件净化点又被当成了"守卫" ⇒ 引号外的**真阳性**被吃掉 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     '                             if not s.get("context")',
+     '                             if True',
+     "sql-quote-guard-blocks-conditional",
+     "tests.test_scripts.TestAuditSqlQuoteContext."
+     "test_escaped_value_outside_quotes_is_still_reported"),
+    # ③ 整个上下文判定被跳过 ⇒ 条件净化点等于没有 ⇒ 引号内的误报又回来 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "                        if cond_san and STR_SPAN_RX.search(rhs):",
+     "                        if False:",
+     "sql-quote-decision-neutered",
+     "tests.test_scripts.TestAuditSqlQuoteContext."
+     "test_escaped_value_in_quotes_is_not_reported"),
 ]
 
 

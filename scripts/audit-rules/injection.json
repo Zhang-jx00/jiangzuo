@@ -138,10 +138,15 @@
    ],
    "sanitizers": [
     {
-     "pattern": "\\b(?:setString|setInt|bindValue)\\s*\\(|\\breal_escape_string\\b|\\bPreparedStatement\\b|\\$\\d"
+     "pattern": "\\b(?:setString|setInt|bindValue)\\s*\\(|\\bPreparedStatement\\b|\\$\\d"
     },
     {
      "pattern": "\\b(?:intval|floatval|settype|is_numeric|filter_var)\\s*\\("
+    },
+    {
+     "pattern": "\\b(?:mysql|mysqli)_(?:real_)?escape_string\\s*\\(|\\breal_escape_string\\s*\\(",
+     "context": "sql_quoted",
+     "note": "E30：转义类净化点**只在引号内有效**（DVWA csrf/source/high.php:43 值落在引号内⇒不是注入；sqli_blind/source/medium.php:13 落在引号外⇒仍是注入）。⚠️ 旧 pattern \\breal_escape_string\\b 匹配不到 mysqli_real_escape_string（_ 是单词字符⇒无词边界）⇒ 这个净化点从来没生效过。"
     }
    ],
    "fix": "改用 PreparedStatement / ORM 参数绑定：Java prepareStatement(sql) 后 setString(1, v)；PHP 用 PDO 预处理；Ruby 用 where(\"id = ?\", id)；Go 用 db.Query(\"... $1\", v)。",

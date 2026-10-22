@@ -126,6 +126,69 @@ def carriers_of(text, lang):
     return out
 
 
+def sql_quote_context(text, carrier, lang):
+    """这个变量被拼进 SQL 字符串时，落在**引号内**还是**引号外**。
+
+    为什么需要它（E30）：**转义类净化点只在引号内有效**——转义把 `'` 变成 `\'`，
+    在引号内确实挡住了注入；但插在**引号外**（裸值/数值上下文）时转义救不了任何东西。
+    DVWA 两处形态完全一样、判定必须不同：
+      - `csrf/source/high.php:43`：`"UPDATE ... password = '" . $pass_new . "' ..."`
+        ⇒ 值落在**引号内** ⇒ 转义有效 ⇒ **不是注入**；
+      - `sqli_blind/source/medium.php:13`：`"SELECT ... WHERE user_id = $id;"`
+        ⇒ 值落在**引号外**（数值上下文）⇒ 转义无效 ⇒ **仍是注入**。
+    ⇒ 一刀切把转义当净化点＝**拿真阳性换误报**（E17/E22 两次登记过这个坑）。
+
+    做法：按"输出串"重建引号状态——字符串字面量的**定界符不进输出**，
+    **内容里**的引号进输出（PHP 单引号串里的 `\\'` 进输出、单引号串里的 `"` 也进输出）。
+    走到变量所在位置时的状态，就是它落进的上下文。
+
+    返回 `"quoted"` / `"bare"` / `"unknown"`（判断不了时保守：当作没被净化）。
+    """
+    if not text or not carrier:
+        return "unknown"
+    if lang == "php":
+        pos = set(m.start() for m in PHP_INTERP_RX.finditer(text)
+                  if m.group(1) == carrier)
+    else:
+        pos = set(m.start() for m in
+                  re.finditer(r"(?<![\w$])" + re.escape(carrier) + r"\b", text))
+    if not pos:
+        return "unknown"
+    in_single = False      # 输出串里此刻是否在单引号区
+    in_double = False      # 输出串里此刻是否在双引号区
+    lit = None             # None | "'" | '"' | "`"
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if i in pos:
+            return "quoted" if (in_single or in_double) else "bare"
+        if lit is None:
+            if ch in "'\"" or (ch == "`" and lang == "go"):
+                lit = ch
+            i += 1
+            continue
+        # 字面量内部
+        if ch == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            # 转义的同种引号会进输出；另一种引号在双引号串里也是原样输出
+            if nxt == "'":
+                in_single = not in_single
+            elif nxt == '"':
+                in_double = not in_double
+            i += 2
+            continue
+        if ch == lit:
+            lit = None            # 定界符本身不进输出
+            i += 1
+            continue
+        if ch == "'":
+            in_single = not in_single
+        elif ch == '"':
+            in_double = not in_double
+        i += 1
+    return "unknown"
+
+
 def _params(raw):
     if not raw:
         return []
@@ -590,6 +653,10 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
         sinks, sources, sanits = rule["sinks"], rule["sources"], rule["sanitizers"]
         arx = ASSIGN_RX.get(fn["lang"])
         tainted = {}                   # 本规则视角下的 var -> hops 列表
+        # E30：**条件净化点**（净化点的有效性取决于它被用在什么上下文里）——
+        # var -> 净化点 pattern。这类净化点**不在净化点那一行就断链**，
+        # 而是在"值被拼进字符串"那一刻按上下文判定（见下）。
+        cond_san = {}
         for pname, incoming in (in_params.get(rule["id"]) or {}).items():
             tainted[pname] = list(incoming) + [{
                 "file": fn["file"], "line": fn["start"], "kind": "param-in",
@@ -628,14 +695,18 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
             if ret_call is not None:
                 rtarget, rexpr, rcode, rcalls, rsubs = ret_call
                 if san_hit:
-                    blocked.append({"rule_id": rule["id"], "file": fn["file"],
-                                    "line": lineno,
-                                    "sanitizer": san_item["pattern"],
-                                    "text": auditlib.redact(text.strip())[:160]})
-                    stats["blocked_by_sanitizer"] += 1
-                    if rtarget in tainted:
-                        del tainted[rtarget]
-                    continue
+                    if san_item.get("context"):
+                        # E30：条件净化点 ⇒ 只登记，不在这里断链
+                        cond_san[rtarget] = san_item["pattern"]
+                    else:
+                        blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                        "line": lineno,
+                                        "sanitizer": san_item["pattern"],
+                                        "text": auditlib.redact(text.strip())[:160]})
+                        stats["blocked_by_sanitizer"] += 1
+                        if rtarget in tainted:
+                            del tainted[rtarget]
+                        continue
                 hops = []
                 arg_vars = set()
                 for _c, args in rcalls:
@@ -703,17 +774,24 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
                         target = (m.groupdict().get("target")
                                   or m.groupdict().get("target2"))
                 if san_hit:
-                    blocked.append({"rule_id": rule["id"], "file": fn["file"],
-                                    "line": lineno,
-                                    "sanitizer": san_item["pattern"],
-                                    "text": auditlib.redact(text.strip())[:160]})
-                    stats["blocked_by_sanitizer"] += 1
-                    if target and target in tainted:
-                        del tainted[target]
-                    continue
+                    if san_item.get("context"):
+                        # E30：条件净化点 ⇒ 只登记，不在这里断链
+                        if target:
+                            cond_san[target] = san_item["pattern"]
+                    else:
+                        blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                        "line": lineno,
+                                        "sanitizer": san_item["pattern"],
+                                        "text": auditlib.redact(text.strip())[:160]})
+                        stats["blocked_by_sanitizer"] += 1
+                        if target and target in tainted:
+                            del tainted[target]
+                        continue
                 if target:
                     tainted[target] = [{"file": fn["file"], "line": lineno,
                                         "kind": "source", "text": text}]
+                    # 新的外部输入覆盖了这个变量 ⇒ 之前登记的条件净化点不再作数
+                    cond_san.pop(target, None)
                     # 同一行还内联读了 source（`$html .= '<pre>' . $_GET['name']` 这种）：
                     # sink 的载体只算等号右边，所以要把这一行的内联也记一笔，
                     # 否则"source 与 sink 同行"这条最直白的流会被左排除规则吃掉。
@@ -732,15 +810,44 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
                     # 只算等号右边的"被读变量"——左边的目标名不是读取（自我强化会
                     # 让 hops 每行 +1，MAX_PATH_HOPS 只是兜底不是设计）。
                     key_name = "expr" if m.groupdict().get("expr") else "expr2"
-                    carriers = [v for v in carriers_of(text[m.start(key_name):], fn["lang"])
+                    rhs = text[m.start(key_name):]
+                    carriers = [v for v in carriers_of(rhs, fn["lang"])
                                 if v in tainted]
                     if carriers:
                         if san_hit:
-                            blocked.append({"rule_id": rule["id"], "file": fn["file"],
-                                            "line": lineno,
-                                            "sanitizer": "assignment-line", "text": text})
-                            stats["blocked_by_sanitizer"] += 1
-                            continue
+                            if san_item.get("context"):
+                                # E30：条件净化点 ⇒ 只登记，不断链；
+                                # 有效性留到"值被拼进字符串"那一刻按上下文判。
+                                cond_san[target] = san_item["pattern"]
+                            else:
+                                blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                                "line": lineno,
+                                                "sanitizer": "assignment-line", "text": text})
+                                stats["blocked_by_sanitizer"] += 1
+                                continue
+                        # E30：条件净化点的有效性 = 值落进的 SQL 上下文。
+                        # 只有**所有**被读变量都被中和，这条流才算被挡住；
+                        # 只要有一个不是（引号外 / 判断不了），就照旧传播。
+                        if cond_san and STR_SPAN_RX.search(rhs):
+                            neutral = []
+                            for c in carriers:
+                                if c not in cond_san:
+                                    neutral = None
+                                    break
+                                neutral.append(
+                                    sql_quote_context(rhs, c, fn["lang"]) == "quoted")
+                            if neutral and all(neutral):
+                                blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                                "line": lineno,
+                                                "sanitizer": "conditional-sanitizer",
+                                                "text": auditlib.redact(text.strip())[:160]})
+                                stats["blocked_by_sanitizer"] += 1
+                                continue
+                        # 目标继承了载体身上的条件净化点状态
+                        if carriers[0] in cond_san:
+                            cond_san[target] = cond_san[carriers[0]]
+                        else:
+                            cond_san.pop(target, None)
                         tainted[target] = tainted[carriers[0]] + [
                             {"file": fn["file"], "line": lineno, "kind": "propagate",
                              "text": text}]
@@ -765,7 +872,11 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
                     # 同函数内、source 与 sink 之间出现过净化/守卫 → 判为已净化，不报流
                     same_file = [h["line"] for h in hops if h["file"] == fn["file"]]
                     lo = min(same_file or [lineno])
+                    # E30：**条件净化点不算守卫**——它的有效性取决于值落进的 SQL 上下文，
+                    # 在"值被拼进字符串"那一刻精确判（见上）。这里若把它当守卫，
+                    # 引号外的真阳性会被一并吃掉（DVWA `sqli_blind/source/medium.php:15`）。
                     guard = [s for s in sanits
+                             if not s.get("context")
                              for ln, t, _x in fn["body"]
                              if lo <= ln <= lineno and _first_code_match([s], t)]
                     if guard:
