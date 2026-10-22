@@ -1955,25 +1955,15 @@ class TestAuditCapabilityBoundaries(unittest.TestCase):
         return set(f["rule_id"] for f in payload["findings"])
 
     def test_escaped_string_is_not_treated_as_sanitizer(self):
-        """边界：**值直接内插在 sink 调用里**时，SQL 上下文判定落不到 ⇒ 转义处照报。
+        """边界：**已闭合**（E33）—— 这个形态现在判得了。
 
-        ⚠️ E30 之后这条边界**变窄了**：转义类净化点现在按引号内/引号外两档生效
-        （赋值行上的形态已经判得了，见 `TestAuditSqlQuoteContext`）。
-        ⚠️ 但**这个形态仍然判不了**：`mysql_query("... WHERE a = '$x'")` 里值是
-        **直接内插在 sink 调用里**的，没有独立的赋值行可判 ⇒ 引擎照报。
-        ⇒ 本测试从"锁住旧缺陷"改成"锁住**剩下的这条**边界"（能力边界表第 2 行 ①）。
+        ⚠️ E22 记下时锁的是"净化点 pattern 匹配不到 mysqli_real_escape_string
+        ⇒ 转义处照报"这个**已知缺陷的现状**；E30/E31 做掉一半后它变红了（它自己的失败信息
+        就写着"能力边界表第 2 行该改"）⇒ **E33 把上下文判定接到 sink 行上**，边界闭合
+        ⇒ 本条随之退役，换成 `TestAuditSqlQuoteInSink` 里的两条
+        （引号内**不报** / 引号外**仍报**）。
         """
-        with tempfile.TemporaryDirectory() as tmp:
-            p = self._scan(tmp, "e22_escape.php",
-                           "<?php\n"
-                           "function q($c, $x) {\n"
-                           "    $x = mysqli_real_escape_string($c, $x);\n"
-                           "    mysql_query(\"SELECT * FROM t WHERE a = '$x'\");\n"
-                           "}\n"
-                           "q($conn, $_GET['a']);\n")
-            self.assertIn("JZ-SQLI-003", self._rules(p),
-                          "mysqli_real_escape_string 现在被当净化点了 ⇒ "
-                          "能力边界表第 2 行该改")
+        self.skipTest("E33：这条边界已闭合；替代判据见 TestAuditSqlQuoteInSink")
 
     def test_js_regex_literal_swallows_same_line_code(self):
         """边界：JS 正则字面量里的 // 被当注释 ⇒ 同行后续代码整段被漏掉。"""
@@ -4921,6 +4911,65 @@ class TestLedgerTotals(unittest.TestCase):
                                 "口径加法不成立时 validate 竟然通过了")
             self.assertIn("口径拆解不自洽", r.stdout)
 
+
+
+class TestAuditSqlQuoteInSink(unittest.TestCase):
+    """E33：**值直接内插在 sink 调用里** ⇒ 上下文要在 **sink 那一行**判。
+
+    为什么（能力边界表最后一条，E22 记下、E30/E31 只做掉了一半）：
+    E30 的上下文判定只在**赋值行**上做（`$q = "... '$x'"; mysql_query($q);`）
+    ⇒ 而 `mysql_query("SELECT * FROM t WHERE a = '$x'")` 这种**没有独立赋值行**的形态
+    判不到 ⇒ 转义被无视 ⇒ 明明在引号内也照报（误报）。
+
+    ⇒ E33 把上下文判定也接到 **sink 行**上 ⇒ 这条边界闭合。
+    ⚠️ 配套必须有**反例**：同样在 sink 调用里内插，但**引号外** ⇒ 转义无效 ⇒ **仍须报**
+    （否则就是拿真阳性换误报 —— 本项目吃过三次这个亏）。
+    """
+
+    def _scan(self, tmp, name, body):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        with io.open(os.path.join(d, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+        out = os.path.join(tmp, "_e33.json")
+        r = run([os.path.join(SCRIPTS, "audit_scan.py"), d, "--json", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return set(x["rule_id"] for x in json.load(f)["findings"])
+
+    def test_escaped_value_interpolated_in_the_sink_is_not_reported(self):
+        """正例：转义 + **引号内** ⇒ 不是注入 ⇒ 不该报。
+
+        ⚠️ E22 那条边界测试锁的正是这个形态**照报** ⇒ E30/E31 做掉一半后它变红了
+        （它自己的失败信息就写着"能力边界表第 2 行该改"）⇒ E33 把它搬到这里并反转期望。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "e33_escape.php",
+                           "<?php\n"
+                           "function q($c, $x) {\n"
+                           "    $x = mysqli_real_escape_string($c, $x);\n"
+                           "    mysql_query(\"SELECT * FROM t WHERE a = '$x'\");\n"
+                           "}\n"
+                           "q($conn, $_GET['a']);\n")
+            self.assertNotIn("JZ-SQLI-003", p,
+                             "转义 + 引号内仍报 ⇒ 上下文判定没接到 sink 行上")
+
+    def test_escaped_value_interpolated_outside_quotes_is_still_reported(self):
+        """反例（防误伤）：同样内插在 sink 调用里，但**引号外** ⇒ 转义无效 ⇒ 仍须报。
+
+        ⚠️ 这条不许被"接 sink 行"顺手砍掉：砍掉它就丢了**真阳性**
+        （DVWA `sqli_blind/source/medium.php:15` 就是这个形态）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "e33_bare.php",
+                           "<?php\n"
+                           "function q($c, $x) {\n"
+                           "    $x = mysqli_real_escape_string($c, $x);\n"
+                           "    mysql_query(\"SELECT * FROM t WHERE a = $x\");\n"
+                           "}\n"
+                           "q($conn, $_GET['a']);\n")
+            self.assertIn("JZ-SQLI-003", p,
+                          "引号外的转义没报 ⇒ 真阳性被吃掉了")
 
 
 class TestAuditIncludeScope(unittest.TestCase):

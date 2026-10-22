@@ -966,6 +966,27 @@ def analyze_function(fn, rules, tainted_params, transfers, blocked, stats,
                            for h in tainted["__inline__"]):
                         carriers = ["__inline__"]
                 if carriers:
+                    # E33：**值直接内插在 sink 调用里**的形态 ⇒ 上下文要在 **sink 那一行**判。
+                    # E30 的上下文判定只在**赋值行**上做（`$q = "... '$x'"; mysql_query($q);`）
+                    # ⇒ 这种"没有独立赋值行"的形态判不到 ⇒ 转义被无视 ⇒ 明明在引号内也照报
+                    # （能力边界表最后一条）。
+                    # ⚠️ 载体在 sink 行上**不在字面量里**时（如 `mysqli_query($conn, $q)`），
+                    # 算出来的上下文是"引号外" ⇒ 不挡 ⇒ 引号外的真阳性不受影响。
+                    if cond_san:
+                        quoted = []
+                        for c in carriers:
+                            if c not in cond_san:
+                                quoted = None
+                                break
+                            quoted.append(
+                                sql_quote_context(text, c, fn["lang"]) == "quoted")
+                        if quoted and all(quoted):
+                            blocked.append({"rule_id": rule["id"], "file": fn["file"],
+                                            "line": lineno,
+                                            "sanitizer": "conditional-sanitizer",
+                                            "text": auditlib.redact(text.strip())[:160]})
+                            stats["blocked_by_sanitizer"] += 1
+                            continue
                     hops = tainted[carriers[0]] + [
                         {"file": fn["file"], "line": lineno, "kind": "sink", "text": text}]
                     # 同函数内、source 与 sink 之间出现过净化/守卫 → 判为已净化，不报流

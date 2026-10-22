@@ -719,6 +719,22 @@ CASES = [
      "handover-pitfall-numbering-neutered",
      "tests.test_scripts.TestHandoverInRepo."
      "test_broken_pitfall_numbering_must_be_flagged"),
+    # ---- E33（v0.67.0）：值直接内插在 sink 调用里 ⇒ 上下文要在 sink 行上判 ----
+    # ① sink 行的上下文判定被关掉 ⇒ 引号内的值又照报 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "                        if quoted and all(quoted):",
+     "                        if False:  # E33 校准：sink 行的上下文判定被关掉",
+     "sql-quote-in-sink-neutered",
+     "tests.test_scripts.TestAuditSqlQuoteInSink."
+     "test_escaped_value_interpolated_in_the_sink_is_not_reported"),
+    # ② 判定被改成"一律当中和" ⇒ 引号外的**真阳性**被吃掉 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "                            quoted.append(\n"
+     "                                sql_quote_context(text, c, fn[\"lang\"]) == \"quoted\")",
+     "                            quoted.append(True)  # E33 校准：一律当中和",
+     "sql-quote-in-sink-always-neutralized",
+     "tests.test_scripts.TestAuditSqlQuoteInSink."
+     "test_escaped_value_interpolated_outside_quotes_is_still_reported"),
 ]
 
 

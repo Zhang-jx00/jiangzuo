@@ -70,7 +70,7 @@ jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
 ├── references/       # 20 本分册（渐进式披露：进入哪个阶段读哪本）
 ├── templates/        # 14 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准/进化账本…）
-├── scripts/          # 16 个纯标准库脚本
+├── scripts/          # 17 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿
 │   ├── audit_index.py     # 审计链①：文件索引与 gitignore 忽略，产出可复现清单
 │   ├── audit_map.py       # 审计链②：项目侦察地图（语言/入口/路由/鉴权边界/依赖）
@@ -86,7 +86,9 @@ jiangzuo/
 │   ├── lookup.py          # 按关键词在 20 本分册里检索规则（不整册载入）
 │   ├── sarif_schema_extract.py  # 核对 SARIF 2.1.0 schema 允许属性白名单（需联网，可选）
 │   ├── mut_calibrate.py  # 变异校准：把判据改坏一次看它当场变红（随技能分发）
-│   └── validate_skill.py  # 技能结构校验（本仓库 CI 在用）
+│   ├── validate_skill.py  # 技能结构校验（本仓库 CI 在用）
+│   ├── review_packet.py  # 审查工单打包：把 diff/原话/验收标准/验证命令钉成一个文件（只读）
+│   └── release_notes.py  # 发行说明生成 / GitHub Release 发布（单一真源＝CHANGELOG）
 └── evals/            # 触发测试、红测场景、任务评测
 ```
 
