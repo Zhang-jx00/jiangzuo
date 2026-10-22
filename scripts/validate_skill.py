@@ -883,6 +883,12 @@ def check_verdict_table(skill_dir):
     ⚠️ **它只能保证"表内自洽"，不能保证"表与引擎同步"**——后者要真跑一遍扫描
     （validate 全程不跑扫描、不执行被测脚本，这是它的定位）⇒ 所以表头写明了
     「改了规则/引擎就要重判」这条纪律。
+
+    E29 修了两处（都是 E28 遗留的**潜伏缺陷**，因为当时两个数恰好相等而没炸）：
+    ① **「flask 等」的条数原来错用了「静态可修」的条数**（变量名 `f_fp` 复用了）
+       ⇒ E29 把「静态可修」清零后当场炸出来。
+    ② **新增：从 §二 的逐行「归类」反推三类误报的条数**，再和 §三 声明的对账
+       ⇒ 手改 §二 某一行却没改 §三（或反之），当场红。
     """
     if not os.path.isdir(os.path.join(skill_dir, "evals")):
         return None            # 没有 evals/ 的目录（最小形态技能 / 反例夹具）不适用本项
@@ -900,33 +906,83 @@ def check_verdict_table(skill_dir):
 
     total = grab(r"\*\*合计\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*")
     dvwa = grab(r"\*\*DVWA 小计\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*")
+    # E29 修：这一行原来抓的是「静态可修」的条数，却当成「flask 等」用 ⇒
+    # 两个数在 E28 恰好都是 1，所以错了一个月也没露馅。
+    flask = grab(r"\|\s*flask[^|]*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|")
     fixable = re.search(r"\| \*\*静态可修\*\*\s*\|\s*(\d+)\s*\|", text)
     upgrade = re.search(r"\| \*\*待能力升级\*\*\s*\|\s*(\d+)\s*\|", text)
     bounded = re.search(r"\| \*\*静态消不掉（能力边界型）\*\*\s*\|\s*(\d+)\s*\|", text)
+
+    # E29 新增：从 §二 的**逐行「归类」列**反推三类误报的条数（从行反推，不信声明）
+    buckets = ("静态可修", "待能力升级", "静态消不掉", "已修")
+    rows = dict((k, 0) for k in buckets)
+    unknown = 0
+    sec2 = re.search(r"##\s*二、(.*?)(?=\n##\s*三、)", text, re.S)
+    if sec2:
+        for line in sec2.group(1).splitlines():
+            if not re.match(r"^\|\s*\d+\s*\|", line):
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) < 5:
+                unknown += 1
+                continue
+            kind = cells[4]
+            hit = None
+            for key in buckets:
+                if kind.startswith("**%s**" % key):
+                    hit = key
+                    break
+            if hit is None:
+                unknown += 1
+            else:
+                rows[hit] += 1
+
     problems = []
-    if not total or not dvwa or not (fixable and upgrade and bounded):
-        problems.append("判定表的关键数字抓不到（合计 / DVWA 小计 / 三类误报）")
+    if not total or not dvwa or not flask or not (fixable and upgrade and bounded):
+        problems.append("判定表的关键数字抓不到（合计 / DVWA 小计 / flask 行 / 三类误报）")
+    elif not sec2:
+        problems.append("判定表里找不到「## 二、」这一节（逐行对账做不了）")
     else:
         t_all, t_true, t_fp = total
         d_all, d_true, d_fp = dvwa
-        f_fp = int(fixable.group(1))
-        u_fp = int(upgrade.group(1))
-        b_fp = int(bounded.group(1))
+        f_all, f_true, f_fp = flask
+        fixable_n = int(fixable.group(1))
+        upgrade_n = int(upgrade.group(1))
+        bounded_n = int(bounded.group(1))
+        listed = rows["静态可修"] + rows["待能力升级"] + rows["静态消不掉"]
         if t_true + t_fp != t_all:
             problems.append("判定表合计行自相矛盾：真阳性 %d + 误报 %d != 合计 %d"
                             % (t_true, t_fp, t_all))
         if d_true + d_fp != d_all:
             problems.append("DVWA 小计自相矛盾：%d + %d != %d" % (d_true, d_fp, d_all))
-        if d_all + f_fp != t_all:
-            problems.append("DVWA %d + flask 等 %d != 合计 %d" % (d_all, f_fp, t_all))
-        if f_fp + u_fp + b_fp != t_fp:
-            problems.append("三类误报之和 %d != 误报合计 %d" % (f_fp + u_fp + b_fp, t_fp))
-        if problems:
-            for pr in problems:
-                err("判定表不自洽：%s" % pr)
-        else:
-            info("结论区判定表自洽（合计 %d 条 = 真阳性 %d + 误报 %d；三类误报 %d/%d/%d）✓"
-                 % (t_all, t_true, t_fp, f_fp, u_fp, b_fp))
+        if f_true + f_fp != f_all:
+            problems.append("flask 行自相矛盾：%d + %d != %d" % (f_true, f_fp, f_all))
+        if d_all + f_all != t_all:
+            problems.append("DVWA %d + flask 等 %d != 合计 %d" % (d_all, f_all, t_all))
+        if fixable_n + upgrade_n + bounded_n != t_fp:
+            problems.append("三类误报之和 %d != 误报合计 %d"
+                            % (fixable_n + upgrade_n + bounded_n, t_fp))
+        if rows["静态可修"] != fixable_n:
+            problems.append("§二 里标「静态可修」的行数 %d != §三 声明的 %d"
+                            % (rows["静态可修"], fixable_n))
+        if rows["待能力升级"] != upgrade_n:
+            problems.append("§二 里标「待能力升级」的行数 %d != §三 声明的 %d"
+                            % (rows["待能力升级"], upgrade_n))
+        if rows["静态消不掉"] != bounded_n:
+            problems.append("§二 里标「静态消不掉」的行数 %d != §三 声明的 %d"
+                            % (rows["静态消不掉"], bounded_n))
+        if listed != t_fp:
+            problems.append("§二 在册误报 %d 条 != 误报合计 %d（已修 %d 条另计）"
+                            % (listed, t_fp, rows["已修"]))
+        if unknown:
+            problems.append("§二 有 %d 行的「归类」列认不出来" % unknown)
+        if not problems:
+            info("结论区判定表自洽（合计 %d 条 = 真阳性 %d + 误报 %d；三类误报 %d/%d/%d；"
+                 "§二 逐行对账 %d 条在册 + %d 条已修）✓"
+                 % (t_all, t_true, t_fp, fixable_n, upgrade_n, bounded_n,
+                    listed, rows["已修"]))
+    for pr in problems:
+        err("判定表不自洽：%s" % pr)
     return None
 
 

@@ -25,7 +25,7 @@
    ],
    "sinks": [
     {
-     "pattern": "\\.innerHTML\\s*=(?!\\s*[\"']['\"]\\s*;)|document\\.write\\s*\\(|insertAdjacentHTML\\s*\\("
+     "pattern": "\\.innerHTML\\s*=(?!\\s*[\"']['\"]\\s*;)|document\\.write\\s*\\(\\s*(?!\\s*[\"']['\"]\\s*\\)?;)|insertAdjacentHTML\\s*\\("
     },
     {
      "pattern": "dangerouslySetInnerHTML|v-html\\s*=|\\|\\s*safe\\b|\\{!!"

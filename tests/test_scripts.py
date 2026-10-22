@@ -10,6 +10,7 @@ K-Dense 铁律："a skill with untested scripts cannot land"。
 仅使用 Python 标准库（3.8+）。
 """
 import glob
+import importlib
 import io
 import json
 import os
@@ -2109,6 +2110,160 @@ class TestMutCalibratorShipped(unittest.TestCase):
         self.assertIsNone(validate_skill._mut_case_count("x = 1\n"))
         self.assertIsNone(validate_skill._mut_case_count("def (:\n"))
 
+    def test_calibrator_flags_a_case_whose_test_id_is_missing(self):
+        """E29：校准器必须把「test id 不存在」报出来。
+
+        ⚠️ 为什么这条要紧：`unittest` 对"找不到的测试 id"**也返回非零** ⇒
+        校准器会把"恒红"当成"判据红"（**假红灯**）⇒ 那条校准什么都没证明，
+        却照样被算进"全部 RED"。E29 那条 `xss-document-write-constant-back`
+        就中招了：它指向的测试被放进了别的类 ⇒ 跑出来是 AttributeError，
+        不是判据红 ⇒ 43 条"全红"里有 1 条是**空转**。
+        ⇒ 这里喂一条**不存在的 test id** 进去，必须被报出来。
+        """
+        sys.path.insert(0, SCRIPTS)
+        import mut_calibrate
+        mut_calibrate = importlib.reload(mut_calibrate)
+        bogus = [("scripts/x.py", "old", "new", "bogus-case",
+                  "tests.test_scripts.TestAuditXssConstantAssignment"
+                  ".test_no_such_method_here")]
+        self.assertGreater(mut_calibrate.check_test_ids(bogus), 0,
+                           "校准器没报出「test id 不存在」")
+        # 正例：真实用例集必须一处问题都没有
+        self.assertEqual(mut_calibrate.check_test_ids(mut_calibrate.CASES), 0,
+                         "真实用例集里查出了问题")
+
+    def test_calibrator_baseline_rejects_a_missing_test_id(self):
+        """E29：运行时那道「基线必须绿」也要有牙齿。
+
+        ⚠️ 静态检查只能查"存在"，查不了"本来是不是红的" ⇒ 运行时还得再兜一层：
+        判据在**未变异**代码上就必须是绿的，否则这次变异证明不了任何东西。
+        """
+        sys.path.insert(0, SCRIPTS)
+        import mut_calibrate
+        mut_calibrate = importlib.reload(mut_calibrate)
+        ok, why = mut_calibrate.baseline_ok(
+            "tests.test_scripts.TestAuditXssConstantAssignment.test_no_such_method_here")
+        self.assertFalse(ok, "基线检查没认出「测试 id 不存在」")
+        self.assertIn("不存在", why)
+        # 正例：一条真在跑、也确实绿的判据，必须被认成绿
+        ok2, why2 = mut_calibrate.baseline_ok(
+            "tests.test_scripts.TestAuditXssConstantAssignment"
+            ".test_plain_variable_assignment_is_still_reported")
+        self.assertTrue(ok2, "真实绿判据被误判成不绿：%s" % why2)
+
+
+class TestVerdictTable(unittest.TestCase):
+    """E29：判定表的自洽检查（`validate_skill` 第 21 项）必须**真的会红**。
+
+    ⚠️ 这项检查此前**一把都没验过**：E28 把它加进 `validate` 就算数了，既没有
+    单元测试，也没有变异校准例 ⇒ 它可能一直红不了（也可能一直乱红）。
+    E29 复核时还挖出它一个**潜伏 bug**：「flask 等」的条数错用了「静态可修」的条数
+    （E28 时两个数恰好都是 1，所以错了一个月也没露馅；E29 把「静态可修」清零后当场炸）。
+    ⇒ 本类守住：① 自洽的表必须判**自洽**；② 各种破坏必须**当场红**。
+    """
+
+    # 一张**自洽**的合成表：故意让「静态可修」(3) ≠ flask 行(1)。
+    # ⚠️ 这一条正对 E29 修的那个 bug：旧代码拿「静态可修」当「flask 等」用
+    # ⇒ 60 + 3 = 63 ≠ 61 ⇒ 它会把**这张自洽的表**判成不自洽（误杀）。
+    SYNTH = """# 合成判定表
+
+## 一、汇总（按规则）
+
+| 规则 | 结论区条数 | 真阳性 | 误报 | 备注 |
+|---|---|---|---|---|
+| JZ-XSS-001 | 60 | 55 | 5 | |
+| **DVWA 小计** | **60** | **55** | **5** | |
+| flask（`src/flask/json/tag.py:188`） | 1 | 0 | 1 | |
+| **合计** | **61** | **55** | **6** | |
+
+## 二、误报逐条
+
+| # | 位置 | 形态 | 为什么是误报 | 归类 | 处置 |
+|---|---|---|---|---|---|
+| 1 | a.php:1 | x | y | **静态可修** | z |
+| 2 | b.php:2 | x | y | **静态可修** | z |
+| 3 | c.php:3 | x | y | **静态可修** | z |
+| 4 | d.php:4 | x | y | **待能力升级** | z |
+| 5 | e.php:5 | x | y | **待能力升级** | z |
+| 6 | f.php:6 | x | y | **静态消不掉** | z |
+
+## 三、三类误报的口径
+
+| 类别 | 条数 | 含义 | 能不能靠改规则消掉 |
+|---|---|---|---|
+| **静态可修** | 3 | a | b |
+| **待能力升级** | 2 | a | b |
+| **静态消不掉（能力边界型）** | 1 | a | b |
+"""
+
+    def _run_on(self, tmp, table):
+        """造一个最小技能目录（SKILL.md + evals/finding-verdicts.md）并跑 validate。"""
+        evals = os.path.join(tmp, "evals")
+        if not os.path.isdir(evals):
+            os.makedirs(evals)
+        with io.open(os.path.join(evals, "finding-verdicts.md"), "w",
+                     encoding="utf-8", newline="\n") as f:
+            f.write(table)
+        with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                     encoding="utf-8", newline="\n") as f:
+            f.write("---\nname: tmp-skill\ndescription: temporary fixture\n"
+                    "---\n\nbody\n")
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+
+    def test_validate_reports_the_verdict_table_check(self):
+        """正例：真仓库的判定表必须被判成自洽（且 validate 整体通过）。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("结论区判定表自洽", r.stdout)
+
+    def test_a_self_consistent_table_must_pass_even_when_fixable_differs_from_flask(self):
+        """E29 修的正是这个：自洽的表**不许**被误杀。
+
+        ⚠️ 旧代码拿「静态可修」的条数当「flask 等」用 ⇒ 这张自洽的表
+        （静态可修 3 ≠ flask 1）会被算成 60 + 3 = 63 ≠ 61 ⇒ 误判不自洽。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._run_on(tmp, self.SYNTH)
+            self.assertNotIn("判定表不自洽", r.stdout,
+                             "自洽的表被判成不自洽（flask 的条数取错了）")
+
+    def test_broken_totals_must_be_flagged(self):
+        """反例：合计行的真阳性 + 误报 != 合计 ⇒ 必须当场红。"""
+        broken = self.SYNTH.replace("| **合计** | **61** | **55** | **6** | |",
+                                    "| **合计** | **61** | **55** | **7** | |", 1)
+        self.assertNotEqual(broken, self.SYNTH, "没找到要破坏的合计行")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._run_on(tmp, broken)
+            self.assertNotEqual(r.returncode, 0, "合计不自洽时 validate 竟然通过了")
+            self.assertIn("判定表不自洽", r.stdout)
+
+    def test_broken_flask_row_must_be_flagged(self):
+        """反例：flask 行的条数与合计对不上 ⇒ 必须当场红。"""
+        broken = self.SYNTH.replace(
+            "| flask（`src/flask/json/tag.py:188`） | 1 | 0 | 1 | |",
+            "| flask（`src/flask/json/tag.py:188`） | 2 | 0 | 2 | |", 1)
+        self.assertNotEqual(broken, self.SYNTH, "没找到要破坏的 flask 行")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._run_on(tmp, broken)
+            self.assertNotEqual(r.returncode, 0, "flask 行对不上时 validate 竟然通过了")
+            self.assertIn("判定表不自洽", r.stdout)
+
+    def test_section_two_rows_must_match_the_bucket_table(self):
+        """反例：§二 里某行的「归类」改了、§三 没改 ⇒ 必须当场红。
+
+        ⚠️ 这条正对 E29 新加的**逐行对账**（从 §二 的行反推三类条数）：
+        只看 §三 声明的数字，看不出这种"改了一行没改另一处"。
+        """
+        broken = self.SYNTH.replace(
+            "| 4 | d.php:4 | x | y | **待能力升级** | z |",
+            "| 4 | d.php:4 | x | y | **静态消不掉** | z |", 1)
+        self.assertNotEqual(broken, self.SYNTH, "没找到要破坏的 §二 行")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._run_on(tmp, broken)
+            self.assertNotEqual(r.returncode, 0, "§二 与 §三 对不上时 validate 竟然通过了")
+            self.assertIn("判定表不自洽", r.stdout)
+            self.assertIn("标「待能力升级」", r.stdout)
+
 
 class TestAuditOverbroadRuleNarrowing(unittest.TestCase):
     """E25：E20 判定出的 3 类「规则过宽」硬误报，收窄后必须**正反成对**地钉住。
@@ -2263,6 +2418,30 @@ class TestAuditXssConstantAssignment(unittest.TestCase):
                            "cell.innerHTML = k;\n")
             self.assertIn("JZ-XSS-001", p, "变量赋值必须仍报")
 
+    def test_document_write_constant_is_not_reported(self):
+        """`document.write("<常量>")` 不是 XSS（E29）。
+
+        ⚠️ 判据必须用**真实代码**（带字符串字面量），因为引擎跑在**掩码桶**上：
+        字符串被剥成 `''` ⇒ 常量形态 = `document.write('');`、带变量形态 =
+        `document.write('' + lang + '');` ⇒ 负向先行才能把两者分开。
+        ⚠️ 掩码形态里 `''` 与 `;` 之间还夹着一个 `)` ⇒ 负向必须容忍它
+        （E28 漏了这一个括号 ⇒ 收窄没生效，本轮补上）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "dwconst",
+                           "var lang = document.query['q'];\n"
+                           "document.write('<option>----</option>');\n")
+            self.assertNotIn("JZ-XSS-001", p,
+                             u"document.write 纯常量不是 XSS")
+
+    def test_document_write_with_variable_is_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._scan(tmp, "dwvar",
+                           "var lang = document.query['q'];\n"
+                           "document.write('<option>' + lang + '</option>');\n")
+            self.assertIn("JZ-XSS-001", p,
+                          u"document.write 带上变量仍要报（收窄不能把真阳性砍掉）")
+
 
 
 class TestHandoverInRepo(unittest.TestCase):
@@ -2317,6 +2496,8 @@ class TestHandoverInRepo(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0,
                                 u"交接文档缺章节时 validate 竟然通过了")
             self.assertIn(u"交接文档缺章节", r.stdout)
+
+
 
 
 class TestAuditOsv(unittest.TestCase):

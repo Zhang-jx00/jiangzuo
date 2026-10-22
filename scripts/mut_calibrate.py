@@ -24,6 +24,7 @@ CI 只跑锚点核对（平台无关、秒级），完整校准留给本地。
 import hashlib
 import io
 import os
+import re
 import subprocess
 import sys
 
@@ -37,6 +38,37 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 
 def sha(path):
     return hashlib.sha1(io.open(path, "rb").read()).hexdigest()
+
+
+def run_judgement(test_id):
+    """跑一条判据，返回 (rc, 输出, 测试是否存在)。
+
+    ⚠️ **"找不到的测试 id"也会返回非零**：unittest 会造一个 `_FailedTest` 顶上，
+    照样 `FAILED (errors=1)`、退出码非零 ⇒ **只看 rc 会把"恒红"当成"判据红"**。
+    E29 那条 `xss-document-write-constant-back` 就中招了：它指向的测试被放进了
+    别的类 ⇒ 跑出来是 AttributeError，不是判据红 ⇒ 那条校准什么都没证明。
+    ⇒ 所以这里把"测试加载失败"单独标出来，不跟"判据红"混为一谈。
+    """
+    r = subprocess.run([sys.executable, "-m", "unittest", test_id], cwd=REPO,
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=240)
+    out = (r.stdout or "") + (r.stderr or "")
+    missing = ("unittest.loader._FailedTest" in out) or ("has no attribute" in out)
+    return r.returncode, out, missing
+
+
+def baseline_ok(test_id):
+    """这条判据在**未变异**代码上是不是本来就绿的。
+
+    返回 (ok, 原因)。这是"新判据先证明能红"的另一面：**先证明它本来是绿的**——
+    否则"测试 id 不存在"也会被当成"判据红"（假红灯）。
+    """
+    rc, _out, missing = run_judgement(test_id)
+    if missing:
+        return False, "测试 id 不存在"
+    if rc != 0:
+        return False, "判据在未变异代码上就是红的（rc=%d）" % rc
+    return True, ""
 
 
 def run_case(rel, old, new, label, test_id):
@@ -61,7 +93,7 @@ def run_case(rel, old, new, label, test_id):
         if raw.count(o) != 1:
             print("SKIP %-22s 锚点命中 %d 次（校准无效，未改动文件）"
                   % (label, raw.count(o)))
-            return None
+            return "SKIP"
         # E7 实测出来的坑：**还原是全局替换**。若新文本在原文件别处已经存在，
         # 还原会把别处一起改掉（本轮就踩了：突变文本 `segs = set()` 在新函数里也有，
         # 还原时被连带替换 → 函数自我递归 → 还原后 sha1 不一致）。
@@ -69,7 +101,18 @@ def run_case(rel, old, new, label, test_id):
         if raw.count(n) != 0:
             print("SKIP %-22s 突变文本在原文件里已存在 %d 次（还原会连带改坏，跳过）"
                   % (label, raw.count(n)))
-            return None
+            return "SKIP"
+
+    # E29 新增：**先确认这条判据在未变异的代码上本来就是绿的**。
+    # 理由见 `run_judgement` 的注释：unittest 对"找不到的测试 id"也返回非零 ⇒
+    # 少了这一步，"恒红"会被当成"判据红"（**假红灯**）⇒ 校准白跑却看不出来。
+    # 这就是"新判据先证明能红"的另一面：**先证明它本来是绿的**。
+    ok, why = baseline_ok(test_id)
+    if not ok:
+        print("INVALID %-22s 判据在**未变异**代码上就不是绿的（%s）"
+              "⇒ 这条校准证明不了任何东西，不能计入'全部 RED'"
+              % (label, why))
+        return "INVALID"
     for o, n in pairs:
         # 顺序不能反：`io.open(path,"wb")` 会**先截断**文件，同一表达式里再读就是
         # 读空文件（本轮真的踩了：把 auditlib.py 清成 0 字节，靠 git checkout 救回）。
@@ -82,15 +125,20 @@ def run_case(rel, old, new, label, test_id):
             out = out.replace(b"\n", b"\r\n")
         io.open(path, "wb").write(out)
     try:
-        r = subprocess.run([sys.executable, "-m", "unittest", test_id], cwd=REPO,
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=240)
-        lines = [l for l in (r.stdout or "").splitlines()
+        rc, out, missing = run_judgement(test_id)
+        lines = [l for l in out.splitlines()
                  if l.startswith(("FAIL:", "ERROR:", "AssertionError"))]
-        verdict = "RED（锁有效）" if r.returncode != 0 else "GREEN（锁无效！）"
-        print("%-24s rc=%d %s | %s" % (label, r.returncode, verdict,
+        if missing:
+            verdict = "INVALID（测试 id 不存在 ⇒ 假红灯）"
+        elif rc != 0:
+            verdict = "RED（锁有效）"
+        else:
+            verdict = "GREEN（锁无效！）"
+        print("%-24s rc=%d %s | %s" % (label, rc, verdict,
                                        (lines[:1] or ["(无匹配行)"])[0][:150]))
-        return r.returncode
+        if missing:
+            return "INVALID"
+        return "RED" if rc != 0 else "GREEN"
     finally:
         mutated = io.open(path, "rb").read()     # 变异态原样读出
         if crlf:
@@ -536,6 +584,57 @@ CASES = [
      "handover-section-list-shortened",
      "tests.test_scripts.TestHandoverInRepo."
      "test_validate_flags_a_handover_with_a_missing_section"),
+    # ---- E29（v0.63.0）：document.write 纯常量不是 XSS ----
+    # 变异：给负向先行加一个尾字符 `x` ⇒ 这一支**整个不再匹配**（负向先行是零宽断言，
+    # 尾字符落在它**后面** ⇒ 后面还必须真有个 `x` 才算命中）。
+    # ⚠️ **这条判据要配「带变量仍要报」而不是「纯常量不报」**：
+    # 变异让这一支整个失灵 ⇒ 纯常量照样不报（"纯常量不报"仍绿！），
+    # 只有"带变量仍要报"会红。⚠️ 第一版配错了 ⇒ 全量校准当场报 GREEN（锁无效）
+    # ⇒ 这就是"每条校准都要自己红过一次"的价值。
+    # ⚠️ old/new 用 repr() 生成：**不手写任何反斜杠**（E28 在这上面踩了四次）。
+    ("scripts/audit-rules/webapp.json",
+     '\\\\s*(?!\\\\s*[\\"\'][\'\\"]\\\\s*\\\\)?;)',
+     '\\\\s*(?!\\\\s*[\\"\'][\'\\"]\\\\s*\\\\)?;)x',
+     "xss-document-write-constant-back",
+     "tests.test_scripts.TestAuditXssConstantAssignment."
+     "test_document_write_with_variable_is_still_reported"),
+    # ---- E29（v0.63.0）：校准器自己的两道前置检查也必须有牙齿 ----
+    # ① 静态检查（check_test_ids）被废掉 ⇒「test id 不存在」报不出来 ⇒ 判据必须红。
+    ("scripts/mut_calibrate.py",
+     '            print("MISSING-TEST %s :: %s.%s" % (label, cls, meth))\n            bad += 1',
+     '            print("MISSING-TEST %s :: %s.%s" % (label, cls, meth))\n            bad += 0',
+     "mut-calibrator-test-id-check-neutered",
+     "tests.test_scripts.TestMutCalibratorShipped."
+     "test_calibrator_flags_a_case_whose_test_id_is_missing"),
+    # ② 运行时基线检查（baseline_ok）被废掉 ⇒「恒红」又被当成「判据红」⇒ 判据必须红。
+    # ⚠️ 锚点必须**跨行**：单行锚点会在这条 CASES 字面量里**匹配到自己**
+    #（"命中 2 次"）⇒ 锚点要写成源码里那种"缩进 + 换行"的组合。
+    ("scripts/mut_calibrate.py",
+     '    if missing:\n        return False, "测试 id 不存在"',
+     '    if missing:\n        return True, "测试 id 不存在"',
+     "mut-calibrator-baseline-check-neutered",
+     "tests.test_scripts.TestMutCalibratorShipped."
+     "test_calibrator_baseline_rejects_a_missing_test_id"),
+    # ---- E29（v0.63.0）：validate 第 21 项（判定表自洽）此前一把都没验过 ----
+    # ① 把「flask 等」的条数换回「静态可修」的条数（**这正是 E29 修掉的潜伏 bug**）
+    #    ⇒ 第 21 项必须当场判错 ⇒ 判据必须红。
+    #    ⚠️ 这条与判定表当前的数字**耦合**（静态可修=0 / flask=1 / DVWA=60 / 合计=61
+    #    ⇒ 60+0 ≠ 61 才炸）⇒ 将来改了判定表的数字，这条会跑成 GREEN，
+    #    校准器会当场报「锁无效」提醒重新设计变异点（不会静默放过）。
+    ("scripts/validate_skill.py",
+     "        if d_all + f_all != t_all:",
+     "        if d_all + fixable_n != t_all:",
+     "verdict-flask-count-reuses-fixable",
+     "tests.test_scripts.TestVerdictTable."
+     "test_validate_reports_the_verdict_table_check"),
+    # ② 把「§二 逐行反推 vs §三 声明」的一道比较写反（!= 写成 ==）
+    #    ⇒ §二 某行改了、§三 没改时必须报不出来 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     '        if rows["待能力升级"] != upgrade_n:',
+     '        if rows["待能力升级"] == upgrade_n:',
+     "verdict-section-two-row-count-neutered",
+     "tests.test_scripts.TestVerdictTable."
+     "test_section_two_rows_must_match_the_bucket_table"),
 ]
 
 
@@ -572,29 +671,79 @@ def check_anchors():
     return bad
 
 
+def _class_body(src, cls):
+    """取某个 class 的正文（从 class 行到下一个顶层 class 行之前）。"""
+    m = re.search(r"^class\s+%s\b" % re.escape(cls), src, re.M)
+    if not m:
+        return None
+    rest = src[m.end():]
+    nxt = re.search(r"^class\s+\w", rest, re.M)
+    return rest[:nxt.start()] if nxt else rest
+
+
+def check_test_ids(cases=None):
+    """E29：每条校准的 test_id 必须**真实存在**。
+
+    为什么要有这一项：`unittest` 对"找不到的测试 id"也返回非零 ⇒ 校准器会把
+    "恒红"当成"判据红"（**假红灯**）⇒ 那条校准什么都没证明，却照样被算进
+    "全部 RED"。E29 那条 `xss-document-write-constant-back` 就中招了：它指向的
+    测试被放进了别的类 ⇒ 跑出来是 AttributeError，不是判据红。
+    ⇒ 这一项是**静态**的 ⇒ 能进 CI（`--check-only`），比运行时探测便宜得多。
+    ⚠️ 它只查"存在"，查不了"本来是不是红的"——那件事由 `run_case` 的基线检查兜。
+    """
+    cases = CASES if cases is None else cases
+    src = io.open(os.path.join(REPO, "tests", "test_scripts.py"),
+                  encoding="utf-8").read()
+    bad = 0
+    for case in cases:
+        label, test_id = case[3], case[4]
+        parts = test_id.rsplit(".", 2)      # 模块.类.方法 ⇒ 取后两段
+        if len(parts) != 3:
+            print("BAD-TEST-ID %s :: %s" % (label, test_id))
+            bad += 1
+            continue
+        cls, meth = parts[1], parts[2]
+        body = _class_body(src, cls)
+        if body is None:
+            print("MISSING-CLASS %s :: %s" % (label, cls))
+            bad += 1
+            continue
+        if not re.search(r"^\s+def\s+%s\s*\(" % re.escape(meth), body, re.M):
+            print("MISSING-TEST %s :: %s.%s" % (label, cls, meth))
+            bad += 1
+    return bad
+
+
 if __name__ == "__main__":
     if "--check-only" in sys.argv:
         bad = check_anchors()
+        bad += check_test_ids()
         if bad:
-            print("ANCHORS-BROKEN %d 处" % bad)
+            print("CALIBRATION-SET-BROKEN %d 处（锚点过期 / test id 不存在）" % bad)
             sys.exit(1)
-        print("== %d 条校准用例的锚点全部命中（未执行测试） ==" % len(CASES))
+        print("== %d 条校准用例的锚点全部命中、test id 全部存在（未执行测试） ==" % len(CASES))
         sys.exit(0)
     skipped = 0
     green = 0
+    invalid = 0
     for case in CASES:
-        rc = run_case(*case)
-        if rc is None:
+        st = run_case(*case)
+        if st == "SKIP":
             skipped += 1
-        elif rc == 0:
+        elif st == "GREEN":
             green += 1
+        elif st == "INVALID":
+            invalid += 1
     bad = []
     if skipped:
         bad.append("%d 条校准被 SKIP（锚点未命中 ⇒ 校准未生效，判据有没有牙齿未验证）" % skipped)
     if green:
         bad.append("%d 条校准跑出 GREEN（锁无效！要么判据恒绿，要么锚点指到了不影响它的地方）" % green)
+    if invalid:
+        bad.append("%d 条校准是**假红灯**（判据在未变异代码上就不是绿的：test id 不存在，"
+                   "或判据本来就是红的）⇒ 这几条什么都没证明" % invalid)
     if bad:
         for b in bad:
             print("!! " + b)
         sys.exit(1)
-    print("== 全部校准用例均已实际执行，且全部 RED（无 SKIP、无 GREEN） ==")
+    print("== 全部校准用例均已实际执行，且全部 RED（无 SKIP、无 GREEN、无 INVALID） ==")
