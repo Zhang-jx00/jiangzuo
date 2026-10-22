@@ -711,6 +711,14 @@ CASES = [
      "ledger-totals-addition-neutered",
      "tests.test_scripts.TestLedgerTotals."
      "test_broken_ledger_totals_must_be_flagged"),
+    # ---- E32（v0.66.0）：§8 坑位编号连续性（validate 第 20 项里的一条守卫）----
+    # 缺号检测被关掉 ⇒ 编号乱了也不报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            gaps = [k for k in range(nums[0], nums[-1] + 1) if k not in set(nums)]",
+     "            gaps = []  # E32 校准：§8 缺号检测被关掉",
+     "handover-pitfall-numbering-neutered",
+     "tests.test_scripts.TestHandoverInRepo."
+     "test_broken_pitfall_numbering_must_be_flagged"),
 ]
 
 

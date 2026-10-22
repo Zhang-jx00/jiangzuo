@@ -870,6 +870,19 @@ def check_handover_in_repo(skill_dir):
     else:
         info("交接文档在仓库内、章节完整、已被 git 跟踪（%d 字符，7 个关键章节 ✓）"
              % len(text))
+    # E32：§8 坑位清单的**编号必须连续** —— 它是别人引用「§8 第 N 条」的索引，
+    # 缺号会让引用指向错的地方（E32 实测：E22 插入时跳过了 36/37，编号 1..57 只有 55 条）。
+    sec8 = re.search(r"##\s*8\.[^\n]*\n(.*?)(?=\n##\s*9\.)", text, re.S)
+    if sec8:
+        nums = [int(m.group(1)) for m in
+                (re.match(r"^(\d+)\.\s", l) for l in sec8.group(1).splitlines()) if m]
+        if nums:
+            gaps = [k for k in range(nums[0], nums[-1] + 1) if k not in set(nums)]
+            if gaps:
+                err("交接文档 §8 坑位编号不连续：缺 %s（编号是「§8 第 N 条」的索引，"
+                    "缺号会让引用指错）" % "、".join(str(g) for g in gaps))
+            elif nums != list(range(nums[0], nums[-1] + 1)):
+                err("交接文档 §8 坑位编号乱序（E27 排过一次序，别打乱）")
     return None
 
 

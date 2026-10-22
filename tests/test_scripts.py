@@ -2499,6 +2499,33 @@ class TestHandoverInRepo(unittest.TestCase):
                                 u"交接文档缺章节时 validate 竟然通过了")
             self.assertIn(u"交接文档缺章节", r.stdout)
 
+    def test_broken_pitfall_numbering_must_be_flagged(self):
+        """反例：§8 坑位清单的编号**缺号**时，validate 必须判错。
+
+        ⚠️ 编号是别人引用「§8 第 N 条」的索引 ⇒ 缺号会让引用指向错的地方
+        （E32 实测：E22 插入时跳过了 36/37，编号 1..57 只有 55 条）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(docs)
+            with io.open(os.path.join(REPO, "docs", "jiangzuo", "handover.md"),
+                         "r", encoding="utf-8") as f:
+                text = f.read()
+            # 把 12. 改成 13. ⇒ 制造一个缺号（12）
+            broken = text.replace("\n12. **", "\n13. **", 1)
+            self.assertNotEqual(broken, text, "没找到要破坏的编号")
+            with io.open(os.path.join(docs, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(broken)
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write("---\nname: tmp-skill\ndescription: temporary fixture\n"
+                        "---\n\nbody\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                "§8 编号缺号时 validate 竟然通过了")
+            self.assertIn("编号不连续", r.stdout)
+
 
 
 
@@ -4893,6 +4920,7 @@ class TestLedgerTotals(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0,
                                 "口径加法不成立时 validate 竟然通过了")
             self.assertIn("口径拆解不自洽", r.stdout)
+
 
 
 class TestAuditIncludeScope(unittest.TestCase):
