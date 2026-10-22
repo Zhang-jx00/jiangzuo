@@ -17,12 +17,12 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.62.0 已交付并推送**（`97978b8`，tag `v0.62.0` 同笔，CI run `39716205077` **七道** success）；
+2. 状态：**v0.63.0 已交付并推送**（`7dc2b50`，tag `v0.63.0` 同笔，CI run `39726555749` **七道** success）；
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    **本机闸门 2026-10-22 当场重跑**：220 用例 OK ｜ validate **21** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **47/47 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 5.277 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **47/47 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 5.649 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **61 发现/结论 60**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 61 ＝ 真阳性 **55** + 误报 **6**，6 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 2（归 E30/E31）/ 静态消不掉 4（能力边界型）**
    ⇒ **"静态可修的硬误报"= 0 / 61 = 0%（E29 清零）**（E20 是 8/69 ≈ 11.6% ⇒ 降 100%），**未判定 = 0**。
@@ -35,7 +35,7 @@
    ⚠️ **发行说明已入库**（E26）：`docs/jiangzuo/releases/v0.60.0.md`（本仓库**第一份**发行说明）。
    ⚠️ **本文档已入库**（E27）：`docs/jiangzuo/handover.md`，`validate_skill` **第 20 项**守住「在仓库内 + 章节完整 + 被 git 跟踪」。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
-4. 规模：**20 分册 / 16 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 220 用例 / 84 个入库文件 / 88 提交 / 58 tag**（58 个 tag 全部已推到远端）。
+4. 规模：**20 分册 / 16 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 220 用例 / 86 个入库文件 / 95 提交 / 61 tag**（61 个 tag 全部已推到远端）。
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
 6. 交付说明（含**未达标与未验证清单**）：仓库内 `docs/jiangzuo/reports/2026-10-15-delivery-v0.36.1.md`。
 7. 逐轮决策账本：仓库内 `docs/jiangzuo/evolution.md`（**55 条变异台账，0 条 ROLLBACK**；条数由脚本数出来、不手数，
@@ -132,11 +132,11 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ---
 
-### 远端一致性（✅ v0.62.0 **已推送**）
+### 远端一致性（✅ v0.63.0 **已推送**）
 
-- **当前状态**：**零待推**。远端 `main` = `97978b8`（v0.62.0），与本地 HEAD 一致；
-  tag `v0.62.0`（→ `97978b8`）也已推到远端。
-- **CI 证据**：CI run **`39716205077`**（workflow `validate`，head `97978b8`，conclusion `success`）。
+- **当前状态**：**零待推**。远端 `main` = `7dc2b50`（v0.63.0），与本地 HEAD 一致；
+  tag `v0.63.0`（→ `7dc2b50`）也已推到远端。
+- **CI 证据**：CI run **`39726555749`**（workflow `validate`，head `7dc2b50`，conclusion `success`）。
   **七道**步逐一 success（第 4–10 步；E24 加了第 9 步「变异校准锚点核对」；
   末步「六道闸门诊断」是 `if: failure()` 条件步，前面的都绿时本来就不跑 ⇒ skipped 属正常）。
 - ⚠️ **E27 那轮推送中断过一次**：`github.com:443` 主站不可达（`api.github.com` 仍可读 ⇒ 非凭据问题），
