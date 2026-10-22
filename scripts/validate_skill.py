@@ -819,6 +819,60 @@ def check_mut_calibrator(skill_dir):
     return n_cases
 
 
+
+HANDOVER_SECTIONS = ("## 0. ", "## 5. ", "## 6. ", "## 8. ", "## 11. ", "## 13. ", "## 14. ")
+
+
+def _git_tracked(root, rel):
+    """文件是否被 git 跟踪。返回 None = 这里不是 git 仓库（不做判断）。"""
+    try:
+        p = subprocess.Popen(["git", "rev-parse", "--is-inside-work-tree"], cwd=root,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        code = p.wait()
+        if code != 0:
+            return None
+        p = subprocess.Popen(["git", "ls-files", "--error-unmatch", "--", rel], cwd=root,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return p.wait() == 0
+    except OSError:
+        return None
+
+
+def check_handover_in_repo(skill_dir):
+    """第 20 项：交接文档必须**在仓库内**、章节完整、且被 git 跟踪（E27）。
+
+    为什么加这一项：E26 那轮一个脚本 bug 把**仓库外**的交接文档整段覆盖掉了，
+    而它当时不在 git 里 ⇒ **无法回滚**，只能从会话记录里重建（花了整整一轮）。
+    ⇒ 根因修复：把它收进仓库（`docs/jiangzuo/handover.md`），并让本项守住三件事：
+      ① 它在仓库里（不在的话 ⇒ 一次脚本 bug 就毁掉且没有历史）
+      ② 它的关键章节齐全（恢复过程最容易丢的就是章节）
+      ③ 它被 git 跟踪（存在但没被跟踪 ⇒ 一样的风险）
+    """
+    docs_dir = os.path.join(skill_dir, "docs", "jiangzuo")
+    if not os.path.isdir(docs_dir):
+        return None            # 最小形态技能目录不该被要求带交接文档
+    rel = os.path.join("docs", "jiangzuo", "handover.md")
+    path = os.path.join(skill_dir, rel)
+    if not os.path.isfile(path):
+        err("%s 不见了——交接文档必须在仓库内（E27）" % rel.replace(os.sep, "/"))
+        return None
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    missing = [h.strip() for h in HANDOVER_SECTIONS if h not in text]
+    if missing:
+        err("交接文档缺章节：%s（E27：它在仓库内，内容完整是硬要求）" % " ".join(missing))
+    tracked = _git_tracked(skill_dir, rel)
+    if tracked is False:
+        err("交接文档存在但**没被 git 跟踪**（%s）——未跟踪的文件没有历史，"
+            "一次脚本 bug 就找不回来（E27）" % rel.replace(os.sep, "/"))
+    elif missing:
+        pass
+    else:
+        info("交接文档在仓库内、章节完整、已被 git 跟踪（%d 字符，7 个关键章节 ✓）"
+             % len(text))
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -893,6 +947,7 @@ def main():
             check_md_tables(skill_dir)
             check_expected_numbers(skill_dir)
             check_no_replacement_chars(skill_dir)
+            check_handover_in_repo(skill_dir)
             check_mut_calibrator(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))

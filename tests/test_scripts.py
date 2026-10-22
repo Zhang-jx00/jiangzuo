@@ -2264,6 +2264,61 @@ class TestAuditXssConstantAssignment(unittest.TestCase):
             self.assertIn("JZ-XSS-001", p, "变量赋值必须仍报")
 
 
+
+class TestHandoverInRepo(unittest.TestCase):
+    """E27：交接文档必须**在仓库内**、章节完整、且被 git 跟踪。
+
+    E26 那轮一个脚本 bug 把**仓库外**的交接文档整段覆盖掉了，而它当时不在 git 里
+    ⇒ **无法回滚**，只能从会话记录里重建（整整花了一轮）。
+    ⇒ 本类守住根因三件事：它在仓库里（validate 第 20 项）、关键章节齐全、且被 git 跟踪。
+    """
+
+    HANDOVER = os.path.join(REPO, "docs", "jiangzuo", "handover.md")
+
+    def test_validate_reports_handover_in_repo(self):
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn(u"交接文档在仓库内、章节完整、已被 git 跟踪", r.stdout)
+
+    def test_handover_has_the_key_sections(self):
+        with io.open(self.HANDOVER, "r", encoding="utf-8") as f:
+            text = f.read()
+        for head in (u"## 0. ", u"## 5. ", u"## 6. ", u"## 8. ", u"## 11. ",
+                     u"## 13. ", u"## 14. "):
+            self.assertIn(head, text, u"交接文档缺 %s" % head)
+
+    def test_handover_is_tracked_by_git(self):
+        p = subprocess.run(["git", "ls-files", "--error-unmatch", "--",
+                             "docs/jiangzuo/handover.md"],
+                           cwd=REPO, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        self.assertEqual(p.returncode, 0,
+                         u"交接文档没被 git 跟踪（未跟踪的文件没有历史）：%s" % p.stderr)
+
+    def test_validate_flags_a_handover_with_a_missing_section(self):
+        """反例：交接文档缺关键章节时，validate 必须判错（不能静默放过）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(docs)
+            with io.open(os.path.join(REPO, "docs", "jiangzuo", "handover.md"),
+                         "r", encoding="utf-8") as f:
+                text = f.read()
+            broken = text.replace(u"## 8. ", u"## 8x. ", 1)
+            self.assertNotEqual(broken, text, u"没找到要破坏的章节")
+            with io.open(os.path.join(docs, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(broken)
+            # validate 缺 SKILL.md 会**提前退出**、压根跑不到第 20 项 ⇒ 补一个最小入口
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write("---\nname: tmp-skill\ndescription: temporary fixture\n"
+                        "---\n\nbody\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                u"交接文档缺章节时 validate 竟然通过了")
+            self.assertIn(u"交接文档缺章节", r.stdout)
+
+
 class TestAuditOsv(unittest.TestCase):
     """B4：依赖建议接真实数据源。夹具是从 api.osv.dev 查 pyyaml 5.3 拉回的**真实记录**，
     不是编的样例；技能仓库只带这一份 10KB 样本，全量数据仍靠用户自己离线拉。"""

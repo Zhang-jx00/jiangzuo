@@ -25,3 +25,4 @@ docs/jiangzuo/*
 # ship_check 连续几轮报"交付报告齐全"，而两份报告其实**从未入库**——闸门自己假绿。
 !docs/jiangzuo/reports/
 !docs/jiangzuo/releases/
+!docs/jiangzuo/handover.md

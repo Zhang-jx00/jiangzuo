@@ -520,6 +520,22 @@ CASES = [
      "xss-constant-innerhtml-back",
      "tests.test_scripts.TestAuditXssConstantAssignment."
      "test_constant_assignment_is_not_reported"),
+    # ---- E27（v0.61.0）：交接文档必须在仓库内、章节完整、被 git 跟踪 ----
+    # 变异①：把第 20 项改成永远通过 ⇒ 判据必须红（"文件在，但没人查它"）。
+    ("scripts/validate_skill.py",
+     "def check_handover_in_repo(skill_dir):\n",
+     "def check_handover_in_repo(skill_dir):\n    return  # E27 校准：这项永远通过\n",
+     "handover-check-neutered",
+     "tests.test_scripts.TestHandoverInRepo."
+     "test_validate_reports_handover_in_repo"),
+    # 变异②：从必需章节列表里去掉 §8 ⇒ 缺章节的反例必须红
+    # （它靠 validate 自己发现"缺章节"；列表少一项 ⇒ 它就发现不了）。
+    ("scripts/validate_skill.py",
+     'HANDOVER_SECTIONS = ("## 0. ", "## 5. ", "## 6. ", "## 8. ", "## 11. ", "## 13. ", "## 14. ")',
+     'HANDOVER_SECTIONS = ("## 0. ", "## 5. ", "## 6. ", "## 11. ", "## 13. ", "## 14. ")',
+     "handover-section-list-shortened",
+     "tests.test_scripts.TestHandoverInRepo."
+     "test_validate_flags_a_handover_with_a_missing_section"),
 ]
 
 
