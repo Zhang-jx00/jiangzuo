@@ -4,7 +4,8 @@
 > 被假定**没有任何会话记录、没有长期记忆、没有历史上下文**。凡是这里没写的，就当它不存在；
 > 凡是这里写了的数字，都附了取数命令——**别信文档，跑命令**。
 > **写作时间**：2026-10-20（v0.40.0 交付复核 + 搬家 + 改名之后）。
-> **不要外传**：第 5.4 节讲推送凭证。文档放在仓库之外正是这个原因——**不要把本文档复制进 git 仓库或 README**。
+> **关于外传（E27 起改了）**：本文档**已在仓库内**（`docs/jiangzuo/handover.md`，被 git 跟踪）——E26 那轮一个脚本 bug 毁掉整份文档、而它在仓库外 ⇒ **没有历史可回滚**，所以搬进来了。
+> ⚠️ **但“不要外传”的原则只针对凭据**：第 5.4 节只讲**推送流程与命令**，**不含任何真实凭据**（真凭据在系统凭据管理器里，永远不入库）。⇒ 往本文档里加**真 token / 密码 / 私钥**仍然是禁止的（`preflight.py` 会当场报出来）。
 > **文件名规矩**：`项目名-交接文档.md`。若以后再搬家/改名，文档名与第 2 节路径要同批更新（见第 12 节）。
 
 ---
@@ -16,21 +17,21 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.60.0 已交付并推送**（`3a7d05a`，tag `v0.60.0` 同笔，CI run `39623207789` **七道** success）；
-   远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
-   （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
+2. 状态：⚠️ **v0.61.0 已提交、待推**（本地 `9faaccf`；**远端 `main` 仍是 v0.60.0**（`3a7d05a`）⇒ 差 1 笔；tag `v0.61.0` **尚未创建**）
+   ⇒ **原因**：`github.com:443` 主站连不上（`api.github.com` 仍可读 ⇒ 非凭据问题），**有界重试 5 次全败** ⇒ 按老规矩**停推、如实留痕**（详见「远端一致性」栏）。
    **本机闸门 2026-10-22 当场重跑**：211 用例 OK ｜ validate 20 信息/0 警告/0 错误 ｜ preflight PASS ｜
-   ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条）｜ 靶场 ACCEPT-OK（25/25 & 0/19）｜
+   ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
    变异校准 **42/42 全红**（无 SKIP、无 GREEN）｜ 性能 **BENCH-OK 5.277 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **62 发现/结论 61**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
-   ⚠️ **误报率口径已重述（E26）**：硬误报 **1 / 62 ≈ 1.6%**（E25 是 3/64 ⇒ **不可比**，分子分母同时变了）
-   ⇒ **DVWA 结论区的硬误报已归零**（E20 判定时是 7 条），剩下 1 条在 flask（`Markup(value)`）。
+   ⚠️ **误报率口径**：硬误报 **1 / 62 ≈ 1.6%**（E25 是 3/64、E20 是 8/69 ⇒ **每次分子分母同时变、都不可比**）
+   ⇒ **DVWA 结论区的硬误报已归零**（E20 判定时是 7 条），剩 1 条在 flask（`Markup(value)`）。
    ⚠️ **官方 SARIF validator（`@microsoft/sarif-multitool` 5.8.0）已在本机跑通**：`validate` 报 **0 error**
    （修前是 **8 条 JSON1005**）—— 见 E21。它**非零依赖、CI 装不了** ⇒ CI 跑的是等价的**白名单自检**。
    ⚠️ **引擎的能力边界已写进分册**（E22）：7 条边界各有**实测证据**、每条被最小夹具钉住
    ⇒ **"没报"≠"安全"**（`references/audit-rule-authoring.md` 的「能力边界表」）。
    ⚠️ **变异校准器已随技能分发**（E24）：`scripts/mut_calibrate.py`，CI 跑 `--check-only` 核对锚点。
    ⚠️ **发行说明已入库**（E26）：`docs/jiangzuo/releases/v0.60.0.md`（本仓库**第一份**发行说明）。
+   ⚠️ **本文档已入库**（E27）：`docs/jiangzuo/handover.md`，`validate_skill` **第 20 项**守住「在仓库内 + 章节完整 + 被 git 跟踪」。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
 4. 规模：**20 分册 / 16 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 207 用例 / 84 个入库文件 / 88 提交 / 58 tag**（58 个 tag 全部已推到远端）。
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
@@ -129,19 +130,16 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ---
 
-### 远端一致性（✅ v0.60.0 **已推送**）
+### 远端一致性（⚠️ v0.61.0 **待推** —— github.com 主站不可达）
 
-- **当前状态**：**零待推**。远端 `main` = `3a7d05a`（v0.60.0），与本地 HEAD 一致；
-  tag `v0.60.0`（→ `3a7d05a`）也已推到远端。远端共 58 个 tag，本地 58 个，一一对应。
-- **CI 证据**：CI run **`39623207789`**（workflow `validate`，head `3a7d05a`，conclusion `success`）；
-  主体那笔（`72e7ed0`）的 run **`39623109990`** 同样 **success**。
-  **七道**步逐一 success（第 4–10 步；E24 加了第 9 步「变异校准锚点核对」；
-  末步「六道闸门诊断」是 `if: failure()` 条件步，前面的都绿时本来就不跑 ⇒ skipped 属正常）。
-- ⚠️ **本仓库至今 0 个 GitHub Release**（远端 `releases` 列表为空）⇒ 发行形态只到 tag；
-  发行说明已入库（`docs/jiangzuo/releases/v0.60.0.md`），**创建 Release 需要一次写凭据**
-  （本机无 `gh` CLI、无 `GITHUB_TOKEN`）⇒ 留一条命令待授权后执行：
-  `gh release create v0.60.0 --title "将作 v0.60.0" --notes-file docs/jiangzuo/releases/v0.60.0.md`
-
+- **当前状态**：⚠️ **本地有一笔待推**（`9faaccf`，v0.61.0）。远端 `main` 仍是 v0.60.0（`3a7d05a`）；
+  tag `v0.61.0` **还没创建**（tag 必须在 push 成功之后再打，避免远端出现指不到提交的 tag）。
+- **原因**：`github.com:443` **连不上**（`Failed to connect to github.com:443`），而 `api.github.com` 仍可读 ⇒ **是主站网络问题、不是凭据问题**。已做**有界重试 5 次全败**（按老规矩：网络一断就停推，不改走 SSH、不换令牌）。
+- **网络恢复后要做**（一条一条来）：
+  1. `git -C "D:/Github项目/jiangzuo/jiangzuo" push origin main`
+  2. `git -C "D:/Github项目/jiangzuo/jiangzuo" tag -a v0.61.0 -F <提交消息文件>`
+  3. `git -C "D:/Github项目/jiangzuo/jiangzuo" push origin v0.61.0`
+  4. 核 CI 六道（`https://api.github.com/repos/Zhang-jx00/jiangzuo/actions/runs/<run_id>/jobs`，匿名只读），再把本栏改回「已推送」并填 run id。
 ## 3. 十条核心不变量（改任何东西前先守这几条）
 
 1. **入口预算是硬的**：`SKILL.md` 正文 ≤500 行且 ≤5000 token（估算），`description` ≤1024 字符，
