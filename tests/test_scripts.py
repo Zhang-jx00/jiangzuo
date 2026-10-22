@@ -4856,6 +4856,45 @@ class TestAuditMultilineString(unittest.TestCase):
                         % [(f["line"],) for f in self._sqli_flows(data)])
 
 
+class TestLedgerTotals(unittest.TestCase):
+    """E32：§四 的**口径拆解**必须自洽（`validate_skill` 第 22 项）。
+
+    为什么需要它：E32 之前，「全部产出」口径的误报率一直是**未判定**，
+    而且三份文档各写一个数（20 / 12 / "59 条里有 20 条"）⇒ 互相矛盾。
+    E32 把这批逐条判完 ⇒ §四 有一张机器可读的口径拆解表
+    ⇒ 它的每个加法都必须成立，且「误报」条数必须与 §一 合计行**对上**。
+    """
+
+    def test_validate_reports_the_ledger_totals(self):
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("口径拆解自洽", r.stdout)
+
+    def test_broken_ledger_totals_must_be_flagged(self):
+        """反例：§四 的加法不成立时，validate 必须判错（不能静默放过）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            evals = os.path.join(tmp, "evals")
+            os.makedirs(evals)
+            with io.open(os.path.join(REPO, "evals", "finding-verdicts.md"),
+                         "r", encoding="utf-8") as f:
+                text = f.read()
+            broken = text.replace(
+                "| 全部产出 | 75 | 真阳性 55 + 误报 4 + 另计 16 |",
+                "| 全部产出 | 76 | 真阳性 55 + 误报 4 + 另计 16 |", 1)
+            self.assertNotEqual(broken, text, "没找到要破坏的口径行")
+            with io.open(os.path.join(evals, "finding-verdicts.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(broken)
+            with io.open(os.path.join(tmp, "SKILL.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write("---\nname: tmp-skill\ndescription: temporary fixture\n"
+                        "---\n\nbody\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
+            self.assertNotEqual(r.returncode, 0,
+                                "口径加法不成立时 validate 竟然通过了")
+            self.assertIn("口径拆解不自洽", r.stdout)
+
+
 class TestAuditIncludeScope(unittest.TestCase):
     """C4：DVWA 的 fi 模块一直没检出，原因是"跨文件的模块级变量"。
 

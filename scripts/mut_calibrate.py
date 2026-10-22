@@ -703,6 +703,14 @@ CASES = [
      "php-interpolation-not-a-read",
      "tests.test_scripts.TestAuditMultilineString."
      "test_interpolation_in_multiline_string_is_still_a_read"),
+    # ---- E32（v0.66.0）：§四 口径拆解的自洽核对（validate 第 22 项）----
+    # 把「全部产出」的加法比较关掉 ⇒ 口径不自洽时 validate 不再报错 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "        if t_all != t_true + t_fp_num + t_other:",
+     "        if False:  # E32 校准：口径加法的比较被关掉",
+     "ledger-totals-addition-neutered",
+     "tests.test_scripts.TestLedgerTotals."
+     "test_broken_ledger_totals_must_be_flagged"),
 ]
 
 

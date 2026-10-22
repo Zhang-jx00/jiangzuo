@@ -20,11 +20,11 @@
 2. 状态：**v0.65.0 已交付并推送**（`4c13adb`，tag `v0.65.0` 同笔，CI run `39737767386` **七道** success）；
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
-   **本机闸门 2026-10-22 当场重跑**：229 用例 OK ｜ validate **21** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-22 当场重跑**：231 用例 OK ｜ validate **21** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **53/53 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.561 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **54/54 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.561 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
-   ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**
+   ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
    ⇒ **"静态可修的硬误报"= 0 / 59 = 0%（E29 清零）**（E20 是 8/69 ≈ 11.6% ⇒ 降 100%），**未判定 = 0**。
    逐条判定表在 `evals/finding-verdicts.md`（随技能分发，`validate_skill` 第 21 项守住它的自洽）。
    ⚠️ **官方 SARIF validator（`@microsoft/sarif-multitool` 5.8.0）已在本机跑通**：`validate` 报 **0 error**
@@ -35,7 +35,7 @@
    ⚠️ **发行说明已入库**（E26）：`docs/jiangzuo/releases/v0.60.0.md`（本仓库**第一份**发行说明）。
    ⚠️ **本文档已入库**（E27）：`docs/jiangzuo/handover.md`，`validate_skill` **第 20 项**守住「在仓库内 + 章节完整 + 被 git 跟踪」。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
-4. 规模：**20 分册 / 16 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 229 用例 / 86 个入库文件 / 99 提交 / 63 tag**（63 个 tag 全部已推到远端）。
+4. 规模：**20 分册 / 16 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 231 用例 / 86 个入库文件 / 100 提交 / 64 tag**（63 个 tag 全部已推到远端）。
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
 6. 交付说明（含**未达标与未验证清单**）：仓库内 `docs/jiangzuo/reports/2026-10-15-delivery-v0.36.1.md`。
 7. 逐轮决策账本：仓库内 `docs/jiangzuo/evolution.md`（**55 条变异台账，0 条 ROLLBACK**；条数由脚本数出来、不手数，
@@ -221,7 +221,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 20 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 229 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 231 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -628,6 +628,14 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 55. **新增代码会让既有锚点变得不唯一**（E31 实踩）：E31 在 `audit_graph.py` 里也写了 `if not s.get("context")` ⇒ E30 那条校准例的**单行锚点**（同一串文本）**命中从 1 次变成 2 次** ⇒ `--check-only` 报 `STALE-ANCHOR`（命中 2 次）⇒ 校准会**静默失效**（按"命中 0 次"跳过）。
     修法：给既有锚点**补上上下文**（改成跨行组合）⇒ 又变回唯一。⇒ **教训：新增代码里的相同文本会破坏既有锚点的唯一性 ⇒ 改完引擎要重跑 `--check-only`**（它就是为这件事存在的）。
 
+56. **脚本改了内存却没落盘 ⇒ 整轮编辑静默丢失**（E32 实踩）：我写了个批量改文档的脚本，函数 `insert_before` 改了内存里的行列表、日志也打了 `OK`，**但从头到尾没调用落盘的那一步** ⇒ 文件根本没变 ⇒ 而我**看着那行 `OK` 就当它成功了**。
+    ⚠️ **是 `validate` 的新判据当场逮到的**（它读文件、发现口径表不在 ⇒ 报错）⇒ **凡是有机器判据守着的东西，判据报错要当成"我的编辑没生效"来查**，而不是当成"判据坏了"。
+    修法：批量改文档的脚本**最后必须落盘 + 回读确认**（本轮补了 `save()` 与一行回读自检⇒ 打印"§四 at 5173；口径行 3 条"才敢往下走）。
+    **教训：日志里的 `OK` 只代表"匹配到了"，不代表"写进去了"** ⇒ 落盘后**必须回读**。
+
+57. **抄写源码里的"像密钥"那一行 ⇒ 自己的文档会触发密钥扫描**（E32 实踩）：E32 在判定表 §四 里写了 DVWA 那个占位口令的**原文**（长得像 `赋值型密钥`）⇒ `preflight` 当场报 **2 条 high** ⇒ 自净检查失败 ⇒ **而判定表 §二 #3 早就写明"本文档不复制它，免得被密钥扫描当泄露"** ⇒ **我违反了自己定的规矩**。
+    修法：改成**描述**（"口令字段被赋成一个带四个星号的字符串"）⇒ 扫描干净 ⇒ 文档仍然说清事实。⇒ 教训：**文档里引用源码有"安全形状"**（密钥/口令/令牌）时，只能描述不能复制；而这条规矩**已经写在表里**了 ⇒ 抄之前先看一眼自己写过的约定。
+
 ## 9. 环境与操作要点
 
 - **平台**：Windows 10（10.0.22631）+ Git Bash；Python **3.8.3**（脚本最低要求 3.8，纯标准库）；CI 是 Ubuntu + 3.11。
@@ -756,7 +764,11 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 5. **把 20 本分册做英文版**（`README.en.md` 已有，分册没有）。
 6. **发行渠道**：`npx skills add Zhang-jx00/jiangzuo` 路径验证、skills.sh 生态注册、GitHub Release 页面（**外向写，先问用户**）。
 7. **`--strict` 门禁的已知误报处理**：常年红的闸等于没有闸（`bench.py` 默认 3.0 ms/文件从有实测起就没达到过，
-   后来把预算定在"当前能过、回退能拦"的位置）。同类还有 12 个未判定的"同目录路过"项，逐条判掉就能把误报率说圆。
+   后来把预算定在"当前能过、回退能拦"的位置）。~~同类还有 12 个未判定的"同目录路过"项~~
+   —— **E32 已逐条判完**：实测 **16 条**（三份文档曾各写一个数：20 / 12 / "59 条里有 20 条"，互相矛盾）
+   ⇒ 判定为**真阳性 15 + 误报 1**（那 1 条与判定表 §二 #3 同一处）⇒
+   **「全部产出」口径的误报率第一次能说死 = 4 / 75 ≈ 5.3%**（结论区口径的"静态可修硬误报"仍是 0/59 = 0%）。
+   清单可复算：`python evals/audit-fixtures/dvwa_coverage.py --json <扫描.json> --same-dir`。
 8. **`audit_scan` 的能力边界文档化**：brute/captcha 这类"缺失型"判据做不做得成、代价多大，写进分册而不是留在脑子里。
 9. ~~**给"文档里的期望数字"补判据**~~ —— **v0.42.0 已做（E8）**：`validate_skill.py` 第 14 项
    `check_expected_numbers()`，把 .md **代码块**里三类"照着跑就能看到"的期望值接上唯一真源
@@ -886,6 +898,8 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 | **E30** ✅ | v0.64.0 | **「净化点按 sink 上下文生效」**（架构级能力，E17/E22 两次登记的缺口） —— 转义类净化点现在**按引号内 / 引号外两档**生效 | 引擎加 `sql_quote_context()`（按"输出串"重建引号状态）⇒ DVWA `csrf/source/high.php:44`（引号内 ⇒ 转义有效）**不再报**，而 `sqli_blind/source/medium.php:15`（引号外 ⇒ 转义无效）**仍报**；**A/B 逐条：DVWA 只少这 1 条、新增 0 条**（13 条 SQLi 真阳性全保住）⇒ 结论区 61 → **60**、误报 6 → **5**、待能力升级 2 → **1**；判据 `TestAuditSqlQuoteContext` **5 条**；变异校准 **50/50 全红** |
 | **E31** ✅ | v0.65.0 | **「净化点跨文件作用域」**（判定表 §二 #1 登记的待能力升级项）—— 顺带修掉一类**既有的漏报** | ① **跨行字符串字面量折叠到首行**（⇒ 多行 SQL 串里的**列别名不是变量读取**、**插值是读取**）② **include-scope 认被 include 文件里的无条件净化点**；**A/B 逐条：DVWA 只少 `bac/index.php:58` 一条、新增 0 条** ⇒ 结论区 60 → **59**、误报 5 → **4**、**「待能力升级」1 → 0** ⇒ 剩下的 4 条**全是能力边界型**；判据 `TestAuditMultilineString` **4 条**（含 2 条防误伤）；变异校准 **53/53 全红** |
 
+| **E32** ✅ | v0.66.0 | **把「全部产出」口径的误报率说死**（判定表新增 §四） | 「同目录路过」实测 **16 条**逐条判定 ⇒ **真阳性 15 + 误报 1**（那 1 条与 §二 #3 同一处）；另计语境 **16 条** ⇒ **全部产出 75 = 真阳性 55 + 误报 4 + 另计 16** ⇒ **误报率 4/75 ≈ 5.3%**；三份文档里互相矛盾的旧数字（20 / 12 / "59 条里有 20 条"）全部订正；清单可复算（`dvwa_coverage.py --same-dir`）；`validate` 新增**第 22 项**（口径拆解自洽）；判据 `TestLedgerTotals` **2 条**；变异校准 **54/54 全红** |
+
 ## 12. 路径与搬家史（为什么现在在这，以及再搬家要注意什么）
 
 - **2026-10-05 → 2026-10-20** 原在 `D:\Zcode对话\workspace\skill开发\SkillOne\`。
@@ -936,7 +950,7 @@ git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望�
 grep -n "version:" SKILL.md          # 期望：0.60.0
 python scripts/validate_skill.py .   # 期望：20 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 229 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 231 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 
@@ -974,7 +988,7 @@ curl -sS "https://api.github.com/repos/Zhang-jx00/jiangzuo/actions/runs?per_page
 
 ✅ **本文档（交接文档）已进仓库（E27）**，所以它自己的数字**有机器判据**：
 `validate_skill.py` 的期望值核对会扫仓库内 .md 的**代码块** ⇒ **本文档第 13 节那些期望值
-（229 用例 / 21 条信息 / 99 提交 / 63 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
+（231 用例 / 22 条信息 / 100 提交 / 64 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
 ⚠️ 剩下没被守住的：**提交数与 tag 数**（它们是 git 的状态，不是文本）⇒ 每轮手工核。
 
 ---

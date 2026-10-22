@@ -59,12 +59,54 @@ def is_fixed(path):
     return any(p in path for p in FIXED_PAT)
 
 
+def same_dir_passers(data):
+    """「同目录路过」清单：规则类别 ≠ 该模块声明的漏洞类别。
+
+    E32：这三份文档（验收记录 / 交接文档 / 交付报告）曾各写一个数（20 / 12 /
+    "59 条里有 20 条"）⇒ 互相矛盾且都没说清是哪个口径。
+    ⇒ 把这个清单做成**可复算**的：同一份扫描 JSON，任何人都能跑出同一张表。
+    判定结论见 `evals/finding-verdicts.md` §四。
+    """
+    out = []
+    for f in data.get("findings", []):
+        parts = f["file"].split("/")
+        if len(parts) < 2 or parts[0] != "vulnerabilities":
+            continue
+        module = parts[1]
+        want = set(CATEGORY.get(module, []))
+        if f["rule_id"] in want:
+            continue
+        out.append({
+            "module": module,
+            "rule_id": f["rule_id"],
+            "file": f["file"],
+            "line": f["line"],
+            "declared": sorted(want),
+            "fixed": is_fixed(f["file"]),
+            "context": f.get("context"),
+        })
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=u"DVWA 检出分母对照（将作）")
     ap.add_argument("--json", required=True, help=u"audit_scan 对 DVWA 仓库输出的 JSON")
+    ap.add_argument("--same-dir", action="store_true",
+                    help=u"只输出「同目录路过」清单（规则类别≠该模块声明的类别）")
     args = ap.parse_args()
 
     data = json.load(io.open(args.json, encoding="utf-8"))
+
+    if args.same_dir:
+        rows = same_dir_passers(data)
+        for r in rows:
+            print(u"  %-16s %s:%s  模块=%s 声明=%s" % (
+                r["rule_id"], r["file"], r["line"], r["module"],
+                u"、".join(r["declared"]) or u"（无）"))
+        print(u"\nRESULT: SAME-DIR %d 条（%d 条在结论区）" % (
+            len(rows), len([r for r in rows if not r["context"]])))
+        return 0
+
     per = {}
     for f in data.get("findings", []):
         parts = f["file"].split("/")

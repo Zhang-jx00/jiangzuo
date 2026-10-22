@@ -74,4 +74,63 @@ E20 说"硬误报 8 条"，其中 5 条是规则过宽（E25/E26 已修）、
 - ⇒ **"静态可修的硬误报"= 0 / 59 = 0%**（E20 的 8/69 ≈ 11.6% ⇒ 降了 100%）
 - ⇒ **未判定 = 0**（E20 留下的一切皆有结论）
 
+## 四、其余发现逐条判定（E32）—— 口径收口
+
+§一–§三 判的是**结论区**（正式代码语境）。这一节判**剩下的全部发现**，
+让「全部产出」口径也能说死 —— 此前只能说结论区口径（"硬误报 0/59"），
+「全部产出误报率」一直是**未判定**（三份文档曾各写一个数：20 / 12 / "59 条里有 20 条"，
+互相矛盾且都没说清口径 ⇒ E32 一律以**实测**为准）。
+
+> **可复算**：`python evals/audit-fixtures/dvwa_coverage.py --json <DVWA扫描.json> --same-dir`
+> 跑出下面 4.1 的同一张清单（E32 新增）。
+
+### 4.1「同目录路过」16 条（规则类别 ≠ 该模块声明的漏洞类别）
+
+| # | 位置 | 规则 | 该模块声明 | 判定 | 依据 |
+|---|---|---|---|---|---|
+| 1 | `vulnerabilities/api/src/HealthController.php:88` | JZ-CMDI-001 | api 声明 CSRF/XSS | **真阳性** | `exec("ping -c 4 " . $target)`，而 `$target` 来自 `file_get_contents('php://input')` 解出的 JSON ⇒ 外部输入直接进 shell ⇒ **命令注入**（这是个 API 控制器，不是 DVWA 的 api 漏洞模块 ⇒ 同目录、不同类） |
+| 2 | `vulnerabilities/view_help.php:20` | JZ-CODE-001 | 不在模块目录里 | **真阳性** | `eval('?>' . file_get_contents("vulnerabilities/{$id}/help/help.php"))`，`$id = $_GET['id']` ⇒ 路径可穿越 ⇒ 读到的文件内容被 `eval` ⇒ **LFI→RCE** |
+| 3 | `vulnerabilities/view_help.php:22` | JZ-CODE-001 | 不在模块目录里 | **真阳性** | 同上（`help.{$locale}.php` 那一支） |
+| 4 | `vulnerabilities/bac/source/medium.php:22` | JZ-SQLI-003 | bac 声明越权 | **真阳性** | medium 档 `$id = $_GET['user_id']` **没转义**就拼进 `WHERE user_id = '$id'` ⇒ **SQL 注入成立** |
+| 5 | `vulnerabilities/bac/source/medium.php:29` | JZ-SQLI-003 | bac 声明越权 | **真阳性** | 同上（`WHERE user_id = '$id'` 那一支） |
+| 6 | `vulnerabilities/bac/source/medium.php:73` | JZ-SQLI-003 | bac 声明越权 | **真阳性** | 同上（`{$target_id}` 进 INSERT 那一支） |
+| 7 | `vulnerabilities/sqli/test.php:4` | JZ-SECRET-001 | sqli 声明 SQLi | **误报** | 口令字段被赋成一个**带四个星号**的字符串 ⇒ **占位/脱敏值**，不是真凭据 （⚠️ 原文那一行长得像赋值真口令 ⇒ 本文档**不复制**它，免得被密钥扫描当泄露）⇒ 与 §二 #3 同一处（已判，不重复计入分子） |
+| 8 | `vulnerabilities/authbypass/authbypass.js:43` | JZ-XSS-001 | authbypass 声明越权/SQLi | **真阳性** | 值来自 `JSON.parse(xhr.responseText)`（服务端用户表）⇒ 而 DVWA 的 authbypass 模块**允许改任意用户的 first_name/surname** ⇒ 名字可控 ⇒ 渲染进 `innerHTML` ⇒ **存储型 XSS** |
+| 9 | `vulnerabilities/authbypass/authbypass.js:45` | JZ-XSS-001 | 同上 | **真阳性** | 同上（`first_name` 那一支） |
+| 10 | `vulnerabilities/authbypass/authbypass.js:47` | JZ-XSS-001 | 同上 | **真阳性** | 同上（`surname` 那一支） |
+| 11 | `vulnerabilities/authbypass/authbypass.js:49` | JZ-XSS-001 | 同上 | **真阳性** | 同上（`user_id` 进 onclick 那一支） |
+| 12 | `vulnerabilities/cryptography/source/low.php:56` | JZ-CSRF-001 | cryptography 声明弱加密 | **真阳性** | `<form method='post'>` 周边 6 行内**没有** `csrf`/`csrfToken`/`X-Requested-With` 之类 ⇒ DVWA 低安全档确实**缺 CSRF 防护**（形式上成立，只是不是该模块的"声明漏洞"） |
+| 13 | `vulnerabilities/cryptography/source/low.php:102` | JZ-CSRF-001 | 同上 | **真阳性** | 同上（`ecb` 那一支） |
+| 14 | `vulnerabilities/cryptography/source/medium.php:100` | JZ-CSRF-001 | 同上 | **真阳性** | 同上 |
+| 15 | `vulnerabilities/javascript/index.php:97` | JZ-CSRF-001 | javascript 声明 JS/客户端 | **真阳性** | 表单里的 `name="token"` 是**客户端 puzzle 的 token**、不是 CSRF token（规则只认 `csrf`/`csrfToken`/…）⇒ 服务端确实没有 CSRF 校验 ⇒ 形式上成立（影响极低） |
+| 16 | `vulnerabilities/weak_id/index.php:42` | JZ-CSRF-001 | weak_id 声明弱会话/弱加密 | **真阳性** | `<form method="post">` 周边无 CSRF token ⇒ 形式上成立（影响是"被迫重新生成会话 id"） |
+
+⇒ **16 条 = 真阳性 15 + 误报 1**（那 1 条与 §二 #3 是同一处，已判过，不重复计入分子）。
+
+### 4.2「另计语境」16 条（测试 / 库 / CLI 语境 ⇒ 不是检测错，也不进结论区）
+
+| 来源 | 条数 | 语境 | 判定依据 |
+|---|---|---|---|
+| flask `tests/*`（test_basic 6、test_json_tag 1、test_templating 1、test_reqctx 1） | 9 | test | **不是检测错**：测试夹具里的写法（如 `Markup(value)`、`innerHTML` 赋值）在测试语境无害 ⇒ 完整保留在 findings/JSON/SARIF 里，不进结论区 |
+| flask `src/flask/cli.py:252,653,959` | 3 | console | **不是检测错**：CLI 的错误提示里回显输入 ⇒ 只在命令行语境出现 |
+| requests `src/requests/adapters.py:99,344` | 2 | library_feature | **不是检测错**：库的默认行为（TLS 校验开关）由调用方决定 ⇒ 库语境不算漏洞 |
+| requests `tests/test_requests.py:2949,3055` | 2 | test | **不是检测错** |
+
+⚠️ **这个数从 17 变成了 16**：E28 那轮记的是"另计 17 条（DVWA 1 + flask 12 + requests 4）"，
+其中 DVWA 那条（`csrf/test_credentials.php:22`）**已被 E30 修掉**（转义在引号内 ⇒ 不是注入）⇒ 变成 16。
+
+### 4.3 口径收口（E32 的产出）
+
+| 口径 | 条数 | 拆开 |
+|---|---|---|
+| 同目录路过 | 16 | 真阳性 15 + 误报 1 |
+| 另计语境 | 16 | flask 12 + requests 4 |
+| 全部产出 | 75 | 真阳性 55 + 误报 4 + 另计 16 |
+
+⇒ **全部产出 75 条**（DVWA 58 + flask 13 + requests 4）＝ 真阳性 **55** ＋ 误报 **4** ＋ 另计 **16**
+⇒ **「全部产出」口径的误报率 = 4 / 75 ≈ 5.3%**（此前只能说结论区口径）
+⇒ 结论区口径：误报 4/59 ≈ 6.8%，但**「静态可修的硬误报」= 0 / 59 = 0%**
+（那 4 条全是「静态消不掉（能力边界型）」⇒ 见 §三）
+⇒ **两套口径现在都有完整判定，"未判定"在本项目已清零。**
+
 ⚠️ **口径纪律**：分子分母必须同范围；每改一次规则/引擎，**这张表要重判**（判定表不是永久有效的）。

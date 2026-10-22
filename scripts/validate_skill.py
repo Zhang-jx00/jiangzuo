@@ -986,6 +986,67 @@ def check_verdict_table(skill_dir):
     return None
 
 
+def check_ledger_totals(skill_dir):
+    """第 22 项：判定表 §四 的**口径拆解**必须自洽（E32）。
+
+    为什么加这一项：E32 之前，「全部产出」口径的误报率一直是**未判定**，
+    而且三份文档各写一个数（20 / 12 / "59 条里有 20 条"）⇒ 互相矛盾。
+    E32 把这批逐条判完 ⇒ 现在 §四 有一张机器可读的口径拆解表
+    （同目录路过 / 另计语境 / 全部产出）⇒ 它的每个加法都必须成立，
+    且「误报」条数必须与 §一 合计行、§三 三类之和**对上**。
+
+    ⚠️ 与第 21 项同源：只保证**表内自洽**，不保证"表与引擎同步"（那要真跑扫描）。
+    """
+    if not os.path.isdir(os.path.join(skill_dir, "evals")):
+        return None
+    path = os.path.join(skill_dir, "evals", "finding-verdicts.md")
+    if not os.path.isfile(path):
+        return None
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+
+    def grab(rx):
+        m = re.search(rx, text)
+        return tuple(int(m.group(i + 1)) for i in range(len(m.groups()))) if m else None
+
+    same_dir = grab(r"\|\s*同目录路过\s*\|\s*(\d+)\s*\|\s*真阳性\s*(\d+)\s*\+\s*误报\s*(\d+)\s*\|")
+    other = grab(r"\|\s*另计语境\s*\|\s*(\d+)\s*\|\s*flask\s*(\d+)\s*\+\s*requests\s*(\d+)\s*\|")
+    total = grab(r"\|\s*全部产出\s*\|\s*(\d+)\s*\|\s*真阳性\s*(\d+)\s*\+\s*误报\s*(\d+)\s*\+\s*另计\s*(\d+)\s*\|")
+    t_fp = grab(r"\*\*合计\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*")
+
+    problems = []
+    if not same_dir or not other or not total or not t_fp:
+        problems.append("§四 的口径拆解表抓不到（同目录路过 / 另计语境 / 全部产出）或 §一 合计行抓不到")
+    else:
+        sd_all, sd_tp, sd_fp = same_dir
+        o_all, o_flask, o_req = other
+        t_all, t_true, t_fp_num, t_other = total
+        total_fp = t_fp[2]
+        if sd_all != sd_tp + sd_fp:
+            problems.append("同目录路过 %d != 真阳性 %d + 误报 %d" % (sd_all, sd_tp, sd_fp))
+        if o_all != o_flask + o_req:
+            problems.append("另计语境 %d != flask %d + requests %d" % (o_all, o_flask, o_req))
+        if t_all != t_true + t_fp_num + t_other:
+            problems.append("全部产出 %d != 真阳性 %d + 误报 %d + 另计 %d"
+                            % (t_all, t_true, t_fp_num, t_other))
+        if t_other != o_all:
+            problems.append("§四 的另计 %d != 另计语境 %d（同一件事不能两个数）"
+                            % (t_other, o_all))
+        if t_fp_num != total_fp:
+            problems.append("§四 的误报 %d != §一 合计行的误报 %d（两份表必须对上）"
+                            % (t_fp_num, total_fp))
+        if t_true != t_fp[1]:
+            problems.append("§四 的真阳性 %d != §一 合计行的真阳性 %d" % (t_true, t_fp[1]))
+        if not problems:
+            info("口径拆解自洽（同目录路过 %d = %d+%d；另计语境 %d = %d+%d；"
+                 "全部产出 %d = %d+%d+%d，与 §一 合计行对上）✓"
+                 % (sd_all, sd_tp, sd_fp, o_all, o_flask, o_req,
+                    t_all, t_true, t_fp_num, o_all))
+    for pr in problems:
+        err("口径拆解不自洽：%s" % pr)
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -1062,6 +1123,7 @@ def main():
             check_no_replacement_chars(skill_dir)
             check_handover_in_repo(skill_dir)
             check_verdict_table(skill_dir)
+            check_ledger_totals(skill_dir)
             check_mut_calibrator(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
