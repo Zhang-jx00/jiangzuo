@@ -17,7 +17,7 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.67.0 已交付并推送**（`6f8e885`，tag `v0.67.0` 同笔，CI run `39762252189` **七道** success）；**发行形态同时闭环**（**65 个 GitHub Release 全部发布**：补发 64 + 本发 v0.67.0）；
+2. 状态：**v0.68.0 已交付并推送**（`e0006cd`，tag `v0.68.0` 同笔，CI run `39768901818` **七道** success）；**「当前状态」从此有人守**（E34：真源 + 标记区 + `validate` 第 23 项）；
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
@@ -38,7 +38,7 @@
    ⚠️ **本文档已入库**（E27）：`docs/jiangzuo/handover.md`，`validate_skill` **第 20 项**守住「在仓库内 + 章节完整 + 被 git 跟踪」。
    ✅ **「当前状态」有人守了**（E34）：`evals/current-state.json` 是它的**唯一机器可读真源**；上面那段 `current-state` 标记区里的每个数都逐个与真源对账 ⇒ **同一个数两处不同，当场红**（`validate_skill` **第 23 项**）。⚠️ 标记区**外**的数字是**历史**，不受管（那是"当时真值"）。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
-4. 规模：**20 分册 / 18 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 243 用例 / 89 个入库文件 / 105 提交 / 66 tag**（66 个 tag 全部已推到远端；**65 个 GitHub Release 也已全部发布**）。
+4. 规模：**20 分册 / 18 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 243 用例 / 89 个入库文件 / 106 提交 / 66 tag**（66 个 tag 全部已推到远端；**66 个 GitHub Release 也已全部发布**）。
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
 6. 交付说明（含**未达标与未验证清单**）：仓库内 `docs/jiangzuo/reports/2026-10-15-delivery-v0.36.1.md`。
 7. 逐轮决策账本：仓库内 `docs/jiangzuo/evolution.md`（**55 条变异台账，0 条 ROLLBACK**；条数由脚本数出来、不手数，
@@ -135,12 +135,12 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ---
 
-### 远端一致性（✅ v0.67.0 **已推送**）
+### 远端一致性（✅ v0.68.0 **已推送**）
 
-- **当前状态**：**零待推**。远端 `main` = `6f8e885`（v0.67.0 版本笔），与本地 HEAD 一致；
-  tag `v0.67.0`（→ `6f8e885`）也已推到远端。
-- **CI 证据**：CI run **`39762252189`**（workflow `validate`，head `6f8e885`，conclusion `success`）。
-  本轮 Release：**https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.67.0**（v0.67.0，与 tag 一一对应）。
+- **当前状态**：**零待推**。远端 `main` = `e0006cd`（v0.68.0 版本笔），与本地 HEAD 一致；
+  tag `v0.68.0`（→ `e0006cd`）也已推到远端。
+- **CI 证据**：CI run **`39768901818`**（workflow `validate`，head `e0006cd`，conclusion `success`）。
+  本轮 Release：**https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.68.0**（v0.68.0）。
   **七道**步逐一 success（第 4–10 步；E24 加了第 9 步「变异校准锚点核对」；
   末步「六道闸门诊断」是 `if: failure()` 条件步，前面的都绿时本来就不跑 ⇒ skipped 属正常）。
 - ⚠️ **E27 那轮推送中断过一次**：`github.com:443` 主站不可达（`api.github.com` 仍可读 ⇒ 非凭据问题），
@@ -1006,7 +1006,7 @@ curl -sS "https://api.github.com/repos/Zhang-jx00/jiangzuo/actions/runs?per_page
 
 ✅ **本文档（交接文档）已进仓库（E27）**，所以它自己的数字**有机器判据**：
 `validate_skill.py` 的期望值核对会扫仓库内 .md 的**代码块** ⇒ **本文档第 13 节那些期望值
-（243 用例 / 23 条信息 / 105 提交 / 66 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
+（243 用例 / 23 条信息 / 106 提交 / 66 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
 ⚠️ 剩下没被守住的：**提交数与 tag 数**（它们是 git 的状态，不是文本）⇒ 每轮手工核。
 
 ---
