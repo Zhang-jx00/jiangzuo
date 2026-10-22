@@ -91,6 +91,102 @@ JS_INTERP_RX = re.compile(r"\$\{\s*(\w+)")
 PY_INTERP_RX = re.compile(r"\{([^{}]*)\}")
 
 
+def _unterminated_opener(text):
+    """行尾**没闭合**的字符串字面量的起点（None = 没有）。
+
+    ⚠️ 文本必须是**已剥行尾注释**的（`iter_code_lines` 剥过）⇒ 注释里的撇号
+    （`// don't`）不是字符串起点。
+    """
+    state = None
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if state is None:
+            if ch in "'\"":
+                state = ch
+                start = i
+        elif ch == state:
+            state = None
+        i += 1
+    return start if state is not None else None
+
+
+def _raw_lines(abs_path):
+    """{行号: 原文行}（去掉换行符）。只在真的需要折叠时才读。"""
+    out = {}
+    try:
+        with io.open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            for i, raw in enumerate(f, 1):
+                out[i] = raw.rstrip("\r\n")
+    except OSError:
+        pass
+    return out
+
+
+def _fold_multiline_strings(abs_path, lines, lang, max_lines=60):
+    """把**跨行**的字符串字面量折叠到它的首行（E31）。
+
+    为什么（DVWA 实测，一对相反的症状）：
+      - `$log_query = "SELECT l.id, l.user_id, …`（多行 SQL 串的**第一行**）
+        没有闭合引号 ⇒ 逐行分析时被当成**代码** ⇒ 里面的列别名（`l.id`、
+        `target_id`）被当成"读了变量" ⇒ 污点顺着它流进了**根本不含该值**的查询
+        （`bac/index.php:58`）⇒ **误报**；
+      - 而真正该算读取的**插值**（`{$target_id}`，在**第二行**）反倒被漏掉
+        ⇒ **真阳性也丢了**（`bac/source/medium.php:73`）。
+    ⇒ 折叠之后整段字符串是**一个**字面量 ⇒ 列别名不是读取、插值是读取
+    ⇒ 两个问题一起解决。
+
+    ⚠️ 必须用**原文**折叠：`iter_code_lines` 已经把行尾注释切掉了，而未闭合
+    字面量里的 `//`（比如 "http://…"）会被当成注释起点 ⇒ 用切过的文本折叠会
+    **丢掉插值** ⇒ 变成漏报 ⇒ 只在真要折叠时才去读原文（很少见 ⇒ 代价可忽略）。
+    ⚠️ 折不动（源码本身语法不完整、或超出 max_lines）⇒ **保持原样**
+    （宁可漏掉这次改进，也不能因此漏报）。
+    """
+    raw_map = None
+    out = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        lineno, text, trunc = lines[i]
+        opener = _unterminated_opener(text)
+        if opener is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        if raw_map is None:
+            raw_map = _raw_lines(abs_path)
+        # ⚠️ **代码部分用已剥注释的文本、字面量部分用原文**：
+        #   · 剥注释后的文本里没有注释 ⇒ 不会把 `// "Secure" check that's …`
+        #     这种**注释行**误判成未闭合字面量（E31 实测：那样会把整个文件后半段
+        #     吞进一行 ⇒ 真阳性全丢）；
+        #   · 字面量部分必须用**原文** ⇒ 未闭合串里的 `//`（"http://…"）
+        #     不会被当成注释切掉 ⇒ 插值不丢。
+        #   两者**列位置一一对应**（剥注释用等长空格替换）⇒ 可以在同一索引上切。
+        raw_first = raw_map.get(lineno, text)
+        merged = text[:opener] + raw_first[opener:]
+        j = i + 1
+        closed = False
+        while j < n and (j - i) <= max_lines:
+            merged += "\n" + raw_map.get(lines[j][0], lines[j][1])
+            # 合并后再判一次：闭合了就没有未闭合字面量了
+            if _unterminated_opener(merged) is None:
+                closed = True
+                break
+            j += 1
+        if not closed:
+            out.append(lines[i])
+            i += 1
+            continue
+        out.append((lineno, merged, trunc))
+        i = j + 1
+    return out
+
+
 def carriers_of(text, lang):
     """取一行里真正"被读的变量名"——字符串字面量里的普通单词不算读取。
 
@@ -101,6 +197,9 @@ def carriers_of(text, lang):
     SQL 关键字、列名、占位符、注释性文本都在字符串里，不是数据流。
     只有各语言明确的"字符串内插"语法才算：PHP 双引号 `$var`、
     Ruby 双引号 `#{var}`、JS 模板串 `${var}`、Python f-string `{expr}`。
+
+    ⚠️ E31：**跨行**字面量靠"折叠到首行"处理（见 `_fold_multiline_strings`）——
+    折叠之后这里看到的永远是**完整**的字面量 ⇒ 列别名不是读取、插值是读取。
     """
     out = []
     pos = 0
@@ -1028,6 +1127,15 @@ def module_include_pool(all_funcs, rules):
                 for lineno, text, _x in fn["body"]:
                     if not _first_code_match(rule["sources"], text):
                         continue
+                    # E31：**同一行上有无条件净化点 ⇒ 这个值离开本文件时已经干净了**
+                    # ⇒ 不该把污点带进 include 方的模块作用域
+                    # （DVWA `bac/source/high.php:25` 的 `$id = intval($_GET['user_id']);`
+                    #  就是一个**已被净化**的值被当污点带走了）。
+                    # ⚠️ **条件净化点（带 context 的）不算**：它的有效性取决于值落进的
+                    # SQL 上下文 ⇒ 跨文件时无从判定 ⇒ 保守起见**继续带**（宁可多报不可漏报）。
+                    if _first_code_match([s for s in rule["sanitizers"]
+                                          if not s.get("context")], text):
+                        continue
                     m = arx.search(text) if arx else None
                     if not m:
                         continue
@@ -1119,6 +1227,9 @@ def build_graph(root, index=None, map_data=None, rules=None, max_bytes=None,
                                            lang=rec["lang"]))
         if not lines:
             continue
+        # E31：跨行字符串字面量折叠到首行（否则列别名被当变量读取 ⇒ 误报，
+        # 而真正该算的插值在第二行 ⇒ 真阳性也丢）
+        lines = _fold_multiline_strings(abs_path, lines, rec["lang"])
         funcs = add_module_scope(parse_functions(rec["lang"], rec["path"], lines),
                                  rec["path"], rec["lang"], lines)
         for fn in funcs:

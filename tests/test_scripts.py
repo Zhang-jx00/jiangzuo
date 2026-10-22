@@ -4744,6 +4744,118 @@ class TestAuditPatternCost(unittest.TestCase):
         print(u"最慢 pattern：%.1f ms ｜ %s" % worst)
 
 
+class TestAuditMultilineString(unittest.TestCase):
+    """E31：跨行字符串字面量要当作**一个**字面量。
+
+    为什么（DVWA 实测，一对**相反**的症状）：
+    - `$log_query = "SELECT l.id, l.user_id, …`（多行 SQL 串的**第一行**）没有闭合引号
+      ⇒ 逐行分析时它被当成**代码** ⇒ 里面的**列别名**（`l.id`）被当成"读了变量
+      `$id`" ⇒ 污点顺着它流进了**根本不含该值**的查询（`bac/index.php:58`）⇒ **误报**；
+    - 而真正该算读取的**插值**（`{$target_id}`，在**第二行**）反倒被漏掉
+      ⇒ **真阳性也丢了**（一类既有的漏报）。
+
+    ⇒ 折叠之后整段字符串是**一个**字面量 ⇒ 列别名不是读取、插值是读取
+    ⇒ 误报与漏报**一起**解决。
+
+    另外 E31 修掉同一条链上的另一处：include-scope 通道**要认被 include 文件里的
+    无条件净化点**（`$id = intval($_GET['user_id']);` 出来的值是干净的，不该被当污点带走）。
+    """
+
+    def _graph(self, root, files):
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        out = os.path.join(root, "_graph.json")
+        r = run([os.path.join(SCRIPTS, "audit_graph.py"), root, "--out", out])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with io.open(out, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _sqli_flows(self, data):
+        return [f for f in data["flows"] if f["rule_id"] == "JZ-SQLI-003"]
+
+    def test_column_alias_in_multiline_string_is_not_a_variable_read(self):
+        """正例：多行 SQL 串首行里的 `l.id` 是**列别名**，不是读 `$id`。
+
+        ⚠️ 这正是 DVWA `bac/index.php:51` 的形状：`$log_query = "SELECT l.id, …`
+        而 `$id`（来自被 include 的文件）恰好同名 ⇒ 旧逻辑把列别名当成了读取
+        ⇒ 污点流进了一个**根本不含该值**的查询。
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "app.php": (
+                "<?php\n"
+                "$id = $_GET['id'];\n"
+                "$log_query = \"SELECT l.id, l.user_id FROM logs\n"
+                "             WHERE l.x = 1\";\n"
+                "mysqli_query($conn, $log_query);\n")})
+        self.assertEqual([], self._sqli_flows(data),
+                         "多行串里的列别名被当成了变量读取 ⇒ 污点流进了不含它的查询：%s"
+                         % [(f["line"],) for f in self._sqli_flows(data)])
+
+    def test_interpolation_in_multiline_string_is_still_a_read(self):
+        """反例（防误伤）：插值 `{$target_id}` 在**第二行**时**仍要算读取**。
+
+        ⚠️ 这条不许被"折叠"顺手砍掉：砍掉它就丢**真阳性**。
+        ⚠️ 它在 E31 之前是**红的** ⇒ 多行串里的插值以前**根本不算读取**
+        ⇒ 那是一类**既有的漏报**（不只 DVWA）。
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "app.php": (
+                "<?php\n"
+                "$id = $_GET['id'];\n"
+                "$target_id = $id;\n"
+                "$log_query = \"INSERT INTO t (a, b) VALUES\n"
+                "            ({$target_id}, 1)\";\n"
+                "mysqli_query($conn, $log_query);\n")})
+        self.assertTrue(self._sqli_flows(data),
+                        "多行串里的插值不算读取 ⇒ 真阳性被漏掉了：%s"
+                        % [(f["line"],) for f in self._sqli_flows(data)])
+
+    def test_include_scope_honors_sanitizer_in_the_included_file(self):
+        """正例：被 include 的文件里 `intval()` 过 ⇒ 那个值是干净的，不该被带走。
+
+        形状逐字取自 DVWA `bac/source/high.php:25`：
+        `$id = intval($_GET['user_id']);`
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "vulnerabilities/bac/index.php": (
+                "<?php\n"
+                "$vulnerabilityFile = 'high.php';\n"
+                "require_once \"vulnerabilities/bac/source/{$vulnerabilityFile}\";\n"
+                "$q = \"SELECT * FROM t WHERE id = $id\";\n"
+                "mysqli_query($conn, $q);\n"),
+            "vulnerabilities/bac/source/high.php": (
+                "<?php\n"
+                "$id = intval($_GET['user_id']);\n")})
+        self.assertEqual([], self._sqli_flows(data),
+                         "被 include 文件里已被 intval 净化的值仍被当污点带走：%s"
+                         % [(f["line"],) for f in self._sqli_flows(data)])
+
+    def test_include_scope_still_carries_unsanitized_taint(self):
+        """反例（防误伤）：被 include 的文件里**没有**净化点 ⇒ 污点照旧跨文件流。
+
+        ⚠️ 这条锁的是 DVWA `fi` 模块那条**真阳性**
+        （`fi/source/high.php:4` 的 `$file = $_GET['page'];` ⇒ `fi/index.php:36`）。
+        """
+        data = self._graph(tempfile.mkdtemp(), {
+            "vulnerabilities/fi/index.php": (
+                "<?php\n"
+                "$vulnerabilityFile = 'high.php';\n"
+                "require_once \"vulnerabilities/fi/source/{$vulnerabilityFile}\";\n"
+                "$q = \"SELECT * FROM t WHERE id = $file\";\n"
+                "mysqli_query($conn, $q);\n"),
+            "vulnerabilities/fi/source/high.php": (
+                "<?php\n"
+                "$file = $_GET['page'];\n")})
+        self.assertTrue(self._sqli_flows(data),
+                        "未净化的污点没有跨文件流过去 ⇒ 真阳性被误杀：%s"
+                        % [(f["line"],) for f in self._sqli_flows(data)])
+
+
 class TestAuditIncludeScope(unittest.TestCase):
     """C4：DVWA 的 fi 模块一直没检出，原因是"跨文件的模块级变量"。
 

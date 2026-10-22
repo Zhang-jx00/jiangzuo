@@ -661,8 +661,12 @@ CASES = [
      "tests.test_scripts.TestAuditSqlQuoteContext."
      "test_escaped_value_in_quotes_is_not_reported"),
     # ② 条件净化点又被当成了"守卫" ⇒ 引号外的**真阳性**被吃掉 ⇒ 判据必须红。
+    # ⚠️ E31：锚点必须带上下文（原来只有 `if not s.get("context")` 一行 ⇒
+    # E31 新增的 include-scope 检查里**也**有这串文本 ⇒ 命中变成 2 次 ⇒ 锚点过期）。
     ("scripts/audit_graph.py",
+     '                    guard = [s for s in sanits\n'
      '                             if not s.get("context")',
+     '                    guard = [s for s in sanits\n'
      '                             if True',
      "sql-quote-guard-blocks-conditional",
      "tests.test_scripts.TestAuditSqlQuoteContext."
@@ -674,6 +678,31 @@ CASES = [
      "sql-quote-decision-neutered",
      "tests.test_scripts.TestAuditSqlQuoteContext."
      "test_escaped_value_in_quotes_is_not_reported"),
+    # ---- E31（v0.65.0）：跨行字符串字面量折叠 + include-scope 认净化点 ----
+    # ① 折叠被关掉 ⇒ 多行串首行的列别名又被当成变量读取 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "        lines = _fold_multiline_strings(abs_path, lines, rec[\"lang\"])",
+     "        pass  # E31 校准：跨行字符串折叠被关掉",
+     "multiline-fold-neutered",
+     "tests.test_scripts.TestAuditMultilineString."
+     "test_column_alias_in_multiline_string_is_not_a_variable_read"),
+    # ② include-scope 不再认被 include 文件里的净化点 ⇒ 已被净化的值又被带走 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "                    if _first_code_match([s for s in rule[\"sanitizers\"]\n"
+     "                                          if not s.get(\"context\")], text):\n"
+     "                        continue",
+     "                    if False:  # E31 校准：include-scope 的净化点检查被关掉\n"
+     "                        continue",
+     "include-scope-sanitizer-ignored",
+     "tests.test_scripts.TestAuditMultilineString."
+     "test_include_scope_honors_sanitizer_in_the_included_file"),
+    # ③ PHP 插值不再算读取 ⇒ 多行串里的 `{$var}` 读不到 ⇒ 判据必须红。
+    ("scripts/audit_graph.py",
+     "            out.extend(PHP_INTERP_RX.findall(body))",
+     "            pass  # E31 校准：PHP 插值不再算读取",
+     "php-interpolation-not-a-read",
+     "tests.test_scripts.TestAuditMultilineString."
+     "test_interpolation_in_multiline_string_is_still_a_read"),
 ]
 
 
