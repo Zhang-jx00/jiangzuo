@@ -1,6 +1,7 @@
 {
   "carriers": {
     "CHANGELOG.md": {
+      "index": 0,
       "metrics": [
         "tests",
         "mutation_cases",
@@ -20,16 +21,14 @@
         "coverage_total",
         "bench_ms_per_file"
       ],
-      "version": "0.68.0",
-      "which": "first"
+      "version": "0.69.0"
     },
     "docs/jiangzuo/handover.md": {
+      "index": 0,
       "metrics": [
         "tests",
         "mutation_cases",
         "validate_infos",
-        "rules_active",
-        "rules_disabled",
         "corpus_must_find",
         "corpus_must_not_find",
         "dvwa_findings",
@@ -43,9 +42,10 @@
         "self_context_excluded",
         "coverage_hit",
         "coverage_total",
-        "bench_ms_per_file"
-      ],
-      "which": "first"
+        "bench_ms_per_file",
+        "rules_active",
+        "rules_disabled"
+      ]
     },
     "evals/audit-acceptance.md": {
       "index": -1,
@@ -68,13 +68,13 @@
         "coverage_total",
         "bench_ms_per_file"
       ],
-      "version": "0.68.0"
+      "version": "0.69.0"
     }
   },
   "history": {
-    "0.68.0": {
+    "0.69.0": {
       "measured": {
-        "bench_ms_per_file": 4.656,
+        "bench_ms_per_file": 4.3,
         "corpus_must_find": 25,
         "corpus_must_not_find": 19,
         "coverage_hit": 14,
@@ -101,20 +101,20 @@
         "self_flows": 0
       },
       "reported": {
-        "validate_infos": 23
+        "validate_infos": 24
       },
       "static": {
         "must_find": 25,
         "must_not_find": 19,
-        "mutation_cases": 60,
+        "mutation_cases": 61,
         "rules_active": 33,
         "rules_disabled": 1,
-        "tests": 243
+        "tests": 247
       }
     }
   },
   "measured": {
-    "bench_ms_per_file": 4.656,
+    "bench_ms_per_file": 4.3,
     "corpus_must_find": 25,
     "corpus_must_not_find": 19,
     "coverage_hit": 14,
@@ -141,8 +141,8 @@
     "self_flows": 0
   },
   "measured_at": "2026-10-22",
-  "measured_at_commit": "ffd37ca",
-  "note": "「当前状态」的唯一机器可读真源（E34）。\nstatic  = 能当场推出来的数（校验器每跑一次重推一遍 ⇒ 本段不会腐烂）\nreported= 校验器自己报的条数（main() 收尾时对账）\nmeasured= 跑出来的数（三仓检出 / 覆盖 / 语料 / 性能），由 --refresh 从扫描产物写入\n文档里用 <!-- current-state:begin --> … <!-- current-state:end --> 圈出「这里说的是当前状态」的一段，只有标记区受对账管 ⇒ 标记区外的历史数字不会被误伤。",
+  "measured_at_commit": "d8ad814",
+  "note": "「当前状态」的唯一机器可读真源（E34 起）。\nstatic  = 能当场推出来的数（校验器每跑一次重推一遍 ⇒ 本段不会腐烂）\nreported= 校验器自己报的条数（main() 收尾时对账）\nmeasured= 跑出来的数（三仓检出 / 覆盖 / 语料 / 性能），由 --refresh 从扫描产物写入\nhistory.<版本> = 每版历史快照（历史文档对账它自己那一版，不逼人篡改历史）\n文档里用 <!-- current-state:begin --> … <!-- current-state:end --> 圈出「这里说的是当前状态」的一段，只有标记区受对账管 ⇒ 标记区外的历史数字不会被误伤。",
   "patterns": {
     "bench_ms_per_file": {
       "group": 1,
@@ -222,17 +222,17 @@
     }
   },
   "reported": {
-    "validate_infos": 23
+    "validate_infos": 24
   },
-  "round": "E34",
+  "round": "E35",
   "schema": 1,
   "static": {
     "must_find": 25,
     "must_not_find": 19,
-    "mutation_cases": 60,
+    "mutation_cases": 61,
     "rules_active": 33,
     "rules_disabled": 1,
-    "tests": 243
+    "tests": 247
   },
-  "version": "0.68.0"
+  "version": "0.69.0"
 }

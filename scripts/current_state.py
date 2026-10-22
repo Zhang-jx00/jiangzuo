@@ -136,6 +136,19 @@ def marked_regions(text):
     return regions
 
 
+def _same_number(got, want):
+    """两个"数"是不是同一个 —— **按数值比**，不是按字符串比。
+
+    为什么：JSON 里的 `4.300` 会被解析成浮点 `4.3`，而文档里写的是
+    bench 自己的输出格式 `4.300` ⇒ 纯字符串比较会**误红**。
+    ⇒ 两边都能解析成数字时按数值比（带极小容差），否则按字符串比。
+    """
+    try:
+        return abs(float(got) - float(want)) < 1e-9
+    except (TypeError, ValueError):
+        return str(got) == str(want)
+
+
 def value_of(src, metric, version=None):
     """取某个指标的值。
 
@@ -262,9 +275,13 @@ def check(skill_dir, err, info):
                         problems.append(u"载体 %s 的标记区里找不到 %s（匹配式 %s）" % (rel, m, rx))
                         continue
                     got = mm.group(grp)
-                    if str(got) != str(want):
-                        problems.append(u"载体 %s：%s 写的是 **%s**，真源是 **%s**——同一个数不能两处不同"
-                                        % (rel, m, got, want))
+                    # ⚠️ **数值要按数值比**：JSON 里的 4.300 存成 4.3（浮点），
+                    #    而文档里写的是 bench 自己的输出格式 "4.300" ⇒ 纯字符串比较会误红。
+                    #    ⇒ 两边都能解析成数字时按数值比（带极小容差），否则按字符串比。
+                    if _same_number(got, want):
+                        continue
+                    problems.append(u"载体 %s：%s 写的是 **%s**，真源是 **%s**——同一个数不能两处不同"
+                                    % (rel, m, got, want))
 
     for p in problems:
         err(u"[当前状态] " + p)

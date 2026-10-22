@@ -5423,5 +5423,64 @@ class TestCurrentState(unittest.TestCase):
                          u"本仓库的「当前状态」与真源对不上：%s" % r.stdout)
 
 
+class TestMicroTestClaims(unittest.TestCase):
+    """E35（第 24 项）：微测台账的**状态格必须与实测数据一致**。
+
+    为什么要有这一项：本项目的纪律层条款此前只有"文本 + 结构锁"，行为收益**未测**；
+    E35 真跑了一轮双臂对照，结论是**基线未红** ⇒ **不得对外声称行为收益**。
+    ⇒ 既然"不许声称"是要守的纪律，它就该有机器判据，而不是靠人记得。
+    """
+
+    GOOD = (u"# 规则微测（micro-test）规程\n\n"
+            u"| 规则/条款 | 场景 | 状态 | 备注 |\n"
+            u"|---|---|---|---|\n"
+            u"| **铁律范围句**（同义改写与暗示同样违规） | 未跑 | **待测** | 只有文本，没有双臂数据 |\n"
+            u"| **必验证门函数**（五步）＋**铁律** | E35 红测 MT-A/B | **基线未红** | "
+            u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点** |\n"
+            u"| **子代理四态回执** | 未跑 | **待测** | 需要能派发子代理的环境 |\n")
+
+    def _mini(self, tmp, md):
+        sk = os.path.join(tmp, "sk")
+        os.makedirs(os.path.join(sk, "evals"))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+        with io.open(os.path.join(sk, "evals", "micro-tests.md"), "w", encoding="utf-8") as f:
+            f.write(md)
+        return sk
+
+    def test_verdict_must_match_the_measured_numbers(self):
+        """红：状态格写「有效」而实测差 0 个百分点 ⇒ 必须红（改结论不改数据当场红）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, self.GOOD.replace(u"**基线未红**", u"**有效**"))
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[微测声称]", r.stdout)
+            self.assertIn(u"个百分点", r.stdout)
+
+    def test_verdict_must_be_a_legal_one(self):
+        """红：状态格写了规程之外的词（"已验证"）⇒ 必须红。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, self.GOOD.replace(u"**待测**", u"**已验证**"))
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[微测声称]", r.stdout)
+
+    def test_verdict_without_data_must_be_flagged(self):
+        """红：写了判定却解析不出实测数据 ⇒ 必须红（没有数据就不许写结论）。"""
+        md = self.GOOD.replace(u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点**",
+                                u"实测过，感觉有效")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[微测声称]", r.stdout)
+
+    def test_real_repo_micro_test_claims_are_consistent(self):
+        """绿：本仓库的微测台账状态格与实测数据一致。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertNotIn(u"[微测声称]", r.stdout,
+                         u"本仓库的微测声称与数据对不上：%s" % r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

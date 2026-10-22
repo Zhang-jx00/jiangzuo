@@ -744,8 +744,8 @@ CASES = [
      "tests.test_scripts.TestCurrentState.test_stale_source_must_be_flagged"),
     # ② 载体对账被关掉 ⇒ 文档里手抄的数与真源不同也不再被报 ⇒ 判据必须红。
     ("scripts/current_state.py",
-     "            if str(got) != str(want):",
-     "            if False:  # E34 校准：载体不再与真源对账",
+     "                    if _same_number(got, want):\n                        continue",
+     "                    if True:  # E35 校准：载体不再与真源对账\n                        continue",
      "current-state-carrier-check-neutered",
      "tests.test_scripts.TestCurrentState.test_drifted_carrier_must_be_flagged"),
     # ③ README 计数**解析不到就静默跳过**的老毛病被修掉 ⇒ 把"不许静默跳过"再关掉
@@ -756,6 +756,13 @@ CASES = [
      "readme-count-unparsable-not-flagged",
      "tests.test_scripts.TestValidate."
      "test_validate_detects_unparsable_readme_count"),
+    # ④ 微测台账的"状态格 vs 实测数据"对账被关掉 ⇒ 改结论不改数据不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "        if want not in status:",
+     "        if False:  # E34/E35 校准：状态格不再与实测数据对账",
+     "micro-test-verdict-data-mismatch-not-flagged",
+     "tests.test_scripts.TestMicroTestClaims."
+     "test_verdict_must_match_the_measured_numbers"),
 ]
 
 

@@ -90,7 +90,7 @@ jiangzuo/
 │   ├── review_packet.py  # 审查工单打包：把 diff/原话/验收标准/验证命令钉成一个文件（只读）
 │   ├── release_notes.py  # 发行说明生成 / GitHub Release 发布（单一真源＝CHANGELOG）
 │   └── current_state.py  # 「当前状态」机器可读真源 + 跨文档对账（E34）
-└── evals/            # 触发测试、红测场景、任务评测
+└── evals/            # 触发测试、红测场景、任务评测、微测夹具（E35）、微测夹具（E35）
 ```
 
 ## 安装

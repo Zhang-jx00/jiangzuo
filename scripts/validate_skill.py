@@ -1102,6 +1102,81 @@ def check_current_state(skill_dir):
     return current_state.check(skill_dir, err, info)
 
 
+MICRO_TEST_RULES = (u"铁律范围句", u"必验证门函数", u"子代理四态回执")
+MICRO_TEST_VERDICTS = (u"有效", u"基线未红", u"无效", u"未跑", u"待测")
+
+
+def check_micro_test_claims(skill_dir):
+    """第 24 项：微测台账的**状态格必须与实测数据一致**（E35）。
+
+    为什么要有这一项：本项目的纪律层条款此前只有"文本 + 结构锁"，行为收益**未测**；
+    E35 真跑了一轮双臂对照，结论是**基线未红**（A 0/5 vs B 0/5）⇒ 不得对外声称行为收益。
+    ⇒ 既然"不许声称"是要守的纪律，它就该有机器判据，而不是靠人记得。
+
+    判据做两件事：
+      ① **状态格只能是规程允许的判定**（有效 / 基线未红 / 无效 / 未跑 / 待测）——
+         别的词（比如"已验证""通过"）一律判错。
+      ② **状态格必须与实测数据对得上**：从备注里解析 "A x/n 失败" 与 "B y/m 失败"，
+         算出失败率差 ⇒ 差 ≥40pp 必须写"有效"，差 =0 必须写"基线未红"，差 <0 必须写"无效"。
+         ⇒ **改结论不改数据**（或反过来）当场红 —— 这正是 E32/E33 栽过两次的同一种病。
+    """
+    path = os.path.join(skill_dir, "evals", "micro-tests.md")
+    if not os.path.isfile(path):
+        return None
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    rows = {}
+    for line in text.split("\n"):
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        for key in MICRO_TEST_RULES:
+            if key in cells[0] and key not in rows:
+                rows[key] = cells
+    problems = []
+    for key in MICRO_TEST_RULES:
+        cells = rows.get(key)
+        if cells is None:
+            problems.append(u"台账里找不到「%s」那一行——三条纪律条款的判定必须一直在册" % key)
+            continue
+        status, note = cells[2], cells[3]
+        if not any(v in status for v in MICRO_TEST_VERDICTS):
+            problems.append(u"「%s」的状态格是「%s」，规程只允许 %s"
+                            % (key, status, u"／".join(MICRO_TEST_VERDICTS)))
+            continue
+        ma = re.search(r"A\s*(\d+)\s*/\s*(\d+)\s*失败", note)
+        mb = re.search(r"B\s*(\d+)\s*/\s*(\d+)\s*失败", note)
+        if not ma or not mb:
+            if any(v in status for v in (u"有效", u"基线未红", u"无效")):
+                problems.append(u"「%s」写了判定「%s」却解析不出实测数据"
+                                u"（应写成「A x/n 失败 … B y/m 失败」）" % (key, status))
+            continue
+        fa, ta = int(ma.group(1)), int(ma.group(2))
+        fb, tb = int(mb.group(1)), int(mb.group(2))
+        if ta == 0 or tb == 0:
+            problems.append(u"「%s」的分母是 0，判不了" % key)
+            continue
+        diff = (fa / ta - fb / tb) * 100
+        if diff >= 40:
+            want = u"有效"
+        elif diff < 0:
+            want = u"无效"
+        else:
+            want = u"基线未红"
+        if want not in status:
+            problems.append(u"「%s」实测失败率差 **%.0f 个百分点** ⇒ 按规程该写「%s」，"
+                            u"台账写的是「%s」——**改结论不改数据**（或反过来）当场红"
+                            % (key, diff, want, status))
+    for p in problems:
+        err(u"[微测声称] " + p)
+    if not problems:
+        info(u"微测台账的状态格与实测数据一致（%d 条纪律条款，判定不许脱离数据）"
+             % len(MICRO_TEST_RULES))
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -1181,6 +1256,7 @@ def main():
             check_ledger_totals(skill_dir)
             check_mut_calibrator(skill_dir)
             check_current_state(skill_dir)
+            check_micro_test_claims(skill_dir)
 
     # 第 23 项的收尾：校验器**自己报的条数**也要与真源对账
     # （"validate 22 信息"这句话在交接文档里出现两处，E33 之前它们互相矛盾过）。
