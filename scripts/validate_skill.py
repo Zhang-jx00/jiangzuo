@@ -873,6 +873,63 @@ def check_handover_in_repo(skill_dir):
     return None
 
 
+
+def check_verdict_table(skill_dir):
+    """第 21 项：结论区判定表必须在仓库内，且**表内自洽**（E28）。
+
+    为什么加这一项：那张表是"误报率口径"的**唯一依据** ⇒ 它一旦不自洽
+    （比如有人手改了某一行却没改合计），报出来的口径就在骗人。
+
+    ⚠️ **它只能保证"表内自洽"，不能保证"表与引擎同步"**——后者要真跑一遍扫描
+    （validate 全程不跑扫描、不执行被测脚本，这是它的定位）⇒ 所以表头写明了
+    「改了规则/引擎就要重判」这条纪律。
+    """
+    if not os.path.isdir(os.path.join(skill_dir, "evals")):
+        return None            # 没有 evals/ 的目录（最小形态技能 / 反例夹具）不适用本项
+    path = os.path.join(skill_dir, "evals", "finding-verdicts.md")
+    if not os.path.isfile(path):
+        return None            # 表不在（最小形态技能 / 反例夹具）⇒ 本项不适用
+    with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+
+    def grab(rx, n=3):
+        m = re.search(rx, text)
+        if not m:
+            return None
+        return tuple(int(m.group(i + 1)) for i in range(n))
+
+    total = grab(r"\*\*合计\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*")
+    dvwa = grab(r"\*\*DVWA 小计\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*")
+    fixable = re.search(r"\| \*\*静态可修\*\*\s*\|\s*(\d+)\s*\|", text)
+    upgrade = re.search(r"\| \*\*待能力升级\*\*\s*\|\s*(\d+)\s*\|", text)
+    bounded = re.search(r"\| \*\*静态消不掉（能力边界型）\*\*\s*\|\s*(\d+)\s*\|", text)
+    problems = []
+    if not total or not dvwa or not (fixable and upgrade and bounded):
+        problems.append("判定表的关键数字抓不到（合计 / DVWA 小计 / 三类误报）")
+    else:
+        t_all, t_true, t_fp = total
+        d_all, d_true, d_fp = dvwa
+        f_fp = int(fixable.group(1))
+        u_fp = int(upgrade.group(1))
+        b_fp = int(bounded.group(1))
+        if t_true + t_fp != t_all:
+            problems.append("判定表合计行自相矛盾：真阳性 %d + 误报 %d != 合计 %d"
+                            % (t_true, t_fp, t_all))
+        if d_true + d_fp != d_all:
+            problems.append("DVWA 小计自相矛盾：%d + %d != %d" % (d_true, d_fp, d_all))
+        if d_all + f_fp != t_all:
+            problems.append("DVWA %d + flask 等 %d != 合计 %d" % (d_all, f_fp, t_all))
+        if f_fp + u_fp + b_fp != t_fp:
+            problems.append("三类误报之和 %d != 误报合计 %d" % (f_fp + u_fp + b_fp, t_fp))
+        if problems:
+            for pr in problems:
+                err("判定表不自洽：%s" % pr)
+        else:
+            info("结论区判定表自洽（合计 %d 条 = 真阳性 %d + 误报 %d；三类误报 %d/%d/%d）✓"
+                 % (t_all, t_true, t_fp, f_fp, u_fp, b_fp))
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -948,6 +1005,7 @@ def main():
             check_expected_numbers(skill_dir)
             check_no_replacement_chars(skill_dir)
             check_handover_in_repo(skill_dir)
+            check_verdict_table(skill_dir)
             check_mut_calibrator(skill_dir)
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
