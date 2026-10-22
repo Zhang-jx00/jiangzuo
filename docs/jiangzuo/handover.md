@@ -17,8 +17,10 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：⚠️ **v0.61.0 已提交、待推**（本地 `9faaccf`；**远端 `main` 仍是 v0.60.0**（`3a7d05a`）⇒ 差 1 笔；tag `v0.61.0` **尚未创建**）
-   ⇒ **原因**：`github.com:443` 主站连不上（`api.github.com` 仍可读 ⇒ 非凭据问题），**有界重试 5 次全败** ⇒ 按老规矩**停推、如实留痕**（详见「远端一致性」栏）。
+2. 状态：**v0.61.0 已交付并推送**（`cb38e58`，tag `v0.61.0` 同笔，CI run `39713070140` **七道** success）；
+   远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
+   （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
+   ⚠️ 这一轮推送**中断过一次**：`github.com:443` 主站不可达（`api.github.com` 仍可读 ⇒ 非凭据问题），有界重试 5 次全败 ⇒ 按老规矩**停推、如实留痕**；网络恢复后补推成功（见 §8 的坑位清单）。
    **本机闸门 2026-10-22 当场重跑**：211 用例 OK ｜ validate 20 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
    变异校准 **42/42 全红**（无 SKIP、无 GREEN）｜ 性能 **BENCH-OK 5.277 ms/文件**（预算 ≤20）｜ 第三方三仓
@@ -130,16 +132,20 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ---
 
-### 远端一致性（⚠️ v0.61.0 **待推** —— github.com 主站不可达）
+### 远端一致性（✅ v0.61.0 **已推送**）
 
-- **当前状态**：⚠️ **本地有一笔待推**（`9faaccf`，v0.61.0）。远端 `main` 仍是 v0.60.0（`3a7d05a`）；
-  tag `v0.61.0` **还没创建**（tag 必须在 push 成功之后再打，避免远端出现指不到提交的 tag）。
-- **原因**：`github.com:443` **连不上**（`Failed to connect to github.com:443`），而 `api.github.com` 仍可读 ⇒ **是主站网络问题、不是凭据问题**。已做**有界重试 5 次全败**（按老规矩：网络一断就停推，不改走 SSH、不换令牌）。
-- **网络恢复后要做**（一条一条来）：
-  1. `git -C "D:/Github项目/jiangzuo/jiangzuo" push origin main`
-  2. `git -C "D:/Github项目/jiangzuo/jiangzuo" tag -a v0.61.0 -F <提交消息文件>`
-  3. `git -C "D:/Github项目/jiangzuo/jiangzuo" push origin v0.61.0`
-  4. 核 CI 六道（`https://api.github.com/repos/Zhang-jx00/jiangzuo/actions/runs/<run_id>/jobs`，匿名只读），再把本栏改回「已推送」并填 run id。
+- **当前状态**：**零待推**。远端 `main` = `cb38e58`（v0.61.0），与本地 HEAD 一致；
+  tag `v0.61.0`（→ `cb38e58`）也已推到远端。
+- **CI 证据**：CI run **`39713070140`**（workflow `validate`，head `cb38e58`，conclusion `success`）。
+  **七道**步逐一 success（第 4–10 步；E24 加了第 9 步「变异校准锚点核对」；
+  末步「六道闸门诊断」是 `if: failure()` 条件步，前面的都绿时本来就不跑 ⇒ skipped 属正常）。
+- ⚠️ **这一轮推送中断过一次**：`github.com:443` 主站不可达（`api.github.com` 仍可读 ⇒ 非凭据问题），
+  有界重试 5 次全败 ⇒ 按老规矩**停推、如实留痕**（本地留了一笔「待推」说明），网络恢复后补推成功。
+  ⇒ 教训：**网络一断就停推，不要改走 SSH 或换令牌绕过**；恢复后按 `push main → 打 tag → push tag → 核 CI` 走。
+- ⚠️ **本仓库至今 0 个 GitHub Release**（远端 `releases` 列表为空）⇒ 发行形态只到 tag；
+  发行说明已入库（`docs/jiangzuo/releases/v0.60.0.md`），**创建 Release 需要一次写凭据**
+  （本机无 `gh` CLI、无 `GITHUB_TOKEN`）⇒ 留一条命令待授权后执行：
+  `gh release create v0.61.0 --title "将作 v0.61.0" --notes-file docs/jiangzuo/releases/v0.61.0.md`
 ## 3. 十条核心不变量（改任何东西前先守这几条）
 
 1. **入口预算是硬的**：`SKILL.md` 正文 ≤500 行且 ≤5000 token（估算），`description` ≤1024 字符，
