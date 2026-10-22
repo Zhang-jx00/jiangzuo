@@ -88,7 +88,25 @@ def tag_commit(tag):
     return (date.strip()[:10], msg.strip())
 
 
+def strip_markers(body):
+    """去掉「当前状态」标记行（E34）。
+
+    为什么：CHANGELOG 的最新条目里有一块 `<!-- current-state:begin/end -->`
+    标记区，那是给校验器对账用的**机器锚点** ⇒ 不该出现在发布出去的正文里
+    （HTML 注释虽不可见，但它是内部约定，不该外泄给读者）。
+    标记区**内容**保留——它本身就是"这一发的当前状态"，对读者有用。
+    """
+    out = []
+    for line in body.split("\n"):
+        s = line.strip()
+        if s.startswith("<!-- current-state:") and s.endswith("-->"):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def notes_for(ver, date, body, fallback=False):
+    body = strip_markers(body)
     lines = [l.rstrip() for l in body.split("\n")]
     while lines and not lines[0].strip():
         lines.pop(0)

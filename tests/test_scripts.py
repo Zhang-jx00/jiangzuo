@@ -328,6 +328,47 @@ class TestValidate(unittest.TestCase):
             r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
             self.assertIn("README 计数与实物不符", r.stdout)
 
+    def test_validate_detects_unparsable_readme_count(self):
+        """红：README 声明了计数却**写不出数字** ⇒ 必须报（不许静默跳过）。
+
+        E34 实测：批量改文档时用了占位符（`{{SCRIPTS}} 个纯标准库脚本`），
+        而这道闸的正则匹配不上 ⇒ 老实现 `continue` 跳过 ⇒ **闸自己静默失效**，
+        而看上去还是"全绿"⇒ **一条永远绿的锁比没有锁更坏**。
+        ⇒ 现在：声明了概念却写不出数字 ⇒ 报错。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "sk")
+            os.makedirs(os.path.join(skill, "scripts"))
+            for name in ("a.py", "b.py"):
+                with io.open(os.path.join(skill, "scripts", name), "w", encoding="utf-8") as f:
+                    f.write("pass\n")
+            with io.open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+            with io.open(os.path.join(skill, "README.md"), "w", encoding="utf-8") as f:
+                f.write("# sk\n\nscripts/  # {{SCRIPTS}} 个纯标准库脚本\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"写不出数字", r.stdout)
+
+    def test_validate_detects_stale_expected_info_count(self):
+        """红：代码块里写「期望 N 条信息」而实际条数不是 N ⇒ 必须红。
+
+        E34 实测：这句话在交接文档里有**两处**且**已经过期**（写着 20，实际 23），
+        而第 14 项的期望值核对**不认这一形态** ⇒ 没人守 ⇒ 只能过期。
+        ⇒ 补上这道对账（扫代码块里的「期望 N 条信息」）。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "sk")
+            os.makedirs(skill)
+            with io.open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+            with io.open(os.path.join(skill, "docs.md"), "w", encoding="utf-8") as f:
+                f.write("# sk\n\n```bash\npython scripts/validate_skill.py ."
+                        "   # 期望：99 条信息 / 0 警告 / 0 错误\n```\n")
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), skill])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"条信息", r.stdout)
+
     def test_validate_readme_counts_match_on_self(self):
         """绿测：本仓库 README 的脚本/模板/分册计数必须与实物一致。"""
         r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
@@ -5192,6 +5233,194 @@ class TestReviewPacket(unittest.TestCase):
                 packet = fh.read()
             self.assertIn("SHOULD_NOT_EXIST", packet)
             self.assertFalse(os.path.exists(marker), u"脚本执行了验证命令——它不该执行任何东西")
+
+
+class TestCurrentState(unittest.TestCase):
+    """E34（第 23 项）：「当前状态」的真源与载体必须对得上。
+
+    起因——**本项目已经吃过两次亏，同一类**：
+      * E32：同一个数（「同目录路过」多少条）在三份文档里分别写了
+        **20 / 12 / "59 条里有 20 条"** ⇒ 互相矛盾，且都没说清是哪个口径。
+      * E33：把「补发那批 64 个」和「现在的 65 个」写成了同一个数。
+
+    根因：第 14 项的期望值校验**只扫代码块**。那是对的——代码块是"复制即跑"的契约，
+    正文与表格里的历史数字是**当时真值**（交付报告 §3 的 "Ran 124 tests" 是 v0.36.1 当时的数），
+    管到历史记录上就是误伤。**但代价是散文里的"当前状态"没人守**。
+
+    本项的办法不是"把散文也当代码块扫"（那会误伤历史），而是：
+      ① 真源 `evals/current-state.json` = 「当前状态」的唯一机器可读出处；
+         其中 `static` 段**能当场推出来** ⇒ 真源自己不会腐烂（E7 的教训：尺子自己也会坏）；
+      ② 文档里用 `<!-- current-state:begin/end -->` 圈出"这里说的是**当前**状态"；
+      ③ 逐指标比对 ⇒ 手抄的数一旦与真源不同，当场红并点名是哪个文件的哪个指标。
+    """
+
+    HEAD = u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n正文一句。\n"
+    CARRIER = (u"<!-- current-state:begin -->\n"
+               u"本机：2 用例 OK ｜ DVWA 7 发现/结论 6\n"
+               u"<!-- current-state:end -->\n")
+
+    MEASURED_KEYS = (
+        "dvwa_findings", "dvwa_conclusions", "dvwa_dropped", "dvwa_flows",
+        "flask_findings", "flask_conclusions",
+        "requests_findings", "requests_conclusions",
+        "self_findings", "self_conclusions", "self_context_excluded",
+        "coverage_hit", "coverage_total",
+        "corpus_must_find", "corpus_must_not_find",
+        "bench_ms_per_file",
+    )
+
+    def _source(self, static=None, measured=None, carriers=None):
+        st = {"tests": 2, "must_find": 2, "must_not_find": 3,
+              "rules_active": 2, "rules_disabled": 1}
+        if static:
+            st.update(static)
+        ms = dict((k, 0) for k in self.MEASURED_KEYS)
+        ms["dvwa_findings"] = 7
+        ms["dvwa_conclusions"] = 6
+        if measured:
+            ms.update(measured)
+        return {
+            "schema": 1,
+            "static": st,
+            "reported": {},
+            "measured": ms,
+            "patterns": {
+                "tests": {"rx": r"(\d+) 用例", "group": 1},
+                "dvwa_findings": {"rx": r"DVWA (\d+) 发现", "group": 1},
+            },
+            "carriers": carriers or {"docs/state.md": {"which": "first",
+                                                       "metrics": ["tests", "dvwa_findings"]}},
+        }
+
+    def _mini(self, tmp, source=None, carrier=None):
+        """建一个最小技能目录：真源四件 + 一份带标记区的载体。"""
+        sk = os.path.join(tmp, "sk")
+        for d in ("docs", "tests", os.path.join("evals", "audit-fixtures"),
+                  os.path.join("scripts", "audit-rules")):
+            os.makedirs(os.path.join(sk, d))
+
+        def put(rel, text):
+            path = os.path.join(sk, rel.replace("/", os.sep))
+            d = os.path.dirname(path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+
+        put("SKILL.md", self.HEAD)
+        # 真源①：2 个用例
+        put("tests/test_x.py",
+            u"import unittest\n\n\nclass T(unittest.TestCase):\n"
+            u"    def test_a(self):\n        pass\n\n"
+            u"    def test_b(self):\n        pass\n")
+        # 真源②：语料 2 / 3
+        put("evals/audit-fixtures/gen_corpus.py",
+            u"MUST_FIND = [(\"a.py\", \"JZ-A-001\", \"x\"), (\"b.py\", \"JZ-B-001\", \"y\")]\n"
+            u"MUST_NOT_FIND = [(\"s1.py\", \"JZ-A-001\"), (\"s2.py\", \"JZ-B-001\"),"
+            u" (\"s3.py\", \"JZ-C-001\")]\n")
+        # 真源③：规则 2 活跃 / 1 停用
+        put("scripts/audit-rules/a.json",
+            u"{\"rules\": [{\"id\": \"JZ-A-001\"}, {\"id\": \"JZ-B-001\"},"
+            u" {\"id\": \"JZ-C-001\", \"enabled\": false}]}")
+        put("evals/current-state.json",
+            json.dumps(source or self._source(), ensure_ascii=False, indent=2))
+        put("docs/state.md", carrier if carrier is not None else self.CARRIER)
+        return sk
+
+    def _validate(self, sk):
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+
+    def test_current_state_agrees_on_a_well_formed_repo(self):
+        """绿：真源与载体一致 ⇒ 校验器通过（这一项不制造噪声）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp)
+            r = self._validate(sk)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertNotIn(u"[当前状态]", r.stdout)
+
+    def test_stale_source_must_be_flagged(self):
+        """红：真源的 static 段与实物不符（真源自己过期了）⇒ 必须点名。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, source=self._source(static={"tests": 99}))
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[当前状态]", r.stdout)
+            self.assertIn(u"static.tests", r.stdout)
+
+    def test_drifted_carrier_must_be_flagged(self):
+        """红：载体里的数与真源不同（同一个数两处不同）⇒ 必须点名是哪个文件。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = (u"<!-- current-state:begin -->\n"
+                   u"本机：9 用例 OK ｜ DVWA 7 发现/结论 6\n"
+                   u"<!-- current-state:end -->\n")
+            sk = self._mini(tmp, carrier=bad)
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"docs/state.md", r.stdout)
+            self.assertIn(u"tests", r.stdout)
+
+    def test_history_outside_the_marker_is_not_flagged(self):
+        """绿（防误伤）：标记区**外**的历史数字不该被红。
+
+        这条是本项能不能长期活着的关键：文档里到处是"当时真值"的历史数字
+        （交付报告 §3 的 "Ran 124 tests" 是 v0.36.1 当时的数）⇒ 判据若扫全文，
+        就会把历史也判成错 ⇒ 那是一条天天红的闸，等于没有闸。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            body = self.CARRIER + u"\n历史记录：当时是 124 用例、DVWA 3 发现。\n"
+            sk = self._mini(tmp, carrier=body)
+            r = self._validate(sk)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertNotIn(u"[当前状态]", r.stdout)
+
+    def test_missing_marker_region_must_be_flagged(self):
+        """红：载体被列进来了却没圈出标记区 ⇒ 必须红（否则这一项静默失效）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, carrier=u"本机：2 用例 OK ｜ DVWA 7 发现/结论 6\n")
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"标记区", r.stdout)
+
+    def test_only_the_designated_region_is_checked(self):
+        """绿：文档里**旧版本**的标记区不该被红，只有真源指定的那一个受管。
+
+        为什么需要这条：CHANGELOG 是**新版本在前**、验收记录是**新版本在后** ⇒
+        "哪个标记区算当前"不能一律取最后一个 ⇒ 真源里显式写了 which。
+        这条判据锁住的是：**只有被指定的那个区受管**（另一个区的数即使过期也不红）。
+        """
+        old_region = (u"<!-- current-state:begin -->\n"
+                      u"本机：9 用例 OK ｜ DVWA 7 发现/结论 6\n"
+                      u"<!-- current-state:end -->\n")
+        new_region = (u"<!-- current-state:begin -->\n"
+                      u"本机：2 用例 OK ｜ DVWA 7 发现/结论 6\n"
+                      u"<!-- current-state:end -->\n")
+        # 旧区在前（过期）、新区在后（正确）⇒ index=-1（最后一个区）⇒ 应通过
+        last_carriers = {"docs/state.md": {"index": -1,
+                                           "metrics": ["tests", "dvwa_findings"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, carrier=old_region + new_region,
+                            source=self._source(carriers=last_carriers))
+            r = self._validate(sk)
+            self.assertEqual(r.returncode, 0, r.stdout)
+        # 旧区在前（过期）、新区在后（也过期）⇒ which=last ⇒ 应红
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, carrier=old_region + old_region,
+                            source=self._source(carriers=last_carriers))
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[当前状态]", r.stdout)
+
+    def test_real_repo_has_a_current_state_source(self):
+        """绿：本仓库必须自带真源，且它能推得出来的那些数与实物一致。"""
+        path = os.path.join(REPO, "evals", "current-state.json")
+        self.assertTrue(os.path.isfile(path), u"本仓库没有 evals/current-state.json")
+        with io.open(path, "r", encoding="utf-8") as f:
+            src = json.load(f)
+        for k in ("static", "measured", "patterns", "carriers"):
+            self.assertIn(k, src, u"真源缺 %s 段" % k)
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertNotIn(u"[当前状态]", r.stdout,
+                         u"本仓库的「当前状态」与真源对不上：%s" % r.stdout)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,15 @@ import subprocess
 import sys
 import time
 
+# 「当前状态」的机器可读真源与对账（E34 新增第 23 项）。
+# ⚠️ 刻意**惰性**依赖：current_state 在被导入时**不**反过来 import 本模块
+# （否则循环 import）；它只在**函数体内**惰性 import 本模块取推导实现。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import current_state
+except ImportError:  # pragma: no cover - 只在脚本目录不在 sys.path 时发生
+    current_state = None
+
 # Windows GBK 控制台打印 ✔ 等符号会 UnicodeEncodeError（2026-10-07 本地实跑实测崩溃，CI 在 Linux 未暴露）
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -359,14 +368,21 @@ def check_readme_counts(skill_dir):
     with io.open(readme, "r", encoding="utf-8", errors="replace") as f:
         text = f.read()
     patterns = {
-        "脚本": (r"(\d+)\s*个纯标准库脚本", ("scripts", ".py")),
-        "模板": (r"(\d+)\s*个填空即用模板", ("templates", ".md")),
-        "分册": (r"(\d+)\s*本分册", ("references", ".md")),
+        "脚本": (r"(\d+)\s*个纯标准库脚本", ("scripts", ".py"), u"纯标准库脚本"),
+        "模板": (r"(\d+)\s*个填空即用模板", ("templates", ".md"), u"填空即用模板"),
+        "分册": (r"(\d+)\s*本分册", ("references", ".md"), u"本分册"),
     }
-    bad, seen = [], 0
-    for key, (rx, (folder, suffix)) in patterns.items():
+    bad, seen, unparsable = [], 0, []
+    for key, (rx, (folder, suffix), concept) in patterns.items():
         m = re.search(rx, text)
         if not m:
+            # ⚠️ **不许静默跳过**（E34 实测）：README 里写着「{{SCRIPTS}} 个纯标准库脚本」
+            # 这种**占位符顶掉了数字**的情况时，正则匹配不上 ⇒ 老代码 `continue` 跳过
+            # ⇒ 这道闸**因为解析不到而变成永远绿** ⇒ 那比没有闸更坏（它还让人以为有人管）。
+            # ⇒ 声明了概念却写不出数字 ⇒ 报错。
+            #    ⚠️ 但**根本没提这个概念**的 README（最小技能目录）不该被要求写 ⇒ 按概念词判。
+            if concept in text:
+                unparsable.append(key)
             continue
         seen += 1
         path = os.path.join(skill_dir, folder)
@@ -375,9 +391,12 @@ def check_readme_counts(skill_dir):
             actual = len([f for f in os.listdir(path) if f.endswith(suffix)])
         if int(m.group(1)) != actual:
             bad.append("README 写 %s=%s，实际 %s" % (key, m.group(1), actual))
+    for key in unparsable:
+        err("README 声明了「%s」却**写不出数字**（占位符顶掉了？写法变了？）——"
+            "**不许因为解析不到就静默跳过**：那等于这道闸自己失效了" % key)
     if bad:
         warn("README 计数与实物不符：%s —— 增删文件时同步改 README" % "；".join(bad))
-    elif seen:
+    elif seen and not unparsable:
         info("README 计数与实物一致（脚本/模板/分册 ✓）")
     # 入口行数：README 里写死过 "SKILL.md 220 行"，实物 211 行（2026-10-16 复核撞出）。
     # 这类"读者会照着核对的数"对不上就是交付面失实，所以按 err 处理，不只 warn。
@@ -1060,6 +1079,29 @@ def check_ledger_totals(skill_dir):
     return None
 
 
+def check_current_state(skill_dir):
+    """第 23 项：「当前状态」的真源与载体必须对得上（E34）。
+
+    为什么要有这一项：第 14 项的期望值校验**只扫代码块**——那是对的（代码块是
+    "复制即跑"的契约，正文里的历史数字是**当时真值**，管到它们就是误伤）。
+    但代价是**散文里的"当前状态"没人守** ⇒ 本项目已经吃过两次亏：
+    E32 同一个数在三份文档里写成 20 / 12 / "59 条里有 20 条"；
+    E33 把「补发那批 64 个」和「现在的 65 个」写成了同一个数。
+
+    修法不是"把散文也当代码块扫"（那会误伤历史），而是：
+      ① `evals/current-state.json` = 「当前状态」的唯一机器可读真源；
+      ② 文档里用 `<!-- current-state:begin/end -->` 圈出"这里说的是**当前**状态"；
+      ③ 校验器拿真源里的数去标记区里逐个比对 ⇒ 手抄的数一旦与真源不同，当场红并点名。
+
+    ⚠️ 真源自己也可能是**坏尺子**（E7 的教训）⇒ `static` 段（能当场推出来的数）
+    每跑一次就重推一遍，推不出来就报 ⇒ 真源自己不会腐烂。
+    """
+    if current_state is None:
+        err("scripts/current_state.py 导不进来——第 23 项没法跑（当前状态没人对账了）")
+        return None
+    return current_state.check(skill_dir, err, info)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -1138,6 +1180,31 @@ def main():
             check_verdict_table(skill_dir)
             check_ledger_totals(skill_dir)
             check_mut_calibrator(skill_dir)
+            check_current_state(skill_dir)
+
+    # 第 23 项的收尾：校验器**自己报的条数**也要与真源对账
+    # （"validate 22 信息"这句话在交接文档里出现两处，E33 之前它们互相矛盾过）。
+    # ⚠️ 本项**刻意不发 info**：它比较的是 len(INFOS)，而自己若再发一条就会差一
+    # ⇒ 放在所有检查之后、且只报错不发信息 ⇒ len(INFOS) 就是最终打印出来的条数。
+    if current_state is not None:
+        # 文档里"照着跑就能看到"的**期望条数**（代码块里）必须等于实际条数。
+        # ⚠️ E34 实测：这句在交接文档里出现**两处**且**已经过期**（写着 20，实际 23），
+        #    而第 14 项的期望值核对**不认这一形态** ⇒ 没人守 ⇒ 只能过期。
+        #    ⇒ 补上：扫代码块里的「期望 N 条信息」，与实际条数对账。
+        #    （与真源无关 ⇒ 任何跑本校验器的仓库都适用。）
+        for _rel, _lineno, _line in _md_fenced_lines(skill_dir):
+            _m = re.search(r"期望[:：]?\s*(\d+)\s*条信息", _line)
+            if _m and int(_m.group(1)) != len(INFOS):
+                err(u"%s:%d 期望「%d 条信息」，实际 %d 条——"
+                    u"改了检查项就同步这行期望值" % (_rel, _lineno,
+                                                  int(_m.group(1)), len(INFOS)))
+        _src = current_state.load_source(skill_dir)
+        if _src is not None:
+            _want = (_src.get("reported") or {}).get("validate_infos")
+            if _want is not None and _want != len(INFOS):
+                err(u"真源说本仓库应报 %d 条信息，实际报了 %d 条——"
+                    u"加/减了检查项就同步真源与文档（交接文档 §0 与 §13 各有一处）"
+                    % (_want, len(INFOS)))
 
     print("# 技能结构校验：%s\n" % os.path.basename(skill_dir))
     for i in INFOS:

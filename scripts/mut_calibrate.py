@@ -735,6 +735,27 @@ CASES = [
      "sql-quote-in-sink-always-neutralized",
      "tests.test_scripts.TestAuditSqlQuoteInSink."
      "test_escaped_value_interpolated_outside_quotes_is_still_reported"),
+    # ---- E34（v0.68.0）：「当前状态」的真源与载体必须对得上 ----
+    # ① 静态段的对账被关掉 ⇒ 真源过期（static.tests 与实物不符）不再被报 ⇒ 判据必须红。
+    ("scripts/current_state.py",
+     "        elif st[k] != derived[k]:",
+     "        elif False:  # E34 校准：真源静态段不再对账",
+     "current-state-static-check-neutered",
+     "tests.test_scripts.TestCurrentState.test_stale_source_must_be_flagged"),
+    # ② 载体对账被关掉 ⇒ 文档里手抄的数与真源不同也不再被报 ⇒ 判据必须红。
+    ("scripts/current_state.py",
+     "            if str(got) != str(want):",
+     "            if False:  # E34 校准：载体不再与真源对账",
+     "current-state-carrier-check-neutered",
+     "tests.test_scripts.TestCurrentState.test_drifted_carrier_must_be_flagged"),
+    # ③ README 计数**解析不到就静默跳过**的老毛病被修掉 ⇒ 把"不许静默跳过"再关掉
+    #    ⇒ 占位符顶掉数字时闸会自己失效 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            if concept in text:\n                unparsable.append(key)",
+     "            if False:  # E34 校准：解析不到就静默跳过（闸自己失效）",
+     "readme-count-unparsable-not-flagged",
+     "tests.test_scripts.TestValidate."
+     "test_validate_detects_unparsable_readme_count"),
 ]
 
 

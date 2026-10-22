@@ -20,10 +20,12 @@
 2. 状态：**v0.67.0 已交付并推送**（`6f8e885`，tag `v0.67.0` 同笔，CI run `39762252189` **七道** success）；**发行形态同时闭环**（**65 个 GitHub Release 全部发布**：补发 64 + 本发 v0.67.0）；
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
-   **本机闸门 2026-10-22 当场重跑**：234 用例 OK ｜ validate **22** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   <!-- current-state:begin -->
+   **本机闸门 2026-10-22 当场重跑**：243 用例 OK ｜ validate **23** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **57/57 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.442 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **60/60 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.656 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
+   <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
    ⇒ **"静态可修的硬误报"= 0 / 59 = 0%（E29 清零）**（E20 是 8/69 ≈ 11.6% ⇒ 降 100%），**未判定 = 0**。
    逐条判定表在 `evals/finding-verdicts.md`（随技能分发，`validate_skill` 第 21 项守住它的自洽）。
@@ -34,8 +36,9 @@
    ⚠️ **变异校准器已随技能分发**（E24）：`scripts/mut_calibrate.py`，CI 跑 `--check-only` 核对锚点。
    ✅ **发行形态已闭环**（E33）：**65 个 GitHub Release 全部发布**（与 65 个 tag 一一对应；其中 64 个是补发、1 个是本发 v0.67.0）⇒ 发行说明的**单一真源是 `CHANGELOG.md`**（由 `scripts/release_notes.py` 生成）⇒ 不会与实现漂移。
    ⚠️ **本文档已入库**（E27）：`docs/jiangzuo/handover.md`，`validate_skill` **第 20 项**守住「在仓库内 + 章节完整 + 被 git 跟踪」。
+   ✅ **「当前状态」有人守了**（E34）：`evals/current-state.json` 是它的**唯一机器可读真源**；上面那段 `current-state` 标记区里的每个数都逐个与真源对账 ⇒ **同一个数两处不同，当场红**（`validate_skill` **第 23 项**）。⚠️ 标记区**外**的数字是**历史**，不受管（那是"当时真值"）。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
-4. 规模：**20 分册 / 17 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 234 用例 / 87 个入库文件 / 104 提交 / 65 tag**（65 个 tag 全部已推到远端；**65 个 GitHub Release 也已全部发布**）。
+4. 规模：**20 分册 / 18 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 243 用例 / 89 个入库文件 / 105 提交 / 66 tag**（66 个 tag 全部已推到远端；**65 个 GitHub Release 也已全部发布**）。
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
 6. 交付说明（含**未达标与未验证清单**）：仓库内 `docs/jiangzuo/reports/2026-10-15-delivery-v0.36.1.md`。
 7. 逐轮决策账本：仓库内 `docs/jiangzuo/evolution.md`（**55 条变异台账，0 条 ROLLBACK**；条数由脚本数出来、不手数，
@@ -222,14 +225,14 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ```bash
 cd "D:/Github项目/jiangzuo/jiangzuo"
-python scripts/validate_skill.py .            # 期望 20 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .            # 期望 23 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 234 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 243 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
 
-### 5.2 `validate_skill.py` 现在拦什么（22 项，都是一条条踩坑换来的）
+### 5.2 `validate_skill.py` 现在拦什么（23 项，都是一条条踩坑换来的）
 
 正文行数 ≤500 ｜ 正文 token ≤5000 ｜ description ≤1024 字符 ｜ 清单 entry ≤299 字符 ｜
 `metadata.version` 与 CHANGELOG 一致 ｜ **CHANGELOG 条目日期与 git 提交日期对账** ｜ 含 `evals/` 评测集 ｜
@@ -241,7 +244,8 @@ README 的规则条数与实物一致（34 条含 1 停用）｜ 分册全部登
 **入库文本里没有 U+FFFD 替换字符**（E15，第 18 项）｜
 **变异校准器随技能分发、零依赖、例数与 CHANGELOG 对账**（E24，第 19 项）｜
 **交接文档在仓库内、7 个关键章节齐全、已被 git 跟踪**（E27，第 20 项）｜
-**结论区判定表自洽**（E29，第 21 项）｜ **「全部产出」口径拆解自洽**（E32，第 22 项）。
+**结论区判定表自洽**（E29，第 21 项）｜ **「全部产出」口径拆解自洽**（E32，第 22 项）｜
+**「当前状态」真源与文档对账**（E34，第 23 项：真源 `evals/current-state.json` ＋ 文档里的 `current-state` 标记区 ⇒ 散文里的数也被人守）。
 
 ### 5.3 远端 CI（六道 + 一步诊断）与"怎么在本机核"
 
@@ -780,8 +784,13 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
    （用例数 / 语料分母 / 规则条数），真源全部静态取 ⇒ 跨平台同色、秒级。
    **第一跑就逮到交付报告 §6 的 `Ran 138 tests`**（E7 加了 2 个用例没同步）。
    剩下的扩展面：**验收记录 `evals/audit-acceptance.md` 里那些表格数字**（自扫结论数、三仓
-   findings/结论）目前还没判——它们有历史版本混在一起，不能全文件扫；
-   做法是把"当前状态"抽成一份机器可读的真源文件，再让校验器对账（E7 的教训：那把尺子也会坏）。
+   findings/结论）—— ~~目前还没判~~ **E34 已做**：把"当前状态"抽成了机器可读的真源
+   `evals/current-state.json`，再让校验器对账（**第 23 项**）。
+   ⚠️ 做法与 E7 的教训对上：**那把尺子自己也会坏** ⇒ 真源里**能当场推出来**的那部分
+   （用例数 / 语料分母 / 规则条数 / 校准例数）**每跑一次就重推一遍**，推不出来就报
+   ⇒ 真源自己不会腐烂；**推不出来的那部分**（三仓检出 / 覆盖 / 性能）由 `--refresh` 从扫描产物写入。
+   ⚠️ **历史文档不能拿"现在的值"去对账**（否则下一轮数字一变就红 ⇒ 等于逼人篡改历史）
+   ⇒ 真源里另存**每版历史快照**（`history.<版本>`），历史条目对账它自己那一版的事实。
 10. **分册读取频率审计**（需要 harness 层 hook，属本地不可便携工具）：用来决定分册去留，目前仍是 `WATCH`。
 11. **静态 `require_once` 的"模块级变量共享"**：E5 已把它改判为**窄项、需求驱动**——
     遇到真实仓库卡在这一格再做，不做预防性工程。
@@ -907,6 +916,8 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 
 | **E33** ✅ | v0.67.0 | **关掉能力边界表最后一行**（值直接内插在 sink 调用里 ⇒ 上下文判定接到 **sink 行**上）＋ **发行形态闭环**（**65 个 GitHub Release 全部发布**：补发 64 + 本发 1） | E30/E31 只做掉了**赋值行**上的形态；`mysql_query("… '$x'")` 这种**没有独立赋值行**的形态仍判不到 ⇒ 转义被无视 ⇒ 照报。⇒ E33 把上下文判定也接到 sink 行 ⇒ 那一行不再是边界；**A/B 逐条：DVWA 零差异**（58 发现/58 结论/6 dropped/33 flows）⇒ 三仓数字与口径（结论区 59、误报 4/75）**一字未变**；发行侧：发行说明的**单一真源改成 `CHANGELOG.md`**（`scripts/release_notes.py` 生成并发布）⇒ **65 个 Release 与 65 个 tag 一一对应** ⇒ 「发行形态只到 tag」这条债结清 |
 
+| **E34** ✅ | v0.68.0 | **把「当前状态」抽成机器可读真源**（散文里的数字从此有人守） | E32 三个文档各写一个数（20 / 12 / "59 条里有 20 条"）、E33 把"补发 64 个"与"现在 65 个"写成同一个数 ⇒ 根因是**同一个数散落在多处散文里，而没有任何东西把它们对账**（`validate` 的期望值校验**只扫代码块**——那是对的，代码块是"复制即跑"的契约）⇒ 散文里的"当前状态"没人守。⇒ 真源 `evals/current-state.json` ＋ 文档里的 `current-state` 标记区 ＋ **第 23 项**逐指标对账；真源**能当场推出来**的部分每跑一次重推一遍 ⇒ **尺子自己不会坏**；历史文档对**历史快照**，不逼人篡改历史；**口径不动**（引擎一行没动 ⇒ 三仓数字一字未变） |
+
 ## 12. 路径与搬家史（为什么现在在这，以及再搬家要注意什么）
 
 - **2026-10-05 → 2026-10-20** 原在 `D:\Zcode对话\workspace\skill开发\SkillOne\`。
@@ -955,9 +966,9 @@ git rev-list --count HEAD            # 期望：88
 git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望：https://Zhang-jx00:<CREDENTIAL>@github.com/...
 
 grep -n "version:" SKILL.md          # 期望：0.60.0
-python scripts/validate_skill.py .   # 期望：20 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .   # 期望：23 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 234 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 243 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 
@@ -995,7 +1006,7 @@ curl -sS "https://api.github.com/repos/Zhang-jx00/jiangzuo/actions/runs?per_page
 
 ✅ **本文档（交接文档）已进仓库（E27）**，所以它自己的数字**有机器判据**：
 `validate_skill.py` 的期望值核对会扫仓库内 .md 的**代码块** ⇒ **本文档第 13 节那些期望值
-（234 用例 / 22 条信息 / 104 提交 / 65 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
+（243 用例 / 23 条信息 / 105 提交 / 66 tag…）抄错会当场红**（E29 那轮就被它当场逮到 3 处）。
 ⚠️ 剩下没被守住的：**提交数与 tag 数**（它们是 git 的状态，不是文本）⇒ 每轮手工核。
 
 ---

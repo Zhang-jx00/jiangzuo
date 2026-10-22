@@ -1,0 +1,238 @@
+{
+  "carriers": {
+    "CHANGELOG.md": {
+      "metrics": [
+        "tests",
+        "mutation_cases",
+        "validate_infos",
+        "corpus_must_find",
+        "corpus_must_not_find",
+        "dvwa_findings",
+        "dvwa_conclusions",
+        "flask_findings",
+        "flask_conclusions",
+        "requests_findings",
+        "requests_conclusions",
+        "self_findings",
+        "self_conclusions",
+        "self_context_excluded",
+        "coverage_hit",
+        "coverage_total",
+        "bench_ms_per_file"
+      ],
+      "version": "0.68.0",
+      "which": "first"
+    },
+    "docs/jiangzuo/handover.md": {
+      "metrics": [
+        "tests",
+        "mutation_cases",
+        "validate_infos",
+        "rules_active",
+        "rules_disabled",
+        "corpus_must_find",
+        "corpus_must_not_find",
+        "dvwa_findings",
+        "dvwa_conclusions",
+        "flask_findings",
+        "flask_conclusions",
+        "requests_findings",
+        "requests_conclusions",
+        "self_findings",
+        "self_conclusions",
+        "self_context_excluded",
+        "coverage_hit",
+        "coverage_total",
+        "bench_ms_per_file"
+      ],
+      "which": "first"
+    },
+    "evals/audit-acceptance.md": {
+      "index": -1,
+      "metrics": [
+        "tests",
+        "mutation_cases",
+        "validate_infos",
+        "corpus_must_find",
+        "corpus_must_not_find",
+        "dvwa_findings",
+        "dvwa_conclusions",
+        "flask_findings",
+        "flask_conclusions",
+        "requests_findings",
+        "requests_conclusions",
+        "self_findings",
+        "self_conclusions",
+        "self_context_excluded",
+        "coverage_hit",
+        "coverage_total",
+        "bench_ms_per_file"
+      ],
+      "version": "0.68.0"
+    }
+  },
+  "history": {
+    "0.68.0": {
+      "measured": {
+        "bench_ms_per_file": 4.656,
+        "corpus_must_find": 25,
+        "corpus_must_not_find": 19,
+        "coverage_hit": 14,
+        "coverage_total": 19,
+        "dvwa_conclusions": 58,
+        "dvwa_context_excluded": 0,
+        "dvwa_dropped": 6,
+        "dvwa_findings": 58,
+        "dvwa_flows": 33,
+        "flask_conclusions": 1,
+        "flask_context_excluded": 12,
+        "flask_dropped": 0,
+        "flask_findings": 13,
+        "flask_flows": 0,
+        "requests_conclusions": 0,
+        "requests_context_excluded": 4,
+        "requests_dropped": 0,
+        "requests_findings": 4,
+        "requests_flows": 0,
+        "self_conclusions": 0,
+        "self_context_excluded": 8,
+        "self_dropped": 0,
+        "self_findings": 8,
+        "self_flows": 0
+      },
+      "reported": {
+        "validate_infos": 23
+      },
+      "static": {
+        "must_find": 25,
+        "must_not_find": 19,
+        "mutation_cases": 60,
+        "rules_active": 33,
+        "rules_disabled": 1,
+        "tests": 243
+      }
+    }
+  },
+  "measured": {
+    "bench_ms_per_file": 4.656,
+    "corpus_must_find": 25,
+    "corpus_must_not_find": 19,
+    "coverage_hit": 14,
+    "coverage_total": 19,
+    "dvwa_conclusions": 58,
+    "dvwa_context_excluded": 0,
+    "dvwa_dropped": 6,
+    "dvwa_findings": 58,
+    "dvwa_flows": 33,
+    "flask_conclusions": 1,
+    "flask_context_excluded": 12,
+    "flask_dropped": 0,
+    "flask_findings": 13,
+    "flask_flows": 0,
+    "requests_conclusions": 0,
+    "requests_context_excluded": 4,
+    "requests_dropped": 0,
+    "requests_findings": 4,
+    "requests_flows": 0,
+    "self_conclusions": 0,
+    "self_context_excluded": 8,
+    "self_dropped": 0,
+    "self_findings": 8,
+    "self_flows": 0
+  },
+  "measured_at": "2026-10-22",
+  "measured_at_commit": "ffd37ca",
+  "note": "「当前状态」的唯一机器可读真源（E34）。\nstatic  = 能当场推出来的数（校验器每跑一次重推一遍 ⇒ 本段不会腐烂）\nreported= 校验器自己报的条数（main() 收尾时对账）\nmeasured= 跑出来的数（三仓检出 / 覆盖 / 语料 / 性能），由 --refresh 从扫描产物写入\n文档里用 <!-- current-state:begin --> … <!-- current-state:end --> 圈出「这里说的是当前状态」的一段，只有标记区受对账管 ⇒ 标记区外的历史数字不会被误伤。",
+  "patterns": {
+    "bench_ms_per_file": {
+      "group": 1,
+      "rx": "BENCH-OK ([\\d.]+) ms/文件"
+    },
+    "corpus_must_find": {
+      "group": 1,
+      "rx": "ACCEPT-OK（(\\d+)/\\d+ 检出"
+    },
+    "corpus_must_not_find": {
+      "group": 1,
+      "rx": "0/(\\d+) 安全样本"
+    },
+    "coverage_hit": {
+      "group": 1,
+      "rx": "DVWA 覆盖 \\*\\*(\\d+)/\\d+\\*\\*"
+    },
+    "coverage_total": {
+      "group": 1,
+      "rx": "DVWA 覆盖 \\*\\*\\d+/(\\d+)\\*\\*"
+    },
+    "dvwa_conclusions": {
+      "group": 1,
+      "rx": "DVWA \\*\\*\\d+ 发现/结论 (\\d+)"
+    },
+    "dvwa_findings": {
+      "group": 1,
+      "rx": "DVWA \\*\\*(\\d+) 发现"
+    },
+    "flask_conclusions": {
+      "group": 2,
+      "rx": "flask (\\d+)/(\\d+)"
+    },
+    "flask_findings": {
+      "group": 1,
+      "rx": "flask (\\d+)/(\\d+)"
+    },
+    "mutation_cases": {
+      "group": 1,
+      "rx": "变异校准 \\*\\*(\\d+)/\\d+ 全红"
+    },
+    "requests_conclusions": {
+      "group": 2,
+      "rx": "requests (\\d+)/(\\d+)"
+    },
+    "requests_findings": {
+      "group": 1,
+      "rx": "requests (\\d+)/(\\d+)"
+    },
+    "rules_active": {
+      "group": 1,
+      "rx": "RULES-OK（(\\d+) 条"
+    },
+    "rules_disabled": {
+      "group": 1,
+      "rx": "另有 (\\d+) 条数据停用"
+    },
+    "self_conclusions": {
+      "group": 1,
+      "rx": "自扫 \\*\\*\\d+ 发现/结论 (\\d+)"
+    },
+    "self_context_excluded": {
+      "group": 1,
+      "rx": "自扫 \\*\\*\\d+ 发现/结论 \\d+/另计 (\\d+)"
+    },
+    "self_findings": {
+      "group": 1,
+      "rx": "自扫 \\*\\*(\\d+) 发现"
+    },
+    "tests": {
+      "group": 1,
+      "rx": "(\\d+) 用例"
+    },
+    "validate_infos": {
+      "group": 1,
+      "rx": "validate \\*\\*(\\d+)\\*\\* 信息"
+    }
+  },
+  "reported": {
+    "validate_infos": 23
+  },
+  "round": "E34",
+  "schema": 1,
+  "static": {
+    "must_find": 25,
+    "must_not_find": 19,
+    "mutation_cases": 60,
+    "rules_active": 33,
+    "rules_disabled": 1,
+    "tests": 243
+  },
+  "version": "0.68.0"
+}
