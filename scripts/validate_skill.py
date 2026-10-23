@@ -635,14 +635,15 @@ def check_readme_counts(skill_dir):
 
 
 def _repo_identity(skill_dir):
-    """仓库身份（`owner/repo`）的机器可读出处：`scripts/release_identity.py` 的 OWNER/NAME。
+    """仓库身份（`owner/repo`）的机器可读出处：`scripts/repo_identity.py` 的 OWNER/NAME。
 
     取不到 ⇒ 返回 None（**不假装通过**：调用方决定是"不适用"还是"缺文件"）。
-    ⚠️ 这是**已知的一处分散**：owner/name 在四个脚本里各写一份
-    （`release_identity.py` / `release_notes.py` / `release_consistency.py` / SARIF 的 URL）
-    ⇒ 本项只保证"门面跟着身份脚本走"，**不保证四个脚本彼此一致**（已登记为候选）。
+    ⚠️ 这是 E42 新立的**唯一**真源（此前身份抄在四个脚本里 ⇒ 改名会悄悄漂）。
+    ⚠️ E42 实测的坑：这个函数**一度**还在老地方（`release_identity.py`）找 OWNER
+    ⇒ 而那儿已经改成 import 了 ⇒ 取不到 ⇒ **整项被静默跳过**（信息条从 31 掉到 30
+    才是它的报警声）⇒ ⇒ **不许因为"解析不到"就当没事** ⇒ 调用方必须把"缺真源"报出来。
     """
-    p = os.path.join(skill_dir, "scripts", "release_identity.py")
+    p = os.path.join(skill_dir, "scripts", "repo_identity.py")
     if not os.path.isfile(p):
         return None
     with io.open(p, "r", encoding="utf-8", errors="replace") as f:
@@ -654,8 +655,8 @@ def _repo_identity(skill_dir):
     return owner.group(1) + "/" + name.group(1)
 
 
-def check_install_command(skill_dir):
-    """门面的**安装命令**必须指向真实的仓库（E41）。
+def check_repo_identity(skill_dir):
+    """门面的**安装命令**必须指向真实仓库 ＋ 仓库身份**只许有一处**（E41 + E42）。
 
     为什么（E41 实测）：skills.sh **没有提交流程**（无表单、无 publish 命令）⇒
     "进生态"这件事的真正卡点**不是**注册，而是**门面上写的命令对不对**。
@@ -664,12 +665,32 @@ def check_install_command(skill_dir):
     （同一轮的实测：把命令改成真名后，`npx skills add` 装出 **571 个文件**，
       装出来的副本**自检 30/0/0 全绿** ⇒ 路径本身是通的，差的只是命令。）
 
-    真源：`scripts/release_identity.py` 的 OWNER/NAME。
+    真源：`scripts/repo_identity.py`（E42 起：身份**只有一处**，其余脚本从它导入）。
     ⚠️ 只盯**仓库身份**类命令（`npx skills add` / `git clone https://github.com/…`）
     ⇒ **本地路径占位符**（`<你的项目>` / `<your-project>`）是**该有的**，不许误伤。
+
+    为什么再加"身份只许有一处"（E42）：这个身份此前**抄在四个脚本里**
+    （`release_identity.py` / `release_consistency.py` / `release_notes.py` /
+    `audit_scan.py` 的 SARIF 链接）⇒ 仓库搬家或改名时**必然漂**，而**没有任何东西
+    会对账它们** ⇒ 三个地方各自发版、各自指向不同的仓库 ⇒ 没人发现。
     """
+    scripts_dir = os.path.join(skill_dir, "scripts")
+    truth_rel = "scripts/repo_identity.py"
+    truth_path = os.path.join(skill_dir, *truth_rel.split("/"))
+    # ⚠️ **适用性判定**：别的技能目录没有这个真源 ⇒ 这一项**不适用**；
+    #    但**本仓**（认 `scripts/release_identity.py`）的真源不见了 ⇒ **必须报出来**。
+    #    E42 实测的坑：真源一挪位置，这项会**静默跳过** ⇒ 一条信息都不发 ⇒
+    #    **"信息条从 31 掉到 30"才是它的报警声** ⇒ 所以"缺真源"不许当没事。
+    is_jiangzuo = os.path.isfile(os.path.join(skill_dir, "scripts", "release_identity.py"))
+    if not os.path.isfile(truth_path):
+        if is_jiangzuo:
+            err(u"仓库身份的真源 `%s` 不见了——owner/name 会被抄到各个脚本里，"
+                u"仓库一改名就悄悄漂（**不许因为解析不到就静默跳过**）" % truth_rel)
+        return
     ident = _repo_identity(skill_dir)
     if not ident:
+        err(u"仓库身份的真源 `%s` 里读不出 OWNER/NAME——"
+            u"判据无从知道该盯哪个字面量（**不许静默跳过**）" % truth_rel)
         return
     checked = []
     for rel, _lang in README_FILES:
@@ -696,9 +717,34 @@ def check_install_command(skill_dir):
                 u"读者无从知道该敲什么（不许因为解析不到就静默跳过）" % rel)
         if found:
             checked.append(rel)
+    # ── E42：身份在 `scripts/` 里只许有一处（其余一律从真源导入）──
+    if os.path.isdir(scripts_dir):
+        with io.open(truth_path, "r", encoding="utf-8", errors="replace") as f:
+            truth_text = f.read()
+        mo = re.search(r'^OWNER\s*=\s*"([^"]+)"', truth_text, re.M)
+        if not mo:
+            err(u"仓库身份的真源 `%s` 里没有 `OWNER = \"…\"`——判据无从知道该盯哪个字面量"
+                % truth_rel)
+        else:
+            owner_literal = mo.group(1)
+            hits = []
+            for name in sorted(os.listdir(scripts_dir)):
+                if not name.endswith(".py") or name == os.path.basename(truth_rel):
+                    continue
+                with io.open(os.path.join(scripts_dir, name), "r",
+                             encoding="utf-8", errors="replace") as f:
+                    body = f.read()
+                if owner_literal in body:
+                    hits.append("scripts/" + name)
+            if hits:
+                err(u"仓库身份在 `scripts/` 里被抄到了 **%d 个**文件（%s）——"
+                    u"**只许出现在真源 `%s` 里**，其余一律从它导入"
+                    u"（抄出来的副本没人核，仓库改名时会悄悄漂）"
+                    % (len(hits), "、".join(hits), truth_rel))
+
     if checked:
-        info(u"README 的安装命令指向真实仓库（%s ✓，已核 %d 个门面）"
-             % (ident, len(checked)))
+        info(u"README 的安装命令指向真实仓库（%s ✓，已核 %d 个门面）；仓库身份只此一处"
+             u"（`%s` ✓）" % (ident, len(checked), truth_rel))
 
 
 def check_lookup_aliases(skill_dir):
@@ -1677,7 +1723,7 @@ def main():
             check_scripts(skill_dir)
             check_booklet_contract(skill_dir)
             check_readme_counts(skill_dir)
-            check_install_command(skill_dir)
+            check_repo_identity(skill_dir)
             check_lookup_aliases(skill_dir)
             check_md_tables(skill_dir)
             check_expected_numbers(skill_dir)

@@ -48,8 +48,11 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-OWNER = "Zhang-jx00"
-NAME = "jiangzuo"
+# 仓库身份**只有一处**（E42）：owner/name 从 `scripts/repo_identity.py` 导入
+# ⇒ 本文件**不再**抄一份（抄出来的副本没人核，仓库改名时会悄悄漂）。
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from repo_identity import OWNER, NAME  # noqa: E402  （必须在本目录里）
 
 # 版本号：v0.51.0 / 0.51.0 都认；E36 这种轮次号（没有点）不认。
 VER_RE = re.compile(r"\bv?(\d+\.\d+\.\d+)\b")

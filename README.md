@@ -70,7 +70,7 @@ jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
 ├── references/       # 20 本分册（渐进式披露：进入哪个阶段读哪本）
 ├── templates/        # 14 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准/进化账本…）
-├── scripts/          # 20 个纯标准库脚本
+├── scripts/          # 21 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿
 │   ├── audit_index.py     # 审计链①：文件索引与 gitignore 忽略，产出可复现清单
 │   ├── audit_map.py       # 审计链②：项目侦察地图（语言/入口/路由/鉴权边界/依赖）

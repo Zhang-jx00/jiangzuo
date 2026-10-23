@@ -931,6 +931,16 @@ CASES = [
      "changelog-date-timezone-neutered",
      "tests.test_scripts.TestChangelogDateTimezone."
      "test_entry_dated_the_author_day_is_not_future"),
+    # ---- E42（v0.76.0）：仓库身份只许有一处 ----
+    # ⑧ 身份被抄到别的脚本不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     u"            if hits:\n"
+     u"                err(u\"仓库身份在 `scripts/` 里被抄到了 **%d 个**文件（%s）——\"",
+     u"            if False:  # E42 校准：身份被抄到别的脚本不再被报\n"
+     u"                err(u\"仓库身份在 `scripts/` 里被抄到了 **%d 个**文件（%s）——\"",
+     "repo-identity-copied-neutered",
+     "tests.test_scripts.TestInstallCommand."
+     "test_identity_copied_into_another_script_must_be_flagged"),
 ]
 
 

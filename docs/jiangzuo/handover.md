@@ -34,9 +34,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-10-24 当场重跑**：294 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-24 当场重跑**：297 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **81/81 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.289 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **82/82 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.621 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -284,7 +284,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 294 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 297 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -304,7 +304,7 @@ README 的规则条数与实物一致（34 条含 1 停用）｜ 分册全部登
 **结论区判定表自洽**（E29，第 21 项）｜ **「全部产出」口径拆解自洽**（E32，第 22 项）｜
 **「当前状态」真源与文档对账**（E34，第 23 项：真源 `evals/current-state.json` ＋ 文档里的 `current-state` 标记区 ⇒ 散文里的数也被人守）｜
 **微测台账的判定不许脱离数据**（E35，第 24 项：状态格只能是规程允许的判定，且必须与实测失败率差对上 ⇒ **改结论不改数据当场红**）｜
-**两个门面的计数与预算**（E36：第 7 项扩成**中英各查一遍** ＋ 入口行数比**正文行数** ＋ description/entry 字符数也纳入；**E41 再扩**：门面的**安装命令**必须指向真实仓库——真源 = `scripts/release_identity.py` 的 `OWNER`/`NAME`；⚠️ 实测此前两个门面的命令都写着 `npx skills add <you>/jiangzuo` ⇒ **照抄的人必然失败**、而它在 markdown 里「看着挺像样」⇒ **生态那扇门其实是死路**；⚠️ **本地路径占位符**（`<你的项目>`）是该有的 ⇒ 不得误伤）｜
+**两个门面的计数与预算**（E36：第 7 项扩成**中英各查一遍** ＋ 入口行数比**正文行数** ＋ description/entry 字符数也纳入；**E41 再扩**：门面的**安装命令**必须指向真实仓库；**E42 再扩**：仓库身份**只许有一处**（真源 = `scripts/repo_identity.py`）⇒ 抄到第二个脚本当场红，**真源缺失必须报错**（不许静默跳过）；⚠️ 实测此前两个门面的命令都写着 `npx skills add <you>/jiangzuo` ⇒ **照抄的人必然失败**、而它在 markdown 里「看着挺像样」⇒ **生态那扇门其实是死路**；⚠️ **本地路径占位符**（`<你的项目>`）是该有的 ⇒ 不得误伤）｜
 **台账自身不许被写坏**（E36，第 25 项：版本条目不得重复 ＋ CHANGELOG 必须降序 ＋ 验收记录/交接文档**按表分块**查重；**E40 扩到进化账本**：轮次号**不得回退** ＋ 同一张表里**不得有两行完全相同**——它的行格式 `| 日期 | E37 …` 与查重正则认的 `| **E37** ✅ | v0.70.0 |` 不同 ⇒ 此前**完全不在查重范围内**；**E40 再扩**：验收记录的版本小节**必须升序**（它是**新版本在后**）＋ **每个 current-state 标记区都对账它自己那一版**的快照——此前**每个载体只查一个区块**（14 个区块里 **12 个**无人守）⇒ E39 把 v0.72.0 的区块改写成 v0.73.0 的数时**对账跟着腐化一起漂 ⇒ 绿灯**）｜
 **远端发布产物的自洽**（E39，第 27 项：核验器**随技能分发** ＋ 零依赖 ＋ **三态退出码**（0 一致／1 不一致＝真问题必红／2 **没核成**＝限流或网络 ⇒ **绝不当成通过**）＋ CI 作业**处理了「没核成」那一态**）｜
 **发布产物的「身份」**（E37，第 26 项：真源 `evals/release-identity.json` ＋ 每个 tag 指向的 commit **真的属于那个版本** ⇒
@@ -1077,7 +1077,7 @@ git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望�
 grep -n "version:" SKILL.md          # 期望：0.60.0
 python scripts/validate_skill.py .   # 期望：31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 294 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 297 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

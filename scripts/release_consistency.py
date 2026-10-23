@@ -44,8 +44,10 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-OWNER = "Zhang-jx00"
-NAME = "jiangzuo"
+# 仓库身份**只有一处**（E42）：从 `scripts/repo_identity.py` 导入 ⇒ 本文件不再抄一份。
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from repo_identity import OWNER, NAME  # noqa: E402  （必须在本目录里）
 API = "https://api.github.com/repos/%s/%s" % (OWNER, NAME)
 UA = "jiangzuo-release-consistency"
 

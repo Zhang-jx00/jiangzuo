@@ -36,8 +36,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 CHANGELOG = os.path.join(REPO, "CHANGELOG.md")
 RELEASES_DIR = os.path.join(REPO, "docs", "jiangzuo", "releases")
-OWNER = "Zhang-jx00"
-NAME = "jiangzuo"
+# 仓库身份**只有一处**（E42）：owner/name 与各种 URL 从 `scripts/repo_identity.py` 导入
+# ⇒ 本文件**不再**抄一份（发行说明里的克隆地址也由它派生 ⇒ 仓库改名时不会指向旧地址）。
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from repo_identity import OWNER, NAME, CLONE_URL  # noqa: E402  （必须在本目录里）
 
 # E37：发布产物的**身份**核验在另一个脚本里（`scripts/release_identity.py`）。
 # 同一份实现，不复制第二份——复制出来的两份迟早会不一致，而不一致的那份没人核。
@@ -62,9 +65,9 @@ BOUNDARY_NOTE = """## 已知边界（不藏）
 INSTALL = """## 安装与使用
 
 ```bash
-git clone https://github.com/Zhang-jx00/jiangzuo.git
+git clone {clone_url}
 # 复制到你的技能目录（Claude / ZCode / Codex / Cursor / Gemini CLI / OpenCode 通用）
-cp -r jiangzuo ~/.claude/skills/          # 或 ~/.zcode/skills/、~/.agents/skills/
+cp -r {name} ~/.claude/skills/          # 或 ~/.zcode/skills/、~/.agents/skills/
 ```
 
 脚本**零依赖**（只用 Python 3.8+ 标准库）、**不联网**、**不改被扫项目**；
@@ -175,7 +178,7 @@ def notes_for(ver, date, body, fallback=False):
         parts.append(rest)
         parts.append("")
     parts.append(BOUNDARY_NOTE)
-    parts.append(INSTALL)
+    parts.append(INSTALL.format(clone_url=CLONE_URL, name=NAME))
     parts.append("## 文档索引")
     parts.append("")
     parts.append("- 逐版本记录：`CHANGELOG.md`（**唯一真源**）")

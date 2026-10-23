@@ -5595,24 +5595,36 @@ class TestInstallCommand(unittest.TestCase):
     （同一轮的实测：改成真名后 `npx skills add` 装出 **571 个文件**，装出来的副本
       **自检 30/0/0 全绿** ⇒ 路径本身是通的，差的只是命令。）
 
-    真源：`scripts/release_identity.py` 的 OWNER/NAME（机器可读，不手抄）。
+    真源：`scripts/repo_identity.py` 的 OWNER/NAME（机器可读，不手抄）。
     ⚠️ **本地路径占位符**（`<你的项目>` / `<your-project>`）是**该有的** ⇒ 不得误伤。
+
+    **E42 再加两条**：仓库身份在 `scripts/` 里**只许有一处**（真源）⇒ 其余一律从它导入
+    （此前身份**抄在四个脚本里** ⇒ 仓库改名时**必然漂**、**没人发现**）；
+    且**真源缺失必须报出来**，不许静默跳过（E42 实测：真源一挪位置，这一项会**悄悄不跑**
+    ⇒ "信息条少了一条"才是它的报警声）。
     """
 
-    def _mini(self, tmp, zh=None, en=None):
+    def _mini(self, tmp, zh=None, en=None, owner="Zhang-jx00", name="jiangzuo",
+              truth=True, jiangzuo=False):
         sk = os.path.join(tmp, "sk")
         for d in ("references", "templates", "scripts", "evals"):
             os.makedirs(os.path.join(sk, d))
         with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
             f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n---\n正文第一行\n")
-        with io.open(os.path.join(sk, "scripts", "release_identity.py"), "w",
-                     encoding="utf-8", newline="\n") as f:
-            f.write(u'OWNER = "Zhang-jx00"\nNAME = "jiangzuo"\n')
+        if truth:
+            with io.open(os.path.join(sk, "scripts", "repo_identity.py"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u'OWNER = "%s"\nNAME = "%s"\n' % (owner, name))
+        if jiangzuo:
+            # 标记"这是将作自己的目录"（真源不见了 ⇒ 必须报，不许静默跳过）
+            with io.open(os.path.join(sk, "scripts", "release_identity.py"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# placeholder\n")
         with io.open(os.path.join(sk, "templates", "a.md"), "w", encoding="utf-8") as f:
             f.write(u"# a\n")
         with io.open(os.path.join(sk, "references", "a.md"), "w", encoding="utf-8") as f:
             f.write(u"# a\n")
-        good = u"# sk\n\nnpx skills add Zhang-jx00/jiangzuo\n"
+        good = u"# sk\n\nnpx skills add %s/%s\n" % (owner, name)
         with io.open(os.path.join(sk, "README.md"), "w", encoding="utf-8", newline="\n") as f:
             f.write(zh if zh is not None else good)
         with io.open(os.path.join(sk, "README.en.md"), "w", encoding="utf-8", newline="\n") as f:
@@ -5662,6 +5674,37 @@ class TestInstallCommand(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn(u"安装命令指向真实仓库", r.stdout)
         self.assertIn(u"Zhang-jx00/jiangzuo", r.stdout)
+
+    def test_identity_copied_into_another_script_must_be_flagged(self):
+        """红：身份被**抄到另一个脚本**里 ⇒ 必须报（抄出来的副本没人核）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp)
+            with io.open(os.path.join(sk, "scripts", "another.py"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u'OWNER = "Zhang-jx00"\nNAME = "jiangzuo"\n')
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"被抄到了", r.stdout)
+
+    def test_missing_truth_source_must_be_flagged_not_skipped(self):
+        """红：**真源不见了** ⇒ 必须报，**不许静默跳过**（E42 实测的坑）。
+
+        ⚠️ 这一条专门盯"判据自己不跑"：真源一挪位置，解析不到 ⇒ 整项悄悄不跑
+        ⇒ 一条信息都不发 ⇒ **看起来全绿** ⇒ ⇒ 所以"缺真源"必须**报错**。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, truth=False, jiangzuo=True)
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"真源", r.stdout)
+
+    def test_other_skill_dir_is_not_applicable(self):
+        """绿：**别的技能目录**没有这个真源 ⇒ 这一项**不适用**（不许误伤别人）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, truth=False)
+            r = self._validate(sk)
+            self.assertNotIn(u"真源", r.stdout,
+                             u"别的技能目录被这条闸误伤了：%s" % r.stdout)
 
 
 class TestChangelogDateTimezone(unittest.TestCase):

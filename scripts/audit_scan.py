@@ -38,6 +38,7 @@ import audit_graph   # noqa: E402
 import auditlib      # noqa: E402
 import audit_map     # noqa: E402
 import audit_rules   # noqa: E402
+from repo_identity import REPO_URL  # noqa: E402  （仓库身份只有一处，E42）
 
 FINDINGS_SCHEMA = "jiangzuo-audit-findings/1"
 SARIF_VERSION = "2.1.0"
@@ -1160,7 +1161,7 @@ def to_sarif(payload, skill_version):
             "name": rule["title"],
             "shortDescription": {"text": rule["title"]},
             "fullDescription": {"text": rule.get("note") or rule["title"]},
-            "helpUri": "https://github.com/Zhang-jx00/jiangzuo",
+            "helpUri": REPO_URL,
             "properties": {"tags": (rule.get("cwe", []) + rule.get("owasp", [])
                                      + [rule.get("severity", "")])},
             "defaultConfiguration": {"level": SARIF_LEVEL.get(rule.get("severity"), "warning")},
@@ -1168,7 +1169,7 @@ def to_sarif(payload, skill_version):
     return {"$schema": SARIF_URI, "version": SARIF_VERSION,
             "runs": [{"tool": {"driver": {
                 "name": TOOL_NAME, "version": skill_version,
-                "informationUri": "https://github.com/Zhang-jx00/jiangzuo",
+                "informationUri": REPO_URL,
                 "rules": rules_out}},
                 "results": results,
                 "columnKind": "utf16CodeUnits",
