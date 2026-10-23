@@ -197,6 +197,67 @@ def check_frontmatter(skill_dir, text):
     return meta
 
 
+def check_ledger_versions(skill_dir, cl_text):
+    """第 25 项：台账的版本条目**不得重复**、CHANGELOG 必须**按版本降序**（E36）。
+
+    为什么加这一项：**E35 的台账脚本跑了两遍** ⇒ CHANGELOG 里出现了**两份一模一样的
+    v0.69.0 条目**、验收记录里也出现了两份 ⇒ 而**没有任何一道闸发现它**
+    （日期核对只看日期、"版本与 CHANGELOG 一致"只看最新那个）⇒
+    也就是说：**台账自己可以在无人察觉的情况下被写坏**。
+
+    覆盖面：CHANGELOG 的版本标题、验收记录的版本小节、交接文档规划表里的版本行
+    ⇒ 三处台账里"同一个版本出现两次"一律报错。
+    """
+    def dups_of(vs):
+        return sorted(set(v for v in vs if vs.count(v) > 1))
+
+    vers = re.findall(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", cl_text, re.M)
+    if not vers:
+        return None
+    for v in dups_of(vers):
+        err(u"CHANGELOG 有 **%d 份 v%s 条目**——台账脚本跑了两遍就会留下这种，"
+            u"而它此前**无人能发现**；删掉多余的那份" % (vers.count(v), v))
+    keys = [tuple(int(x) for x in v.split(".")) for v in vers]
+    for i in range(1, len(keys)):
+        if keys[i] > keys[i - 1]:
+            err(u"CHANGELOG 的版本条目不是降序（新版本在前）：v%s 出现在 v%s 之后"
+                % (vers[i], vers[i - 1]))
+            break
+
+    acc = os.path.join(skill_dir, "evals", "audit-acceptance.md")
+    if os.path.isfile(acc):
+        with io.open(acc, "r", encoding="utf-8", errors="replace") as f:
+            acc_vers = re.findall(r"^##\s*v(\d+\.\d+\.\d+)", f.read(), re.M)
+        for v in dups_of(acc_vers):
+            err(u"验收记录 `evals/audit-acceptance.md` 有 **%d 份 v%s 小节**——"
+                u"台账脚本跑了两遍就会留下这种" % (acc_vers.count(v), v))
+
+    hand = os.path.join(skill_dir, "docs", "jiangzuo", "handover.md")
+    if os.path.isfile(hand):
+        with io.open(hand, "r", encoding="utf-8", errors="replace") as f:
+            hlines = f.read().split("\n")
+        # ⚠️ **按表分块**查重：交接文档 §11 里有**多张规划表**（十轮 / 后续五轮 / 下一轮），
+        #    同一轮**合法地**出现在两张表里（E20–E24 就在十轮表与后续五轮表各出现一次）
+        #    ⇒ 全文件查重会**误报** ⇒ 只在**同一张表内**查重
+        #    （E36 台账脚本跑两遍时，同一行被塞进**同一张表**两次 ⇒ 仍会被逮到）。
+        block = []
+        for line in hlines + [""]:
+            if line.startswith("|"):
+                block.append(line)
+                continue
+            if block:
+                vs = re.findall(r"^\|\s*\*\*E\d+\*\*[^\n|]*\|\s*v(\d+\.\d+\.\d+)\s*\|",
+                                "\n".join(block), re.M)
+                for v in dups_of(vs):
+                    err(u"交接文档规划表有 **%d 行 v%s**（同一张表内）——"
+                        u"台账脚本跑了两遍就会留下这种" % (vs.count(v), v))
+                block = []
+
+    if not dups_of(vers) and all(keys[i] <= keys[i - 1] for i in range(1, len(keys))):
+        info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）" % len(vers))
+    return True
+
+
 def check_refs(skill_dir, body):
     refs = sorted(set(REF_RX.findall(body)))
     missing = []
@@ -356,80 +417,133 @@ def _count_builtin_rules(skill_dir):
     return total, disabled
 
 
+README_FILES = (("README.md", "zh"), ("README.en.md", "en"))
+
+# 每个指标的中/英两种写法（外加"概念词"：写了概念却写不出数字 ⇒ 报错）。
+# ⇒ 两个门面都有人守（E36：英文门面曾停在 v0.3x 遗物状态，写着 4 个脚本 / 222 行 /
+#    373 字符，而且整条安全审计链主线一个字没提）。
+README_FORMS = {
+    "booklets": (r"(\d+)\s*本分册", r"(\d+)\s*booklets", u"本分册", u"booklets"),
+    "templates": (r"(\d+)\s*个填空即用模板", r"(\d+)\s*fill-in templates",
+                  u"填空即用模板", u"fill-in templates"),
+    "scripts": (r"(\d+)\s*个纯标准库脚本", r"(\d+)\s*stdlib-only scripts",
+                u"纯标准库脚本", u"stdlib-only scripts"),
+    "rules": (u"内置规则库：(\d+)\s*条声明式规则(?:（含\s*(\d+)\s*条数据停用）)?",
+              r"(\d+)\s*declarative rules(?:\s*\((\d+)\s*disabled by data\))?",
+              u"声明式规则", u"declarative rules"),
+    "entry_lines": (u"SKILL\.md\s*正文\s*(\d+)\s*行", r"SKILL\.md body is (\d+) lines",
+                    u"SKILL.md 正文", u"SKILL.md body is"),
+    "desc_chars": (u"description\s*(\d+)\s*字符", r"description is (\d+) chars",
+                   u"description", u"description is"),
+    "entry_chars": (u"entry 合计 (\d+)", r"manifest entry (\d+) chars",
+                    u"entry 合计", u"manifest entry"),
+}
+
+
+def _readme_truth(skill_dir):
+    """门面上的数字各自的**唯一真源**（全部现场可算，不手抄）。"""
+    truth = {}
+    for key, folder, suffix in (("booklets", "references", ".md"),
+                                ("templates", "templates", ".md"),
+                                ("scripts", "scripts", ".py")):
+        path = os.path.join(skill_dir, folder)
+        truth[key] = (len([f for f in os.listdir(path) if f.endswith(suffix)])
+                      if os.path.isdir(path) else None)
+    truth["rules"] = _count_builtin_rules(skill_dir)
+    # 入口行数：**正文行数**（frontmatter 之后）—— 500 上限约束的是正文，不是文件总行数。
+    # ⚠️ E36 实测：旧实现拿**总行数**当真源 ⇒ README 只好写"212 行（上限 500）"，
+    #    而**说真话**（201 行）反而会被判错 ⇒ **一道在逼人说假话的锁**。
+    entry = os.path.join(skill_dir, "SKILL.md")
+    if os.path.isfile(entry):
+        with io.open(entry, "r", encoding="utf-8", errors="replace") as f:
+            meta, rest = parse_frontmatter(f.read())
+        if rest is not None:
+            truth["entry_lines"] = len(rest)
+            desc = (meta or {}).get("description", "")
+            wtu = (meta or {}).get("when_to_use", "")
+            truth["desc_chars"] = len(desc) if desc else None
+            truth["entry_chars"] = (len(desc) + (len(wtu) + 3 if wtu else 0)) if desc else None
+    return truth
+
+
 def check_readme_counts(skill_dir):
-    """README 声明的脚本/模板/分册数量必须与磁盘实物一致。
+    """README（**中英两个门面**）声明的计数/预算必须与实物一致。
 
     文档计数滞后是接手者踩的第一个坑（本仓库曾把"4 个脚本"写了两个版本），
     所以这条做成机器检查，而不是靠人记得改。
+
+    ⚠️ E36 三处修正：
+      ① **两个门面都要查** —— 英文 README 曾停在 v0.3x 遗物状态（4 个脚本 / 222 行 / 373 字符），
+         而它恰恰是英文读者与 skills.sh 生态看到的那一面 ⇒ 只查中文门面 = 门面的另一半没人守。
+      ② **入口行数的真源是"正文行数"** —— 500 上限约束的是正文（frontmatter 之后），
+         旧实现拿文件总行数当真源 ⇒ README 只好写总行数 ⇒ **一道在逼人说假话的锁**。
+      ③ **description / 清单 entry 的字符数也纳入对账**（之前完全没人管）。
     """
-    readme = os.path.join(skill_dir, "README.md")
-    if not os.path.isfile(readme):
+    truth = _readme_truth(skill_dir)
+    if not truth:
         return
-    with io.open(readme, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-    patterns = {
-        "脚本": (r"(\d+)\s*个纯标准库脚本", ("scripts", ".py"), u"纯标准库脚本"),
-        "模板": (r"(\d+)\s*个填空即用模板", ("templates", ".md"), u"填空即用模板"),
-        "分册": (r"(\d+)\s*本分册", ("references", ".md"), u"本分册"),
-    }
-    bad, seen, unparsable = [], 0, []
-    for key, (rx, (folder, suffix), concept) in patterns.items():
-        m = re.search(rx, text)
-        if not m:
-            # ⚠️ **不许静默跳过**（E34 实测）：README 里写着「{{SCRIPTS}} 个纯标准库脚本」
-            # 这种**占位符顶掉了数字**的情况时，正则匹配不上 ⇒ 老代码 `continue` 跳过
-            # ⇒ 这道闸**因为解析不到而变成永远绿** ⇒ 那比没有闸更坏（它还让人以为有人管）。
-            # ⇒ 声明了概念却写不出数字 ⇒ 报错。
-            #    ⚠️ 但**根本没提这个概念**的 README（最小技能目录）不该被要求写 ⇒ 按概念词判。
-            if concept in text:
-                unparsable.append(key)
+    bad, seen, unparsable = [], {}, []
+    for rel, lang in README_FILES:
+        path = os.path.join(skill_dir, rel)
+        if not os.path.isfile(path):
             continue
-        seen += 1
-        path = os.path.join(skill_dir, folder)
-        actual = 0
-        if os.path.isdir(path):
-            actual = len([f for f in os.listdir(path) if f.endswith(suffix)])
-        if int(m.group(1)) != actual:
-            bad.append("README 写 %s=%s，实际 %s" % (key, m.group(1), actual))
-    for key in unparsable:
-        err("README 声明了「%s」却**写不出数字**（占位符顶掉了？写法变了？）——"
-            "**不许因为解析不到就静默跳过**：那等于这道闸自己失效了" % key)
-    if bad:
-        warn("README 计数与实物不符：%s —— 增删文件时同步改 README" % "；".join(bad))
-    elif seen and not unparsable:
-        info("README 计数与实物一致（脚本/模板/分册 ✓）")
-    # 入口行数：README 里写死过 "SKILL.md 220 行"，实物 211 行（2026-10-16 复核撞出）。
-    # 这类"读者会照着核对的数"对不上就是交付面失实，所以按 err 处理，不只 warn。
-    m = re.search(r"SKILL\.md\s*(\d+)\s*行", text)
-    if m:
-        entry = os.path.join(skill_dir, "SKILL.md")
-        if os.path.isfile(entry):
-            with io.open(entry, "r", encoding="utf-8", errors="replace") as f:
-                actual_lines = len(f.read().splitlines())
-            if int(m.group(1)) != actual_lines:
-                err("README 写 SKILL.md 入口行数=%s，实际 %s 行——增删入口时同步改 README"
-                    % (m.group(1), actual_lines))
-            elif not bad:
-                info("README 入口行数与实物一致（SKILL.md %d 行 ✓）" % actual_lines)
-    # 规则条数：E1 加了两条规则后才发现 README 还写着"30 条"（实物 34）。
-    # 同一个病根第三次复发——写死的数字没有判据，改的人不会被告知。
-    m = re.search(u"内置规则库：(\\d+)\\s*条声明式规则(?:（含\\s*(\\d+)\\s*条数据停用）)?", text)
-    if m:
-        total, disabled = _count_builtin_rules(skill_dir)
-        if total is None:
-            info(u"README 规则条数未核对（这里没有 scripts/audit-rules/）")
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        for key, forms in README_FORMS.items():
+            rx_zh, rx_en, concept_zh, concept_en = forms
+            rx = rx_zh if lang == "zh" else rx_en
+            concept = concept_zh if lang == "zh" else concept_en
+            m = re.search(rx, text)
+            if not m:
+                # ⚠️ **不许静默跳过**（E34 实测）：README 里写着「{{SCRIPTS}} 个纯标准库脚本」
+                # 这种**占位符顶掉了数字**的情况时，正则匹配不上 ⇒ 老代码 `continue` 跳过
+                # ⇒ 这道闸**因为解析不到而变成永远绿** ⇒ 那比没有闸更坏（它还让人以为有人管）。
+                # ⇒ 声明了概念却写不出数字 ⇒ 报错。
+                #    ⚠️ 但**根本没提这个概念**的门面不该被要求写 ⇒ 按概念词判。
+                if concept in text:
+                    unparsable.append(u"%s 的「%s」" % (rel, key))
+                continue
+            seen.setdefault(key, []).append(rel)
+            if key == "rules":
+                total, disabled = truth.get("rules") or (None, None)
+                if total is None:
+                    continue
+                wrong = []
+                if int(m.group(1)) != total:
+                    wrong.append(u"总条数写 %s、实际 %s" % (m.group(1), total))
+                if m.group(2) and int(m.group(2)) != disabled:
+                    wrong.append(u"停用数写 %s、实际 %s" % (m.group(2), disabled))
+                if wrong:
+                    bad.append((key, u"%s 规则条数与实物不符：%s" % (rel, u"；".join(wrong))))
+                continue
+            actual = truth.get(key)
+            if actual is None:
+                continue
+            if int(m.group(1)) != actual:
+                bad.append((key, u"%s 写 %s=%s，实际 %s" % (rel, key, m.group(1), actual)))
+    for who in unparsable:
+        err(u"README 声明了 %s 却**写不出数字**（占位符顶掉了？写法变了？）——"
+            u"**不许因为解析不到就静默跳过**：那等于这道闸自己失效了" % who)
+    for key, msg in bad:
+        if key in ("booklets", "templates", "scripts"):
+            warn(u"README 计数与实物不符：%s —— 增删文件时同步改两个门面" % msg)
         else:
-            wrong = []
-            if int(m.group(1)) != total:
-                wrong.append(u"总条数写 %s、实际 %s" % (m.group(1), total))
-            if m.group(2) and int(m.group(2)) != disabled:
-                wrong.append(u"停用数写 %s、实际 %s" % (m.group(2), disabled))
-            if wrong:
-                err(u"README 规则条数与实物不符：%s——加/停规则时同步改 README"
-                    u"（判据：audit-rules/*.json 的条目数与其中 enabled:false 的条数）"
-                    % u"；".join(wrong))
-            else:
-                info(u"README 规则条数与实物一致（%d 条，停用 %d ✓）" % (total, disabled))
+            err(u"README 与实物不符：%s —— 增删文件/改入口时同步改两个门面" % msg)
+    for key, label in (("booklets", u"分册"), ("templates", u"模板"), ("scripts", u"脚本")):
+        if key in seen:
+            info(u"README 计数与实物一致（%s ✓，已核 %d 个门面）" % (label, len(seen[key])))
+    if "rules" in seen:
+        total, disabled = truth.get("rules") or (0, 0)
+        info(u"README 规则条数与实物一致（%d 条，停用 %d ✓，已核 %d 个门面）"
+             % (total, disabled, len(seen["rules"])))
+    if "entry_lines" in seen:
+        info(u"README 入口行数与实物一致（SKILL.md 正文 %d 行 ✓，已核 %d 个门面）"
+             % (truth.get("entry_lines") or 0, len(seen["entry_lines"])))
+    if "desc_chars" in seen or "entry_chars" in seen:
+        info(u"README 的 description/清单 entry 字符数与实物一致"
+             u"（description %d 字符、entry %d 字符 ✓，已核 %d 个门面）"
+             % (truth.get("desc_chars") or 0, truth.get("entry_chars") or 0,
+                len(seen.get("desc_chars", []) + seen.get("entry_chars", []))))
 
 
 def check_lookup_aliases(skill_dir):
@@ -1240,6 +1354,7 @@ def main():
                     elif m:
                         info("metadata.version 与 CHANGELOG 一致（%s ✓）" % version)
                     check_changelog_dates(skill_dir, cl)
+                    check_ledger_versions(skill_dir, cl)
             if os.path.isdir(os.path.join(skill_dir, "evals")):
                 info("含 evals/ 评测集 ✓")
             refs = check_refs(skill_dir, text)

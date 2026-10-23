@@ -751,8 +751,9 @@ CASES = [
     # ③ README 计数**解析不到就静默跳过**的老毛病被修掉 ⇒ 把"不许静默跳过"再关掉
     #    ⇒ 占位符顶掉数字时闸会自己失效 ⇒ 判据必须红。
     ("scripts/validate_skill.py",
-     "            if concept in text:\n                unparsable.append(key)",
-     "            if False:  # E34 校准：解析不到就静默跳过（闸自己失效）",
+     "                if concept in text:\n                    unparsable.append(u\"%s 的「%s」\" % (rel, key))",
+     "                if False:  # E34/E36 校准：解析不到就静默跳过（闸自己失效）\n"
+     "                    unparsable.append(u\"%s 的「%s」\" % (rel, key))",
      "readme-count-unparsable-not-flagged",
      "tests.test_scripts.TestValidate."
      "test_validate_detects_unparsable_readme_count"),
@@ -763,6 +764,35 @@ CASES = [
      "micro-test-verdict-data-mismatch-not-flagged",
      "tests.test_scripts.TestMicroTestClaims."
      "test_verdict_must_match_the_measured_numbers"),
+    # ---- E36（v0.70.0）：门面的两个入口都要有人守 ----
+    # ① 入口行数的真源被改坏（正文行数 +1）⇒ 正例必须红。
+    ("scripts/validate_skill.py",
+     "            truth[\"entry_lines\"] = len(rest)",
+     "            truth[\"entry_lines\"] = len(rest) + 1  # E36 校准：入口行数真源被改坏",
+     "readme-entry-lines-truth-off-by-one",
+     "tests.test_scripts.TestReadmeCounts."
+     "test_both_front_doors_are_checked_on_self"),
+    # ② 只查第一个门面 ⇒ 英文门面的错没人管 ⇒ 反例必须红。
+    ("scripts/validate_skill.py",
+     "    for rel, lang in README_FILES:",
+     "    for rel, lang in README_FILES[:1]:  # E36 校准：第二个门面不再被查",
+     "readme-second-front-door-not-checked",
+     "tests.test_scripts.TestReadmeCounts."
+     "test_wrong_english_count_must_be_flagged"),
+    # ③ CHANGELOG 的重复条目不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "    for v in dups_of(vers):",
+     "    for v in []:  # E36 校准：CHANGELOG 的重复条目不再被报",
+     "changelog-duplicate-entries-not-flagged",
+     "tests.test_scripts.TestChangelogVersions."
+     "test_duplicate_changelog_entry_must_be_flagged"),
+    # ④ 验收记录那半边不再被查 ⇒ 判据必须红。
+    (r"scripts/validate_skill.py",
+     r'            acc_vers = re.findall(r"^##\s*v(\d+\.\d+\.\d+)", f.read(), re.M)',
+     r'            acc_vers = []  # E36 校准：验收记录的重复不再被报',
+     "ledger-acceptance-duplicate-not-flagged",
+     "tests.test_scripts.TestChangelogVersions."
+     "test_duplicate_sections_in_other_ledgers_must_be_flagged"),
 ]
 
 

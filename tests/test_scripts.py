@@ -75,27 +75,36 @@ class TestValidate(unittest.TestCase):
             self.assertIn(u"超预算", r.stdout)
 
     def test_validate_flags_stale_entry_line_count_in_readme(self):
-        """README 里写死的"SKILL.md 多少行"必须跟着实物走。
+        """README 里写死的"SKILL.md 多少行"必须跟着**正文行数**走。
+
         2026-10-16 复核实物撞出来：README 写 220 行，文件其实 211 行——
-        同一条"文档计数滞后"的坑，脚本/模板/分册三样早已有闸，唯独入口行数没有。"""
+        同一条"文档计数滞后"的坑，脚本/模板/分册三样早已有闸，唯独入口行数没有。
+
+        ⚠️ E36 再修一层：**上限 500 约束的是正文（frontmatter 之后）**，
+        所以真源必须是**正文行数**；旧实现拿**文件总行数**当真源
+        ⇒ 文档只好写总行数 ⇒ **一道在逼人说假话的锁**（说真话反而被判错）。
+        ⇒ 本测试因此比原来更强：写**总行数**必须被红，写**正文行数**才过。
+        """
         body = (u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n"
                 u"第一行正文。\n第二行正文。\n第三行正文。\n")
-        n_lines = len(body.splitlines())
+        total_lines = len(body.splitlines())
+        body_lines = 3
         with tempfile.TemporaryDirectory() as tmp:
             with io.open(os.path.join(tmp, "SKILL.md"), "w",
                          encoding="utf-8", newline="\n") as f:
                 f.write(body)
+            # 红：写**文件总行数**（旧实现的"真源"）⇒ 必须被红
             with io.open(os.path.join(tmp, "README.md"), "w",
                          encoding="utf-8", newline="\n") as f:
-                f.write(u"# demo\n\n- SKILL.md %d 行（上限 500）\n" % (n_lines + 9))
+                f.write(u"# demo\n\n- SKILL.md 正文 %d 行（上限 500）\n" % total_lines)
             r = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
             self.assertNotEqual(r.returncode, 0,
                                 u"README 入口行数写错却没拦住：%s" % r.stdout)
             self.assertIn(u"入口行数", r.stdout)
-            # 绿：改成真实行数
+            # 绿：写**正文行数**（真源）⇒ 过
             with io.open(os.path.join(tmp, "README.md"), "w",
                          encoding="utf-8", newline="\n") as f:
-                f.write(u"# demo\n\n- SKILL.md %d 行（上限 500）\n" % n_lines)
+                f.write(u"# demo\n\n- SKILL.md 正文 %d 行（上限 500）\n" % body_lines)
             ok = run([os.path.join(SCRIPTS, "validate_skill.py"), tmp])
             self.assertEqual(ok.returncode, 0, ok.stdout)
 
@@ -5480,6 +5489,170 @@ class TestMicroTestClaims(unittest.TestCase):
         r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
         self.assertNotIn(u"[微测声称]", r.stdout,
                          u"本仓库的微测声称与数据对不上：%s" % r.stdout)
+
+
+class TestReadmeCounts(unittest.TestCase):
+    """E36：README（**中英两个门面**）声明的计数/预算必须与实物一致。
+
+    为什么单独拎出来：这条判据原先只查中文 README，而**英文 README 停在 v0.3x 遗物状态**
+    （4 个脚本 / 222 行 / 373 字符）——它是英文读者与 skills.sh 生态看到的那一面
+    ⇒ 门面的另一半没人守。
+
+    还有一条更要紧的：**入口行数的真源必须是"正文行数"**（500 上限约束的是正文），
+    旧实现拿文件总行数当真源 ⇒ README 只好写总行数 ⇒ **一道在逼人说假话的锁**
+    （说真话反而被判错）。本类里 `test_body_line_count_is_the_truth` 专门钉这一条。
+    """
+
+    MINI_README_ZH = (
+        u"# sk\n\n"
+        u"- 1 本分册、1 个填空即用模板、1 个纯标准库脚本\n"
+        u"- SKILL.md 正文 3 行，description 1 字符（entry 合计 5）\n")
+    MINI_README_EN = (
+        u"# sk\n\n"
+        u"- 1 booklets, 1 fill-in templates, 1 stdlib-only scripts\n"
+        u"- SKILL.md body is 3 lines, description is 1 chars (manifest entry 5 chars)\n")
+
+    def _mini(self, tmp, readme_zh=None, readme_en=None):
+        sk = os.path.join(tmp, "sk")
+        for d in ("references", "templates", "scripts", "evals"):
+            os.makedirs(os.path.join(sk, d))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n---\n"
+                    u"正文第一行\n正文第二行\n正文第三行\n")
+        with io.open(os.path.join(sk, "references", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        with io.open(os.path.join(sk, "templates", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        with io.open(os.path.join(sk, "scripts", "a.py"), "w", encoding="utf-8") as f:
+            f.write(u"pass\n")
+        with io.open(os.path.join(sk, "README.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(readme_zh if readme_zh is not None else self.MINI_README_ZH)
+        with io.open(os.path.join(sk, "README.en.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(readme_en if readme_en is not None else self.MINI_README_EN)
+        return sk
+
+    def _validate(self, sk):
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+
+    def test_both_front_doors_are_checked_on_self(self):
+        """绿：本仓库的**两个门面**都被核到，且都与实物一致。
+
+        ⚠️ 断言必须包含**退出码**：E36 的校准首轮就发现，若只查 info 字符串，
+        那么"真源被改坏"这种变异**照样绿**（info 照发，只是多了一条错误）
+        ⇒ 判据要同时要求 `validate` **没有错误**。
+        """
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn(u"README 计数与实物一致", r.stdout)
+        self.assertIn(u"已核 2 个门面", r.stdout,
+                      u"英文门面没被核到：%s" % r.stdout)
+        self.assertIn(u"SKILL.md 正文 201 行", r.stdout)
+
+    def test_wrong_english_count_must_be_flagged(self):
+        """红：英文门面的计数写错 ⇒ 必须红（此前这道闸只查中文门面）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, readme_en=self.MINI_README_EN.replace(
+                u"1 stdlib-only scripts", u"4 stdlib-only scripts"))
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"scripts=4", r.stdout)
+
+    def test_body_line_count_is_the_truth(self):
+        """红/绿：**正文行数**才是入口行数的真数 —— 说真话（3 行）不该被红，说总行数（6 行）必须被红。
+
+        ⚠️ 这条是 E36 修掉的那个"逼人说假话的锁"的守卫：
+        旧实现拿**文件总行数**当真源 ⇒ 文档只好写总行数 ⇒ 而 500 上限约束的是正文。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp)
+            r = self._validate(sk)
+            self.assertNotIn(u"entry_lines", r.stdout,
+                             u"说真话（正文 3 行）被判错了：%s" % r.stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = self.MINI_README_ZH.replace(u"SKILL.md 正文 3 行", u"SKILL.md 正文 6 行")
+            sk = self._mini(tmp, readme_zh=bad)
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"entry_lines", r.stdout)
+
+    def test_wrong_description_chars_must_be_flagged(self):
+        """红：门面的 description / 清单 entry 字符数写错 ⇒ 必须红（此前完全没人管）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, readme_en=self.MINI_README_EN.replace(
+                u"description is 1 chars", u"description is 373 chars"))
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"desc_chars=373", r.stdout)
+
+
+class TestChangelogVersions(unittest.TestCase):
+    """E36（第 25 项）：CHANGELOG 的版本条目**不得重复**、必须**按降序**。
+
+    起因：E35 的台账脚本**跑了两遍** ⇒ CHANGELOG 里留下了**两份一模一样的 v0.69.0 条目**
+    ⇒ 而此前**没有任何一道闸能发现它**（日期核对只看日期、"版本与 CHANGELOG 一致"只看最新那个）
+    ⇒ 也就是说：**台账自己可以在无人察觉的情况下被写坏**。
+    """
+
+    def _mini(self, tmp, cl):
+        sk = os.path.join(tmp, "sk")
+        os.makedirs(sk)
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"---\nname: sk\ndescription: 测试\nmetadata:\n  version: 0.0.1\n---\n正文一句。\n")
+        with io.open(os.path.join(sk, "CHANGELOG.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(cl)
+        return sk
+
+    def test_duplicate_changelog_entry_must_be_flagged(self):
+        """红：同一版本出现两次 ⇒ 必须红（台账脚本跑两遍就会留下这种）。"""
+        cl = (u"# 更新日志\n\n## [0.2.0] - 2026-01-02\n\n第二条。\n\n"
+              u"## [0.1.0] - 2026-01-01\n\n第一条。\n\n"
+              u"## [0.2.0] - 2026-01-02\n\n第二条。\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, cl)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"份 v0.2.0 条目", r.stdout)
+
+    def test_out_of_order_changelog_entries_must_be_flagged(self):
+        """红：版本条目不是降序（新版本在前）⇒ 必须红。"""
+        cl = (u"# 更新日志\n\n## [0.1.0] - 2026-01-01\n\n旧的在前。\n\n"
+              u"## [0.2.0] - 2026-01-02\n\n新的在后。\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, cl)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"降序", r.stdout)
+
+    def test_duplicate_sections_in_other_ledgers_must_be_flagged(self):
+        """红：**验收记录**与**交接文档规划表**里同一版本出现两次 ⇒ 也必须红。
+
+        E35/E36 的台账脚本各跑过两遍 ⇒ 这三处台账都被写坏了，而**此前无人能发现**。
+        """
+        cl = u"# 更新日志\n\n## [0.2.0] - 2026-01-02\n\n条目。\n"
+        acc = u"## v0.2.0（X）\n\n内容。\n\n## v0.2.0（X）\n\n内容。\n"
+        hand = (u"## 11. 规划\n\n| 轮 | 版本 |\n|---|---|\n"
+                u"| **E36** ✅ | v0.2.0 |\n| **E36** ✅ | v0.2.0 |\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, cl)
+            os.makedirs(os.path.join(sk, "evals"))
+            with io.open(os.path.join(sk, "evals", "audit-acceptance.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(acc)
+            os.makedirs(os.path.join(sk, "docs", "jiangzuo"))
+            with io.open(os.path.join(sk, "docs", "jiangzuo", "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(hand)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            # ⚠️ 断言要卡在**错误原文**上，不能卡"出现验收记录这几个字"——
+            #    那句话在 info 行里也有（"（验收记录与交接文档同查）"）⇒ 判据会**恒绿**。
+            self.assertIn(u"有 **2 份 v0.2.0 小节**", r.stdout)
+            self.assertIn(u"有 **2 行 v0.2.0**", r.stdout)
+
+    def test_real_repo_changelog_is_unique_and_ordered(self):
+        """绿：本仓库的 CHANGELOG 无重复且降序。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertIn(u"无重复且按降序", r.stdout)
 
 
 if __name__ == "__main__":
