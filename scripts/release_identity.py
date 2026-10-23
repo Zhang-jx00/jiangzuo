@@ -385,9 +385,89 @@ def parse_ls_remote(out):
     return res
 
 
-def remote_tags(repo=REPO):
-    """{tag: commit_sha} —— 远端 tag **最终指向的 commit**。"""
-    return parse_ls_remote(git(repo, "ls-remote", "--tags", "origin"))
+def remote_tags(repo=REPO, token=None):
+    """{tag: commit_sha} —— 远端 tag **最终指向的 commit**。
+
+    **两条通道**：① `git ls-remote`（直、快，但依赖 **git 传输通道**）；
+    ② **GitHub API**（`git/matching-refs` ＋ peel）—— git 通道不通时**自动回退**。
+
+    为什么要有回退（E37 实测）：发布流程**只该被"远端身份对不对"卡住**，
+    不该被"这台机器此刻能不能跑 git 传输"卡住 —— E37 那天 `github.com:443`
+    在 **TLS 层被选择性阻断**（TCP 层可连、`ls-remote` 21 秒超时），
+    而 `api.github.com` **完全正常** ⇒ 没有回退的话，那天 Release 根本发不出去
+    （而"发不出去"恰恰是最该由代码而不是由网络运气决定的事）。
+    """
+    out = git(repo, "ls-remote", "--tags", "origin")
+    if out.strip():
+        return parse_ls_remote(out)
+    if token:
+        return remote_tags_via_api(token, repo)
+    return {}
+
+
+def parse_matching_refs(entries):
+    """GitHub API 的 `git/matching-refs` → {tag: (object_sha, object_type)}。
+
+    纯函数（可单测）：API 返回的每条是 `{"ref": "refs/tags/vX.Y.Z", "object": {...}}`；
+    **annotated tag 的 object 是 tag 对象**（不是 commit）⇒ 还要 peel 一步。
+    """
+    res = {}
+    for e in entries or []:
+        ref = e.get("ref") or ""
+        if not ref.startswith("refs/tags/"):
+            continue
+        obj = e.get("object") or {}
+        res[ref[len("refs/tags/"):]] = (obj.get("sha"), obj.get("type"))
+    return res
+
+
+def peel_object(obj_json):
+    """`GET /git/tags/{sha}` 的响应 → 它指向的 **commit sha**（或 None）。
+
+    纯函数（可单测）：annotated tag → tag 对象 → 再一层才是 commit。
+    """
+    obj = (obj_json or {}).get("object") or {}
+    if obj.get("type") == "commit":
+        return obj.get("sha")
+    return None
+
+
+def remote_tags_via_api(token, repo=REPO):
+    """{tag: commit_sha} —— **纯 API 通道**（git 传输不通时用）。
+
+    ⚠️ `matching-refs` 默认一页 30 条 ⇒ 显式 `per_page=100`；
+    若**恰好**返回 100 条则**明确报错**（不静默截断——那会变成"少核了几个 tag"）。
+    """
+    import urllib.request
+    api = "https://api.github.com/repos/%s/%s/git/matching-refs/tags/?per_page=100" % (OWNER, NAME)
+    hdr = {"Accept": "application/vnd.github+json", "User-Agent": "jiangzuo-identity"}
+    if token:
+        hdr["Authorization"] = "token " + token
+    req = urllib.request.Request(api, headers=hdr)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        entries = json.load(r)
+    if len(entries) >= 100:
+        raise RuntimeError(
+            "matching-refs 返回 %d 条（>= per_page 上限）⇒ 可能有 tag 没被核到；"
+            "**不静默截断**——请分页取全后再跑" % len(entries))
+    refs = parse_matching_refs(entries)
+    out = {}
+    for name, (sha, typ) in refs.items():
+        if not sha:
+            continue
+        if typ == "commit":
+            out[name] = sha
+        elif typ == "tag":
+            url = "https://api.github.com/repos/%s/%s/git/tags/%s" % (OWNER, NAME, sha)
+            req = urllib.request.Request(url, headers=hdr)
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    peeled = peel_object(json.load(r))
+            except Exception:       # noqa: BLE001 —— 核不到就跳过，但**不假装通过**
+                peeled = None
+            if peeled:
+                out[name] = peeled
+    return out
 
 
 def remote_releases(token, repo=REPO):
@@ -420,11 +500,12 @@ def check_remote(token=None, verbose=True, repo=REPO):
         return ([u"读不到真源，无法核远端"], {})
     items = truth_data.get("tags") or {}
     try:
-        rt = remote_tags(repo)
+        rt = remote_tags(repo, token)
     except Exception as e:          # noqa: BLE001 —— 核不到就如实说，不当通过
         return ([u"ls-remote 拿不到远端 tag（%s）" % e], {})
     if not rt:
-        return ([u"ls-remote 拿不到远端 tag（网络或 remote 不对）"], {})
+        return ([u"ls-remote 拿不到远端 tag（网络或 remote 不对；"
+                u"git 通道不通时应回退到 API 通道——检查 token 是否传了）"], {})
 
     # ① 远端 tag 集合 == 真源 tag 集合
     for t in sorted(set(rt) - set(items)):

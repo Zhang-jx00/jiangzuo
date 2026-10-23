@@ -18,14 +18,16 @@
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
 2. 状态：**v0.71.0 已交付并推送**（`c4f1348`，tag `v0.71.0` 同笔）；**发布产物的「身份」现在有人守了**（E37：新增第 26 项 —— 每个 tag 指向的 commit 真的属于那个版本；远端 `v0.51.0` 指错 commit 的根因也修掉了）。
-   ⚠️ **CI 尚红、Release 待重发（2026-10-23 当天如实记）**：版本笔的 CI run **`39904985872` 红在第 4 步 validate** ——
+   **CI 与发行（2026-10-23 当天如实记）**：版本笔的 CI run **`39904985872` 红在第 4 步 validate** ——
    原因是新增的第 26 项**如实报出了远端 `v0.51.0` 指错 commit**（本地已用 `git update-ref` 临时改指向**精确复现**同一句错误，随后还原）；
    该 tag 已按所有者授权**移动**（`d5b88e1...60790e3 forced update`）⇒ 远端 69 个 tag 现与本地**逐条同 commit**；
-   而 **v0.71.0 的 GitHub Release 曾发出、后撤回**（发出时 CI 尚红 ⇒ 次序不合本项目「CI 全绿后才发 Release」的规矩）⇒ **待 CI 转绿后重发**。
+   修复后的补记笔 CI run **`39906612809` 七道 success**；**v0.71.0 的 Release 曾发出、后按所有者决定撤回**
+   （发出时 CI 尚红 ⇒ 次序不合本项目「CI 全绿后才发 Release」的规矩）⇒ **已在 CI 转绿后重发**，
+   **发完自证：远端 69 个 tag 与本地逐条同 commit、Release 69 个 ✓**。
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-10-23 当场重跑**：264 用例 OK ｜ validate **29** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-23 当场重跑**：266 用例 OK ｜ validate **29** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
    变异校准 **70/70 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.300 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
@@ -187,7 +189,8 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
     ⇒ 那一层核的就是远端）⇒ 修完之后该判据变绿 ⇒ **判据不是摆设，是真的会红**。
   - ⚠️ **v0.71.0 的 GitHub Release 曾发出、后撤回**：发出时 CI 尚红（run `39904985872` 第 4 步 validate 失败）
     ⇒ **次序不合本项目「CI 全绿后才发 Release」的规矩**（我先发 Release、后核 CI）⇒ 按所有者决定**撤回**，
-    **待 CI 转绿后重发**（Release 正文本身正确，撤回只为把次序摆正）。撤回时 **tag `v0.71.0` 未被连带删除**
+    **已在 CI 转绿后重发**（CI run `39906612809` 七道 success 之后），**发完自证**：远端 69 个 tag 与本地
+    逐条同 commit、Release 69 个 ✓。撤回时 **tag `v0.71.0` 未被连带删除**
     （GitHub 删 release 不删 tag；已核：ref 仍是 annotated tag 对象 `9ba47406`）。
 ## 3. 十条核心不变量（改任何东西前先守这几条）
 
@@ -264,7 +267,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 29 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 264 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 266 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -1023,7 +1026,7 @@ git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望�
 grep -n "version:" SKILL.md          # 期望：0.60.0
 python scripts/validate_skill.py .   # 期望：29 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 264 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 266 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

@@ -190,7 +190,7 @@
         "mutation_cases": 70,
         "rules_active": 33,
         "rules_disabled": 1,
-        "tests": 264
+        "tests": 266
       }
     }
   },
@@ -313,7 +313,7 @@
     "mutation_cases": 70,
     "rules_active": 33,
     "rules_disabled": 1,
-    "tests": 264
+    "tests": 266
   },
   "version": "0.70.0"
 }

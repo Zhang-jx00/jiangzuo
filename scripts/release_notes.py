@@ -113,15 +113,18 @@ def tag_sha(tag):
     return p.stdout.decode("utf-8", "replace").strip()
 
 
-def remote_tag_map():
+def remote_tag_map(token=None):
     """{tag: commit} —— 远端 tag 指向的 commit；**核不到返回 None**。
 
     核不到不是"通过"⇒ 调用方必须拒绝发布（见 `do_publish`）。
+    ⚠️ token 要传下去：`release_identity.remote_tags` 在 **git 传输通道不通**时
+    会回退到 **API 通道**（E37 实测：那天 `github.com:443` 在 TLS 层被选择性阻断，
+    而 `api.github.com` 正常 ⇒ 没回退的话 Release 发不出去）。
     """
     if release_identity is None:
         return None
     try:
-        m = release_identity.remote_tags()
+        m = release_identity.remote_tags(release_identity.REPO, token)
     except Exception:           # noqa: BLE001 —— 网络/远端异常都算"核不到"
         return None
     return m or None
@@ -252,7 +255,7 @@ def do_publish(token, only=None):
     # 而不是 v0.51.0 的代码 ⇒ 谁 checkout v0.51.0 拿到的都是别的版本。
     # 而「68 tag / 68 Release 一一对应、零缺口」当时是**真的**——它只数了名字与数量。
     # ⇒ 这里改成：**远端 tag 不存在或指向不对 ⇒ 拒绝发布**，并说清要做什么。
-    rtags = remote_tag_map()
+    rtags = remote_tag_map(token)
     if rtags is None:
         print("核不到远端 tag（ls-remote 失败或 remote 不对）⇒ 拒绝发布。")
         print("  宁可不发，也不在 main HEAD 上自动造出一个同名 tag。")

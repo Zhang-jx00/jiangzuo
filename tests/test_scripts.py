@@ -5771,6 +5771,38 @@ class TestReleaseIdentity(unittest.TestCase):
         r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
         self.assertIn(u"发布产物的身份", r.stdout)
 
+    def test_matching_refs_parse(self):
+        """绿：API 的 `matching-refs` 响应能解析成 {tag: (sha, type)}。
+
+        为什么要有这条：E37 实测那天 `github.com:443` 在 **TLS 层**被选择性阻断
+        （TCP 可连、`ls-remote` 21 秒超时），而 `api.github.com` **完全正常**
+        ⇒ 核远端 tag 必须有**API 回退通道**，否则发布流程会被网络运气卡住。
+        """
+        entries = [
+            {"ref": "refs/tags/v0.71.0",
+             "object": {"sha": "9ba47406", "type": "tag"}},
+            {"ref": "refs/tags/v0.20.0",
+             "object": {"sha": "f267f803", "type": "commit"}},
+            {"ref": "refs/heads/main",
+             "object": {"sha": "abcdef01", "type": "commit"}},
+        ]
+        got = self.ri.parse_matching_refs(entries)
+        self.assertEqual(got.get("v0.71.0"), ("9ba47406", "tag"))
+        self.assertEqual(got.get("v0.20.0"), ("f267f803", "commit"))
+        self.assertNotIn("main", got)      # 只认 refs/tags/ 前缀
+
+    def test_api_channel_peels_annotated_tag(self):
+        """绿：API 通道把 annotated tag **peel 到 commit**。
+
+        轻量 tag 的 object 直接就是 commit；annotated tag 的 object 是 tag 对象
+        ⇒ 必须再 peel 一层，否则拿到的不是 commit（比对就会全错）。
+        """
+        self.assertEqual(self.ri.peel_object(
+            {"object": {"type": "commit", "sha": "d5da9f39"}}), "d5da9f39")
+        self.assertIsNone(self.ri.peel_object(
+            {"object": {"type": "tag", "sha": "60790e32"}}))
+        self.assertIsNone(self.ri.peel_object({}))
+
 
 if __name__ == "__main__":
     unittest.main()
