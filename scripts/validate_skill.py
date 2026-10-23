@@ -1390,6 +1390,66 @@ def check_release_identity(skill_dir):
     return release_identity.check_local(err, info, skill_dir)
 
 
+def check_release_consistency(skill_dir):
+    """第 27 项：**发布产物一致性核验器**必须随技能分发、零依赖、**三态退出码**（E39）。
+
+    为什么要有这一项：E39 复核发现 —— 远端发出去的东西（tag ↔ GitHub Release）
+    **CI 上从来没有任何一项在核**：第 26 项核的是**本地 git 对象**（碰不到远端），
+    而 `release_identity.py --remote` 准但**要 token、要手动跑**。
+    ⇒ 补上一个**匿名 API** 的核验器，并由 CI 作业跑。
+
+    ⚠️ 这一项**只核结构、只核离线**（validate 不联网）：
+      ① 核验器在库里 ② 零依赖（CI 要能直接跑）③ **三态退出码**齐全
+      （0 一致／1 不一致／2 **没核成**）④ CI 作业**处理了「没核成」那一态**。
+    ⇒ 「没核成」若被当成「通过」，就是一把**恒绿的空锁**（比没锁更坏）——
+    所以这一项要**在结构层面**就把那条分支钉住。
+    """
+    script = os.path.join(skill_dir, "scripts", "release_consistency.py")
+    # ⚠️ **适用性判定**（E39 实测踩到）：这一项若无条件要求那两个文件存在，
+    #   `validate` 跑到**别人的最小技能目录**（测试夹具、用户拷走的技能副本）时
+    #   必然红 ⇒ 那是一道**在逼人说假话的锁**（E36/E38 各修过一个同类的）。
+    #   ⇒ 照第 23 项（current_state）的做法：**用结构判定"这是不是将作自己的仓库"**
+    #   （校准器 + 判定表两个标志），不是本仓库才要求这两个文件。
+    is_jiangzuo = (os.path.isfile(os.path.join(skill_dir, "scripts", "mut_calibrate.py"))
+                   and os.path.isfile(os.path.join(skill_dir, "evals",
+                                                  "finding-verdicts.md")))
+    if not is_jiangzuo:
+        return None
+    if not os.path.isfile(script):
+        err(u"缺 scripts/release_consistency.py——远端发布产物的自洽核验器"
+            u"（tag ↔ GitHub Release）没有随技能分发，CI 上没人核它")
+        return None
+    with io.open(script, "r", encoding="utf-8", errors="replace") as f:
+        src = f.read()
+    problems = []
+    for bad in ("import requests", "import yaml", "import httpx"):
+        if bad in src:
+            problems.append(u"release_consistency.py 依赖了第三方（%s）⇒ CI 装不了"
+                            % bad.strip("import "))
+    for name, value in (("EXIT_OK", "0"), ("EXIT_MISMATCH", "1"), ("EXIT_NOT_CHECKED", "2")):
+        if not re.search(r"^%s\s*=\s*%s\s*$" % (name, value), src, re.M):
+            problems.append(u"release_consistency.py 缺三态退出码 %s = %s"
+                            % (name, value))
+    wf = os.path.join(skill_dir, ".github", "workflows", "release-consistency.yml")
+    if not os.path.isfile(wf):
+        problems.append(u"缺 .github/workflows/release-consistency.yml"
+                        u"——核验器有了，却没人跑它")
+    else:
+        with io.open(wf, "r", encoding="utf-8", errors="replace") as f:
+            wtxt = f.read()
+        if "release_consistency.py" not in wtxt:
+            problems.append(u"release-consistency.yml 里没有跑那个核验器")
+        if u"没核成" not in wtxt:
+            problems.append(u"release-consistency.yml 里**没有处理「没核成」那一态**"
+                            u"⇒ 限流时那一步会被当成通过 ⇒ 一把**恒绿的空锁**")
+    for p in problems:
+        err(u"[发布产物一致性] " + p)
+    if not problems:
+        info(u"发布产物一致性核验器已随技能分发（零依赖、三态退出码；"
+             u"远端那一侧由 CI 作业跑，限流时明说「没核成」而不是假绿）")
+    return not problems
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -1472,6 +1532,7 @@ def main():
             check_current_state(skill_dir)
             check_micro_test_claims(skill_dir)
             check_release_identity(skill_dir)
+            check_release_consistency(skill_dir)
 
     # 第 23 项的收尾：校验器**自己报的条数**也要与真源对账
     # （"validate 22 信息"这句话在交接文档里出现两处，E33 之前它们互相矛盾过）。

@@ -5890,5 +5890,85 @@ class TestMdTableColumns(unittest.TestCase):
                          "代码块里的表格被当成真表格了")
 
 
+class TestReleaseConsistency(unittest.TestCase):
+    """E39：**远端**发布产物自洽核验（tag ↔ GitHub Release）—— CI 上从没有人在核。
+
+    为什么要有这个（E39 复核）：本仓库有两条"发布产物"的一致性检查，
+      · `validate` 第 26 项（E37）核**本地 git 对象**里每个 tag 指向的 commit ⇒ 碰不到远端；
+      · `release_identity.py --remote`（E37）核远端三边 ⇒ 准，但**要 token、要手动跑**。
+    ⇒ **少发一个 Release、tag 与 Release 对不上 ⇒ CI 上没人会发现。**
+
+    ⚠️ 这个核验的**三态退出码**是它的要害：
+      0 = 核过了且一致 ｜ 1 = 核过了且**不一致**（真问题，必红）｜
+      2 = **没核成**（限流 / 网络）⇒ **绝不能当成 0**。
+    ⇒ 「没核成」若被当成「通过」，就是一把**恒绿的空锁**——比没锁更坏。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, SCRIPTS)
+        import release_consistency
+        cls.rc = importlib.reload(release_consistency)
+
+    def _patch(self, rel_names, tag_names, local=None):
+        """把脚本的两个远端读取函数换成假的（不联网）。"""
+        self.rc.remote_release_names = lambda: (set(rel_names), 0, 0, "60")
+        self.rc.remote_tag_names = lambda: (set(tag_names), "59")
+        self.rc.local_tag_names = lambda: set(local or [])
+
+    def test_mismatch_must_exit_nonzero(self):
+        """红：Release 与 tag 对不上 ⇒ 必须**非零**退出（真问题必红）。"""
+        self._patch(rel_names=["v0.1.0", "v0.2.0"], tag_names=["v0.1.0"], local=["v0.1.0"])
+        code, out = self.rc.check()
+        self.assertEqual(code, self.rc.EXIT_MISMATCH, out)
+        self.assertTrue(any(u"没有对应" in o for o in out), out)
+
+    def test_not_checked_must_not_be_reported_as_ok(self):
+        """红：**没核成**（限流/网络）⇒ 退出码 **2**，**绝不是 0**。
+
+        这是本类最要紧的一条：**「没核成」若被当成「通过」，就是恒绿的空锁**。
+        """
+        def boom():
+            raise IOError(u"模拟：连接被重置")
+        self.rc.remote_release_names = boom
+        self.rc.remote_tag_names = boom
+        code, out = self.rc.check()
+        self.assertEqual(code, self.rc.EXIT_NOT_CHECKED, out)
+        self.assertNotEqual(code, self.rc.EXIT_OK, "没核成被当成了通过")
+        self.assertTrue(any(u"没核成" in o for o in out), out)
+
+    def test_consistent_must_exit_zero(self):
+        """绿：一致 ⇒ 退出码 0。"""
+        self._patch(rel_names=["v0.1.0", "v0.2.0"], tag_names=["v0.1.0", "v0.2.0"],
+                    local=["v0.1.0", "v0.2.0"])
+        code, out = self.rc.check()
+        self.assertEqual(code, self.rc.EXIT_OK, out)
+
+    def test_workflow_exists_and_handles_not_checked(self):
+        """绿：CI 作业存在，且**处理了「没核成」那一态**（不许静默变绿）。
+
+        为什么要有这条：脚本自己会返回 2，但**作业怎么处置 2** 是另一件事 ⇒
+        若作业把 2 当成功，绿灯就意味着"什么都没核"⇒ **恒绿的空锁**。
+        """
+        p = os.path.join(REPO, ".github", "workflows", "release-consistency.yml")
+        self.assertTrue(os.path.isfile(p), "缺 %s" % p)
+        with io.open(p, "r", encoding="utf-8") as f:
+            txt = f.read()
+        self.assertIn("release_consistency.py", txt)
+        self.assertIn("exit_code", txt)
+        # 「没核成」（非 0 且非 1）必须有独立分支，且要留痕
+        self.assertIn(u"没核成", txt)
+        self.assertIn("::notice::", txt)
+
+    def test_checker_is_shipped_and_dependency_free(self):
+        """绿：核验器**随技能分发**且**零依赖**（它要能被 CI 直接跑）。"""
+        p = os.path.join(SCRIPTS, "release_consistency.py")
+        self.assertTrue(os.path.isfile(p))
+        with io.open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        for bad in ("import requests", "import yaml", "import httpx", "from pip"):
+            self.assertNotIn(bad, src)
+
+
 if __name__ == "__main__":
     unittest.main()

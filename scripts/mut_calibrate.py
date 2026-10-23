@@ -855,6 +855,26 @@ CASES = [
      "md-table-orphan-row-treated-as-table",
      "tests.test_scripts.TestMdTableColumns."
      "test_orphan_pipe_row_is_not_a_table"),
+    # ---- E39（v0.73.0）：远端发布产物的自洽核验（tag ↔ Release） ----
+    # ① 「不一致」被当成「通过」⇒ 真问题不再会让 CI 红 ⇒ 判据必须红。
+    ("scripts/release_consistency.py",
+     "        return EXIT_MISMATCH, out",
+     "        return EXIT_OK, out  # E39 校准：把不一致当成通过",
+     "release-consistency-mismatch-treated-as-ok",
+     "tests.test_scripts.TestReleaseConsistency."
+     "test_mismatch_must_exit_nonzero"),
+    # ② 「没核成」（限流/网络）被当成「通过」⇒ 一把**恒绿的空锁** ⇒ 判据必须红。
+    #    ⚠️ 锚点要挑**测试真正走的那条分支**：测试里模拟的是"抛异常"（网络异常），
+    #    **不是** 403/429 ⇒ 所以变异必须落在 `except Exception` 分支上
+    #    （E39 第一版挑了 403 分支 ⇒ 变异对它毫无影响 ⇒ 校准跑出 GREEN＝锁无效）。
+    ("scripts/release_consistency.py",
+     '        out.append("**没核成**：访问 GitHub API 失败（%s）" % e)\n'
+     "        return EXIT_NOT_CHECKED, out",
+     '        out.append("**没核成**：访问 GitHub API 失败（%s）" % e)\n'
+     "        return EXIT_OK, out  # E39 校准：把没核成当成通过",
+     "release-consistency-not-checked-treated-as-ok",
+     "tests.test_scripts.TestReleaseConsistency."
+     "test_not_checked_must_not_be_reported_as_ok"),
 ]
 
 

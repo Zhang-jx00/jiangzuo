@@ -28,9 +28,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-10-23 当场重跑**：271 用例 OK ｜ validate **29** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-23 当场重跑**：276 用例 OK ｜ validate **30** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **72/72 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.465 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **74/74 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.439 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -271,9 +271,9 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ```bash
 cd "D:/Github项目/jiangzuo/jiangzuo"
-python scripts/validate_skill.py .            # 期望 29 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .            # 期望 30 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 271 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 276 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -295,6 +295,7 @@ README 的规则条数与实物一致（34 条含 1 停用）｜ 分册全部登
 **微测台账的判定不许脱离数据**（E35，第 24 项：状态格只能是规程允许的判定，且必须与实测失败率差对上 ⇒ **改结论不改数据当场红**）｜
 **两个门面的计数与预算**（E36：第 7 项扩成**中英各查一遍** ＋ 入口行数比**正文行数** ＋ description/entry 字符数也纳入）｜
 **台账自身不许被写坏**（E36，第 25 项：版本条目不得重复 ＋ CHANGELOG 必须降序 ＋ 验收记录/交接文档**按表分块**查重）｜
+**远端发布产物的自洽**（E39，第 27 项：核验器**随技能分发** ＋ 零依赖 ＋ **三态退出码**（0 一致／1 不一致＝真问题必红／2 **没核成**＝限流或网络 ⇒ **绝不当成通过**）＋ CI 作业**处理了「没核成」那一态**）｜
 **发布产物的「身份」**（E37，第 26 项：真源 `evals/release-identity.json` ＋ 每个 tag 指向的 commit **真的属于那个版本** ⇒
 「tag 存在」不等于「tag 是它该有的那个」；⚠️ **没有 tag 的目录不适用这一项**，且 CI 的 `checkout` 已改 `fetch-depth: 0` ＋ `fetch-tags: true`
 ——否则这一项在 CI 上只能发一句「这轮没跑」，等于一把**恒绿的空锁**）。
@@ -998,6 +999,7 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 | **E36** ✅ | v0.70.0 | **门面（中英两个 README）都有人守** ＋ 修掉一道**在逼人说假话的锁** | 英文 README 停在 **2026-10-06**（v0.3x 遗物）：写着 4 个脚本 / 222 行 / 373 字符 / 12 个模板 / 16 本分册，**整条安全审计链主线一个字没提** ⇒ 而它恰是英文读者与 skills.sh 生态看到的那一面 ⇒ **门面的另一半没人守**；另查出一条**锁在逼人说假话**：入口行数的真源是**文件总行数**（212），而 **500 上限约束的是正文**（201 行）⇒ 文档只好写总行数，**说真话反而被判错** | ① 英文 README 整体重写：对齐当前实现（20 分册 / 14 模板 / 18 脚本 / 34 规则 / 正文 201 行 / description 241 字符 / entry 290 字符）**并补上安全审计链这条主线**（十步扫描链 + 规则库 + 真实仓库实测数字）；② `validate` 第 7 项扩成**中英各查一遍**（分册/模板/脚本/规则/入口行数/description/entry 字符数），**入口行数的真源改成正文行数** ⇒ 说真话不再被判错；③ 判据 `TestReadmeCounts` **4 条**（含一条专门锁「别逼人说假话」：写正文行数过、写总行数红）；④ **口径一字未动**（引擎一行没改 ⇒ 三仓数字与误报率全部不变） |
 | **E37** ✅ | v0.71.0 | **发布产物的「身份」必须有人守**（远端 `v0.51.0` 指错了 commit） | E36 那句「68 tag / 68 Release 一一对应、零缺口」当时**是真的**——它只数了**名字与数量**。E37 复核查出：远端 `refs/tags/v0.51.0` 是**轻量** tag，指向 `d5b88e1a`（**v0.66.0 的补记笔**，2026-10-22），而不是 v0.51.0 的代码（`d5da9f39`，E17 当轮打的 annotated tag，tagger 时间戳 `1792578222 +0800`）⇒ **谁 `git checkout v0.51.0` 拿到的都是别的版本**。根因**已证实**：`release_notes.py --publish` 调 `POST /releases` 时 ① **没带 `target_commitish`**（GitHub 默认用 main）② **不检查远端该 tag 是否已存在** ⇒ 补发一个「远端还没有 tag」的版本时，GitHub 会在 main 的 HEAD 上**自动造出**一个同名 tag（远端 `v0.51.0` 的 `created_at` 与它那个 Release 的 `created_at` **同秒** ⇒ 正是这条路径）。⚠️ 「E17 那轮为何远端缺这个 tag」**未验证**（当时的推送记录已不可查）⇒ **不猜**  | ① 新增 `scripts/release_identity.py`（零依赖：`--sync`/`--check`/`--remote`/`--print`）＋真源 `evals/release-identity.json`（**脚本生成**，不手抄 sha）；**owner 规则**＝「tag vX.Y.Z 指向的 commit，其 subject 中第一个版本号必须恰好是 X.Y.Z」（⚠️ **不用**「第一个含该版本号的 commit」：实测本地 68 个 tag 里有 3 个（v0.36.1/v0.40.0/v0.61.0）指向的不是第一笔 ⇒ 那条规则 **4.4% 不成立**，拿它当判据就是造一把会把正确历史判错的锁）；② **根因修复**：`--publish` 现在**先核远端 tag**，缺失或指向不对 ⇒ **拒绝发布**，发布时显式带 `target_commitish`，发完**回头自证**；③ `validate` **第 26 项** ＋ CI 的 `checkout` 改 `fetch-depth: 0`/`fetch-tags: true`（否则这一项在 CI 上只能发一句「这轮没跑」⇒ 一把**恒绿的空锁**）；④ 判据 **9 条**、变异校准 **70/70 全红**；⑤ **口径一字未动**（引擎一行没改 ⇒ 三仓数字与误报率全部不变）；🔴 当时**未收口**：修远端那个 tag ＝ **移动已发布 tag** ＝ 停牌项 ⇒ **已在同一轮内获授权并修复**（`forced update`）⇒ 远端 69 个 tag 现与本地**逐条同 commit**（详见 §2） |
 | **E38** ✅ | v0.72.0 | **Markdown 表格的结构第一次有人守**（并让进化账本在 GitHub 上**真的渲染成表格**） | E37 记下的候选（第 18 项）：`evolution.md` 的账本「最近 8 行列数与表头对不上」⇒ 而**没有任何判据**知道那意味着什么 ⇒ E38 扫全仓（58 个 .md / 150 个表格块（**合并前**的数；合并后 **147** —— `evolution.md` 的碎块合成了 1 张））⇒ **14 行**列数不符。⚠️ **更正 E37 的一处不准确说法**：E37 写的是「渲染错位」——**机制说错了**：GFM 要求「表头 + 分隔行」才构成表格，而那张表**用空行隔行**⇒ 空行后的每行**都不是表** ⇒ **整张台账在 GitHub 上根本没渲染成表格**（是一堆以 `\|` 开头的段落） | ① 把那张表**合并成一张连续表**（删 18 个空行）⇒ 顺带让第 12 项的「上表 N 条」对账**自动生效**（它此前只在"恰好一张表"时判 ⇒ 碎块状态下形同虚设）；② 第 12 项新增第三条「**表内每行的列数必须与表头一致**」⇒ ⚠️ **按 GFM 规则**数列（`\|` 是转义、不算分隔符）⇒ 不把 `ls scripts/*.py \| wc -l` 这种**合法**写法误判成多一列；③ 修掉 14 处（11 行**插空格子**、3 行**并回多出的格子**）—— **不编值**（编值就是手数的偏差）⇒ ⚠️ 其中**一处是 E37 自己新加的那一行**⇒ **新判据上线第一件事就逮到我自己** |
+| **E39** ✅ | v0.73.0 | **远端发布产物的自洽进 CI**（此前 CI 上**没有任何一项**在核"发出去的东西"） | ① `validate` 第 26 项（E37）核的是**本地 git 对象** ⇒ **碰不到远端**；② `release_identity.py --remote` 准，但**要 token、要手动跑** ⇒ ⇒ 少发一个 Release、tag 与 Release 对不上，**没有任何东西会发现** ⇒ ① `scripts/release_consistency.py`（**零依赖**、**匿名 API**、**只花 2 次调用** ⇒ 限流友好）＋ CI 作业 `release-consistency.yml`（push / 每日 schedule / 手动）⇒ 核「远端 Release 集合 == 远端 tag 集合（零缺口）＋ 数量与本地一致」；② ⚠️ **三态退出码**（0 一致／1 不一致＝真问题必红／2 **没核成**＝限流或网络 ⇒ **绝不当成通过**）⇒ 作业把 2 单独分支（step summary ＋ `::notice::`）⇒ **不假绿**；③ `validate` **第 27 项**把"三态 + 作业处理了那一态"钉住；④ **改判一条候选**：E38 的「台账『行数收支』机器算」—— E39 实测**「从台账文本反推对应 commit」不可靠**（64 行里 58 行无法用版本号定位、且有错配）⇒ 改判为「提供工具、不做自动核验」 |
 
 ## 12. 路径与搬家史（为什么现在在这，以及再搬家要注意什么）
 
@@ -1047,9 +1049,9 @@ git rev-list --count HEAD            # 期望：88
 git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望：https://Zhang-jx00:<CREDENTIAL>@github.com/...
 
 grep -n "version:" SKILL.md          # 期望：0.60.0
-python scripts/validate_skill.py .   # 期望：29 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .   # 期望：30 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 271 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 276 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

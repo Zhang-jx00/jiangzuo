@@ -1,0 +1,75 @@
+name: release-consistency
+
+# 核**远端**的发布产物是否自洽（tag ↔ GitHub Release）。
+#
+# 为什么要有这个（E39）：本仓库有两条"发布产物"的一致性检查，
+#   · `validate` 的第 26 项（E37）：核**本地 git 对象**里每个 tag 指向的 commit
+#     真的属于那个版本 ⇒ 靠的是本地仓库，**碰不到远端发出去的东西**；
+#   · `scripts/release_identity.py --remote`（E37）：核远端 tag ↔ 真源 ↔ Release
+#     三边 ⇒ 准，但**要 token、要手动跑** ⇒ **CI 上从来没有一项在核它**。
+# ⇒ 少发一个 Release、tag 与 Release 对不上 ⇒ 都没人会发现。
+#
+# 这个作业用**匿名 API**（不写任何凭据）补上那一环，且**只花两次调用**
+# （匿名额度 60 次/小时，CI 共享 IP ⇒ 必须省）。
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 每日一次（避开整点：整点是全世界 CI 最挤的时候）
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 需要本地 tag（脚本会核「远端 Release 数 vs 本地 tag 数」）
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 核远端发布产物自洽（tag ↔ Release）
+        id: consistency
+        run: |
+          set +e
+          python scripts/release_consistency.py --check
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          # **不让这一步自己失败**：三态退出码要在下一步分开处理
+          # （0 一致／1 不一致＝真问题／2 没核成＝限流或网络）
+          exit 0
+
+      - name: 结论写进摘要（**没核成也要看得见**）
+        if: always()
+        run: |
+          rc=${{ steps.consistency.outputs.exit_code }}
+          {
+            echo "### 发布产物远端一致性核验"
+            echo ""
+            if [ "$rc" = "0" ]; then
+              echo "✅ **核过了，且一致**（远端 Release 与远端 tag 一一对应、零缺口）"
+            elif [ "$rc" = "1" ]; then
+              echo "❌ **核过了，且不一致** —— 远端发布产物与 tag 对不上（见上方输出）"
+            else
+              echo "⚠️ **这轮没核成**（退出码 $rc）—— **不是\"通过\"**。"
+              echo "   常见原因：GitHub 匿名 API 限流（60 次/小时）、网络不通。"
+              echo "   ⇒ 下一轮（每日 schedule 或下次 push）会自动重试。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 不一致 ⇒ 失败（**真问题必红**）
+        if: steps.consistency.outputs.exit_code == '1'
+        run: |
+          echo "::error::远端发布产物与 tag 对不上（退出码 1）——请核远端 Release 与 tag"
+          exit 1
+
+      - name: 没核成 ⇒ 用注解留痕（**不假绿**）
+        if: steps.consistency.outputs.exit_code != '0' && steps.consistency.outputs.exit_code != '1'
+        run: |
+          echo "::notice::发布产物一致性这轮**没核成**（退出码 ${{ steps.consistency.outputs.exit_code }}）——不是通过"

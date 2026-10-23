@@ -85,7 +85,7 @@ jiangzuo/
 ├── SKILL.md          # Entry: <500 lines. Core loop, tiering, hard gates, router, anti-rationalization table
 ├── references/       # 20 booklets (progressive disclosure: read the one for your phase)
 ├── templates/        # 14 fill-in templates (plans, ADR, API contract, postmortem, delivery report…)
-├── scripts/          # 19 stdlib-only scripts
+├── scripts/          # 20 stdlib-only scripts
 │   ├── audit-rules/  # Built-in rule library: 34 declarative rules (1 disabled by data)
 └── evals/            # Trigger tests, red tests, task evals, micro-tests, release-identity truth (E37)
 ```
