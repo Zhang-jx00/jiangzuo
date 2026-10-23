@@ -17,7 +17,11 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.70.0 已交付并推送**（`8e22edf`，tag `v0.70.0` 同笔，CI run `39896946451` **七道** success）；**纪律层的「行为收益」有实测了**（E35：微测 A 0/5 vs B 0/5 ⇒ **基线未红** ⇒ 记作**回归哨兵**、**不得对外声称行为收益**；`validate` 第 24 项守住"判定不许脱离数据"）；
+2. 状态：**v0.71.0 已交付并推送**（`c4f1348`，tag `v0.71.0` 同笔）；**发布产物的「身份」现在有人守了**（E37：新增第 26 项 —— 每个 tag 指向的 commit 真的属于那个版本；远端 `v0.51.0` 指错 commit 的根因也修掉了）。
+   ⚠️ **CI 尚红、Release 待重发（2026-10-23 当天如实记）**：版本笔的 CI run **`39904985872` 红在第 4 步 validate** ——
+   原因是新增的第 26 项**如实报出了远端 `v0.51.0` 指错 commit**（本地已用 `git update-ref` 临时改指向**精确复现**同一句错误，随后还原）；
+   该 tag 已按所有者授权**移动**（`d5b88e1...60790e3 forced update`）⇒ 远端 69 个 tag 现与本地**逐条同 commit**；
+   而 **v0.71.0 的 GitHub Release 曾发出、后撤回**（发出时 CI 尚红 ⇒ 次序不合本项目「CI 全绿后才发 Release」的规矩）⇒ **待 CI 转绿后重发**。
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
@@ -173,12 +177,18 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
   - **已修（防复发）**：`--publish` 现在**先核远端 tag**，缺失或指向不对 ⇒ **拒绝发布**；
     发布时显式带 `target_commitish`；发完**回头自证**。另有
     `scripts/release_identity.py --remote` 可随时核（远端 tag ↔ 真源 ↔ Release 三边对账）。
-  - 🔴 **未收口（停牌项，需所有者点头）**：修远端那个 tag ＝ **移动已发布 tag**。
-    方案：`git push --force origin refs/tags/v0.51.0:refs/tags/v0.51.0`
-    （推本地那个正确的 annotated tag 覆盖远端那个自动造出来的轻量 tag）。
-    ⚠️ 这会让 GitHub 上 `v0.51.0` 的指向从 `d5b88e1a` 变成 `d5da9f39` ⇒ **对外可见**，
-    且该 tag 对应的 Release 也会随之指向正确的代码 ⇒ **动作不可逆** ⇒ 未获点头前**不做**。
-    做完之后 `release_identity.py --remote` 应从「1 条不符」变成「全部一致」。
+  - ✅ **已修（2026-10-23，当所有者授权后执行）**：`git push --force origin refs/tags/v0.51.0:refs/tags/v0.51.0`
+    ⇒ GitHub 上 `v0.51.0` 的指向从 `d5b88e1a` 变成 **`d5da9f39`**（`d5b88e1...60790e3 forced update`）
+    ⇒ 该 tag 对应的 Release 也随之指向正确的代码。
+    **验证**：`release_identity.py --remote` 从「**恰好 1 条**不符（其余 67 个逐条同 commit、零假阳性）」
+    变成「远端 69 个 tag **逐条与本地同 commit**」，只剩「v0.71.0 有 tag 没 Release」——
+    那一条是**故意撤回**的（见下），等 CI 转绿后重发即闭合。
+    ⚠️ **判据的闭环**：这条错 tag 是被**新增的第 26 项**在 CI 上**如实报出**的（CI 的 tag 是从远端 fetch 的
+    ⇒ 那一层核的就是远端）⇒ 修完之后该判据变绿 ⇒ **判据不是摆设，是真的会红**。
+  - ⚠️ **v0.71.0 的 GitHub Release 曾发出、后撤回**：发出时 CI 尚红（run `39904985872` 第 4 步 validate 失败）
+    ⇒ **次序不合本项目「CI 全绿后才发 Release」的规矩**（我先发 Release、后核 CI）⇒ 按所有者决定**撤回**，
+    **待 CI 转绿后重发**（Release 正文本身正确，撤回只为把次序摆正）。撤回时 **tag `v0.71.0` 未被连带删除**
+    （GitHub 删 release 不删 tag；已核：ref 仍是 annotated tag 对象 `9ba47406`）。
 ## 3. 十条核心不变量（改任何东西前先守这几条）
 
 1. **入口预算是硬的**：`SKILL.md` 正文 ≤500 行且 ≤5000 token（估算），`description` ≤1024 字符，
