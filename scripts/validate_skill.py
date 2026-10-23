@@ -576,14 +576,61 @@ def check_lookup_aliases(skill_dir):
         info("分册全部登记进 lookup 路由词表 ✓")
 
 
+def _gfm_cells(line):
+    """按 **GFM 规则**把一行表格切成单元格。
+
+    ⚠️ **未转义的 `|` 才是分隔符**；`\\|` 是转义（渲染成字面的竖线）⇒ 不能算。
+    这一条不是吹毛求疵：`ls scripts/*.py \\| wc -l` 这种写法**在 Markdown 里是合法的**
+    （GFM 明确要求竖线要转义），而按朴素计数它会被算成多一列 ⇒ 判据会**误伤正确的写法**。
+    """
+    parts = []
+    cur = []
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if c == "\\" and i + 1 < n and line[i + 1] == "|":
+            cur.append("|")
+            i += 2
+            continue
+        if c == "|":
+            parts.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    parts.append("".join(cur))
+    if parts and not parts[0].strip():
+        parts = parts[1:]
+    if parts and not parts[-1].strip():
+        parts = parts[:-1]
+    return parts
+
+
+def _is_sep_row(line):
+    """是不是表格的**分隔行**（`|---|---|`）——只有它 + 表头才构成一张表。"""
+    st = line.strip()
+    if not st.startswith("|"):
+        return False
+    return bool(re.match(r"^\|[\s:\-\|]+\|?$", st))
+
+
 def check_md_tables(skill_dir):
-    """两条文档结构判据（都是我自己踩出来的）：
+    """三条文档结构判据（都是我自己踩出来的）：
     ① **表格行头不许被吃**——插行时拿下一行的行头当锚点又忘了写回，
        结果那一行还是 `a | b | c` 的形状、只是开头少了 `| `；Markdown 会把它当普通段落，
        人眼扫过去常常看不见。这个毛病在记忆里写过四次，2026-10-16 又犯一次，所以变成判据。
        只认"**紧邻表格行的下一行**长得像表格行却没有行头"，避免把正文里的 `a | b` 误伤。
     ② **"上表 N 条"要数得出 N**——账本条数我手抄错过一次（写 27、实 28）。
-       只在"该文件恰好一张表"时判；多表文件不猜形状。"""
+       只在"该文件恰好一张表"时判；多表文件不猜形状。
+    ③ **表内每行的列数必须与表头一致**（E38）——**列数错了，表格就废了**：
+       Markdown 会把多出来的列**丢弃**、把少掉的列**补空** ⇒ 读者看到的字段顺序与表头对不上，
+       而**人眼扫一排表格根本看不出**（一格宽一格窄而已）。
+       ⚠️ 判据要按 **GFM 规则**数列（`\\|` 是转义、不算分隔符），
+       否则会把 `ls scripts/*.py \\| wc -l` 这种**合法**写法误判成多一列。
+       ⚠️ 只对"**有表头 + 分隔行**"的表块判：孤立的 `| a | b |` 段落**不是表**（GFM 如此），
+       判它就是误伤。"""
     import glob
     bad = []
     scanned = 0
@@ -598,6 +645,7 @@ def check_md_tables(skill_dir):
         fence = False
         prev_row = False
         blocks = []            # 每张表一个元素：该表的总行数（含表头与分隔行）
+        table_blocks = []      # ③ 用：每块一行一行存 [(行号, 原文)]
         for i, line in enumerate(lines, 1):
             st = line.strip()
             if st.startswith("```"):
@@ -612,7 +660,9 @@ def check_md_tables(skill_dir):
                     bad.append(u"%s:%d 表格行缺行尾 `|`：%s" % (rel, i, st[:40]))
                 if not prev_row:
                     blocks.append(0)
+                    table_blocks.append([])
                 blocks[-1] += 1
+                table_blocks[-1].append((i, line))
                 prev_row = True
                 continue
             if prev_row and st.count("|") >= 2:
@@ -620,6 +670,23 @@ def check_md_tables(skill_dir):
                            % (rel, i, st[:40]))
             if st:
                 prev_row = False
+        # ③ 列数一致：**只对"有表头 + 分隔行"的表块判**（孤立的 `| a | b |` 不是表）
+        for blk in table_blocks:
+            if len(blk) < 3 or not _is_sep_row(blk[1][1]):
+                continue
+            width = len(_gfm_cells(blk[0][1]))
+            for ln, raw in blk:
+                n = len(_gfm_cells(raw))
+                if n == width:
+                    continue
+                if n > width:
+                    bad.append(u"%s:%d 这一行有 **%d 个单元格**，表头只有 %d 个——"
+                               u"多出来的分隔符多半是**内容里的 `|` 没转义**（GFM 里要写成 `\\|`）"
+                               % (rel, ln, n, width))
+                else:
+                    bad.append(u"%s:%d 这一行只有 **%d 个单元格**，表头有 %d 个——"
+                               u"少掉的列会让 Markdown 把它**补空** ⇒ 读者看到的字段顺序与表头对不上"
+                               % (rel, ln, n, width))
         # ② 声明条数对账：只在"该文件恰好一张表"时判，多表文件不猜形状
         if len(blocks) == 1:
             data_rows = max(0, blocks[0] - 2)      # 去掉表头与分隔行
@@ -633,7 +700,7 @@ def check_md_tables(skill_dir):
         for msg in bad:
             err(msg)
     elif scanned:
-        info("文档结构核对通过（%d 个 .md：表格行头完整、声明条数与实物一致）" % scanned)
+        info("文档结构核对通过（%d 个 .md：表格行头完整、**表内列数一致**、声明条数与实物一致）" % scanned)
 
 
 def _md_fenced_lines(skill_dir):

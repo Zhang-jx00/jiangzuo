@@ -840,6 +840,21 @@ CASES = [
      "validate-release-identity-removed",
      "tests.test_scripts.TestReleaseIdentity."
      "test_validate_reports_release_identity"),
+    # ---- E38（v0.72.0）：表内每行的列数必须与表头一致 ----
+    # ① 列数比较被关掉 ⇒ 少一格/多一格都不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "                if n == width:",
+     "                if True:  # E38 校准：列数比较被关掉",
+     "md-table-column-count-neutered",
+     "tests.test_scripts.TestMdTableColumns."
+     "test_column_count_mismatch_must_be_flagged"),
+    # ② 「什么算表」被放宽（任何竖线块都当表）⇒ 孤立的 `| a | b |` 会被误判 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     '    return bool(re.match(r"^\\|[\\s:\\-\\|]+\\|?$", st))',
+     '    return True  # E38 校准：任何竖线块都当表',
+     "md-table-orphan-row-treated-as-table",
+     "tests.test_scripts.TestMdTableColumns."
+     "test_orphan_pipe_row_is_not_a_table"),
 ]
 
 

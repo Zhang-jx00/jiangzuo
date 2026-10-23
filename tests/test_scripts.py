@@ -5804,5 +5804,91 @@ class TestReleaseIdentity(unittest.TestCase):
         self.assertIsNone(self.ri.peel_object({}))
 
 
+class TestMdTableColumns(unittest.TestCase):
+    """E38：**表内每行的列数必须与表头一致**。
+
+    为什么要有这条：列数错了，Markdown 会把多出来的列**丢弃**、把少掉的列**补空**
+    ⇒ 读者看到的字段顺序与表头对不上，而**人眼扫一排表格根本看不出**（一格宽一格窄而已）。
+    E38 实测：本仓 58 个 .md 里有 **14 行**列数与表头不符（含**我自己上轮新加的那一行**），
+    而此前**没有任何判据**会发现。
+
+    ⚠️ 判据必须按 **GFM 规则**数列（`\\|` 是转义、不算分隔符）——
+    否则会把 `ls scripts/*.py \\| wc -l` 这种**合法**写法误判成多一列。
+    """
+
+    def _check(self, md_text):
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with tempfile.TemporaryDirectory() as tmp:
+            with io.open(os.path.join(tmp, "t.md"), "w", encoding="utf-8", newline="\n") as f:
+                f.write(md_text)
+            del validate_skill.ERRORS[:]
+            del validate_skill.INFOS[:]
+            validate_skill.check_md_tables(tmp)
+            return list(validate_skill.ERRORS), list(validate_skill.INFOS)
+
+    def test_column_count_mismatch_must_be_flagged(self):
+        """红：少一格 ⇒ 必须报（少掉的列会被 Markdown 补空 ⇒ 字段顺序与表头对不上）。"""
+        md = (u"| a | b | c |\n"
+              u"|---|---|---|\n"
+              u"| 1 | 2 |\n")
+        errs, _infos = self._check(md)
+        self.assertTrue(errs, "少一格却没被报出来")
+        self.assertTrue(any(u"只有 **2 个单元格**" in e for e in errs), errs)
+        self.assertTrue(any(u"表头有 3 个" in e for e in errs), errs)
+
+    def test_extra_cell_must_be_flagged(self):
+        """红：多一格 ⇒ 必须报（多半是内容里的 `|` 没转义）。"""
+        md = (u"| a | b | c |\n"
+              u"|---|---|---|\n"
+              u"| 1 | 2 | 3 | 4 |\n")
+        errs, _infos = self._check(md)
+        self.assertTrue(errs, "多一格却没被报出来")
+        self.assertTrue(any(u"**4 个单元格**" in e for e in errs), errs)
+
+    def test_escaped_pipe_must_not_be_flagged(self):
+        """绿：`\\|` 是**转义**（GFM 里竖线要转义）⇒ 不算分隔符 ⇒ 合法写法不报。"""
+        md = (u"| a | b |\n"
+              u"|---|---|\n"
+              u"| `ls scripts/*.py \\| wc -l` | 14 |\n")
+        errs, _infos = self._check(md)
+        self.assertEqual([e for e in errs if u"单元格" in e], [],
+                         "转义竖线被误判成多一列了")
+
+    def test_orphan_pipe_row_is_not_a_table(self):
+        """绿：**孤立**的竖线块（**没有表头 + 分隔行**）**不是表** ⇒ 不报。
+
+        GFM 只有「表头行 + 分隔行」才构成表格 ⇒ 判它就是误伤。
+
+        ⚠️ 这个用例**故意用 3 行、且其中一行列数不同** ——
+        否则「把任何竖线块都当表」那种变异对它**毫无影响**（1 行的孤立块会被
+        「块长 < 3」那条保护挡掉 ⇒ 变异前后都是绿 ⇒ 校准会报 GREEN＝锁无效）。
+        E38 实测：**校准用例挑错了对象，判据本身没问题** ⇒ 这才是"校准能指出
+        我自己选错"的样子。
+        """
+        md = (u"正文里的一行：\n"
+              u"\n"
+              u"| a | b |\n"
+              u"| c | d | e |\n"
+              u"| f | g |\n"
+              u"\n"
+              u"后面还有正文。\n")
+        errs, _infos = self._check(md)
+        self.assertEqual([e for e in errs if u"单元格" in e], [],
+                         "孤立的竖线块被当成表了")
+
+    def test_code_fenced_table_is_ignored(self):
+        """绿：代码块里的表格行**不是表格** ⇒ 不报。"""
+        md = (u"```\n"
+              u"| a | b |\n"
+              u"|---|---|\n"
+              u"| 1 | 2 | 3 |\n"
+              u"```\n")
+        errs, _infos = self._check(md)
+        self.assertEqual([e for e in errs if u"单元格" in e], [],
+                         "代码块里的表格被当成真表格了")
+
+
 if __name__ == "__main__":
     unittest.main()
