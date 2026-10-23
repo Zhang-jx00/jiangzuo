@@ -5585,6 +5585,85 @@ class TestReadmeCounts(unittest.TestCase):
             self.assertIn(u"desc_chars=373", r.stdout)
 
 
+class TestInstallCommand(unittest.TestCase):
+    """E41：门面的**安装命令**必须指向真实的仓库（**不许留占位符**）。
+
+    为什么（E41 实测）：skills.sh **没有提交流程**（无表单、无 publish 命令）⇒
+    "进生态"这件事的真正卡点**不是注册**，而是**门面上写的命令对不对**。
+    实测两个门面的命令都写着 `npx skills add <you>/jiangzuo` ⇒ **照抄的人必然失败**
+    ⇒ 而它在 markdown 里"看着挺像样" ⇒ **没有任何判据发现** ⇒ 生态那扇门其实是**死路**。
+    （同一轮的实测：改成真名后 `npx skills add` 装出 **571 个文件**，装出来的副本
+      **自检 30/0/0 全绿** ⇒ 路径本身是通的，差的只是命令。）
+
+    真源：`scripts/release_identity.py` 的 OWNER/NAME（机器可读，不手抄）。
+    ⚠️ **本地路径占位符**（`<你的项目>` / `<your-project>`）是**该有的** ⇒ 不得误伤。
+    """
+
+    def _mini(self, tmp, zh=None, en=None):
+        sk = os.path.join(tmp, "sk")
+        for d in ("references", "templates", "scripts", "evals"):
+            os.makedirs(os.path.join(sk, d))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n---\n正文第一行\n")
+        with io.open(os.path.join(sk, "scripts", "release_identity.py"), "w",
+                     encoding="utf-8", newline="\n") as f:
+            f.write(u'OWNER = "Zhang-jx00"\nNAME = "jiangzuo"\n')
+        with io.open(os.path.join(sk, "templates", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        with io.open(os.path.join(sk, "references", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        good = u"# sk\n\nnpx skills add Zhang-jx00/jiangzuo\n"
+        with io.open(os.path.join(sk, "README.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(zh if zh is not None else good)
+        with io.open(os.path.join(sk, "README.en.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(en if en is not None else good)
+        return sk
+
+    def _validate(self, sk):
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+
+    def test_placeholder_install_command_must_be_flagged(self):
+        """红：安装命令里留着占位符（`<you>/jiangzuo`）⇒ 必须报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, zh=u"# sk\n\nnpx skills add <you>/jiangzuo\n")
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"占位符", r.stdout)
+
+    def test_wrong_owner_must_be_flagged(self):
+        """红：安装命令指向**别的**仓库 ⇒ 必须报（不是"格式不对"，是"指错了人"）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, en=u"# sk\n\nnpx skills add someone-else/jiangzuo\n")
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"真实的仓库是", r.stdout)
+
+    def test_local_path_placeholder_must_not_be_flagged(self):
+        """绿：**本地路径**占位符（`<your-project>`）是该有的 ⇒ 不得误伤。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            zh = (u"# sk\n\ncp -r jiangzuo <your-project>/.claude/skills/\n"
+                  u"npx skills add Zhang-jx00/jiangzuo\n")
+            sk = self._mini(tmp, zh=zh)
+            r = self._validate(sk)
+            self.assertNotIn(u"占位符", r.stdout,
+                             u"本地路径占位符被误伤了：%s" % r.stdout)
+
+    def test_missing_install_command_must_be_flagged(self):
+        """红：提到 skills.sh 却**没写命令** ⇒ 必须报（不许因为解析不到就静默跳过）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, zh=u"# sk\n\n装法见 skills.sh 官网。\n")
+            r = self._validate(sk)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"没写安装命令", r.stdout)
+
+    def test_real_repo_install_command_is_checked(self):
+        """绿：本仓库两个门面的安装命令**指向真实仓库**，且这道闸真的跑了。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn(u"安装命令指向真实仓库", r.stdout)
+        self.assertIn(u"Zhang-jx00/jiangzuo", r.stdout)
+
+
 class TestChangelogVersions(unittest.TestCase):
     """E36（第 25 项）：CHANGELOG 的版本条目**不得重复**、必须**按降序**。
 

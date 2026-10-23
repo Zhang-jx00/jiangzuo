@@ -914,6 +914,16 @@ CASES = [
      "carrier-missing-snapshot-neutered",
      "tests.test_scripts.TestCarrierBlockIntegrity."
      "test_block_without_snapshot_must_be_flagged"),
+    # ---- E41（v0.75.0）：门面的安装命令必须指向真实仓库 ----
+    # ⑥ 安装命令里的占位符不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     u"            if got != ident:\n"
+     u"                err(u\"%s 的安装命令写的是 `npx skills add %s`，真实的仓库是 **%s**\"",
+     u"            if False:  # E41 校准：安装命令的占位符不再被报\n"
+     u"                err(u\"%s 的安装命令写的是 `npx skills add %s`，真实的仓库是 **%s**\"",
+     "install-command-placeholder-neutered",
+     "tests.test_scripts.TestInstallCommand."
+     "test_placeholder_install_command_must_be_flagged"),
 ]
 
 

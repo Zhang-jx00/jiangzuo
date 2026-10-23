@@ -612,6 +612,73 @@ def check_readme_counts(skill_dir):
                 len(seen.get("desc_chars", []) + seen.get("entry_chars", []))))
 
 
+def _repo_identity(skill_dir):
+    """仓库身份（`owner/repo`）的机器可读出处：`scripts/release_identity.py` 的 OWNER/NAME。
+
+    取不到 ⇒ 返回 None（**不假装通过**：调用方决定是"不适用"还是"缺文件"）。
+    ⚠️ 这是**已知的一处分散**：owner/name 在四个脚本里各写一份
+    （`release_identity.py` / `release_notes.py` / `release_consistency.py` / SARIF 的 URL）
+    ⇒ 本项只保证"门面跟着身份脚本走"，**不保证四个脚本彼此一致**（已登记为候选）。
+    """
+    p = os.path.join(skill_dir, "scripts", "release_identity.py")
+    if not os.path.isfile(p):
+        return None
+    with io.open(p, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    owner = re.search(r'^OWNER\s*=\s*"([^"]+)"', text, re.M)
+    name = re.search(r'^NAME\s*=\s*"([^"]+)"', text, re.M)
+    if not (owner and name):
+        return None
+    return owner.group(1) + "/" + name.group(1)
+
+
+def check_install_command(skill_dir):
+    """门面的**安装命令**必须指向真实的仓库（E41）。
+
+    为什么（E41 实测）：skills.sh **没有提交流程**（无表单、无 publish 命令）⇒
+    "进生态"这件事的真正卡点**不是**注册，而是**门面上写的命令对不对**。
+    实测两个门面的命令都写着 `npx skills add <you>/jiangzuo` ⇒ **照抄的人必然失败**
+    ⇒ 而它在 markdown 里"看着挺像样" ⇒ 没有任何判据发现 ⇒ 生态那扇门其实是**死路**。
+    （同一轮的实测：把命令改成真名后，`npx skills add` 装出 **571 个文件**，
+      装出来的副本**自检 30/0/0 全绿** ⇒ 路径本身是通的，差的只是命令。）
+
+    真源：`scripts/release_identity.py` 的 OWNER/NAME。
+    ⚠️ 只盯**仓库身份**类命令（`npx skills add` / `git clone https://github.com/…`）
+    ⇒ **本地路径占位符**（`<你的项目>` / `<your-project>`）是**该有的**，不许误伤。
+    """
+    ident = _repo_identity(skill_dir)
+    if not ident:
+        return
+    checked = []
+    for rel, _lang in README_FILES:
+        path = os.path.join(skill_dir, rel)
+        if not os.path.isfile(path):
+            continue
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        found = False
+        for m in re.finditer(r"npx\s+skills\s+add\s+(\S+)", text):
+            found = True
+            got = m.group(1)
+            if got != ident:
+                err(u"%s 的安装命令写的是 `npx skills add %s`，真实的仓库是 **%s**"
+                    u"——照抄的人**必然失败**（那是个占位符，不是命令）" % (rel, got, ident))
+        for m in re.finditer(r"git\s+clone\s+https://github\.com/([^\s/]+/[^\s/]+?)(?:\.git)?\b", text):
+            found = True
+            got = m.group(1)
+            if got != ident:
+                err(u"%s 的克隆命令写的是 `git clone https://github.com/%s`，真实的仓库是 **%s**"
+                    u"——照抄的人**必然失败**（那是个占位符，不是命令）" % (rel, got, ident))
+        if not found and ("skills.sh" in text or "npx skills" in text):
+            err(u"%s 提到了 skills.sh 却**没写安装命令**——"
+                u"读者无从知道该敲什么（不许因为解析不到就静默跳过）" % rel)
+        if found:
+            checked.append(rel)
+    if checked:
+        info(u"README 的安装命令指向真实仓库（%s ✓，已核 %d 个门面）"
+             % (ident, len(checked)))
+
+
 def check_lookup_aliases(skill_dir):
     """每本分册都必须登记进 lookup 的路由词表。
 
@@ -1581,6 +1648,7 @@ def main():
             check_scripts(skill_dir)
             check_booklet_contract(skill_dir)
             check_readme_counts(skill_dir)
+            check_install_command(skill_dir)
             check_lookup_aliases(skill_dir)
             check_md_tables(skill_dir)
             check_expected_numbers(skill_dir)

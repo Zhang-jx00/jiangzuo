@@ -99,8 +99,8 @@ Works with any Agent Skills–compatible client (ZCode / Claude Code / Codex / C
 cp -r jiangzuo ~/.claude/skills/        # or ~/.zcode/skills/  ~/.agents/skills/
 # project-level (committed with the repo)
 cp -r jiangzuo <your-project>/.claude/skills/
-# or via skills.sh
-npx skills add <you>/jiangzuo
+# or via skills.sh (listed in the ecosystem directory as zhang-jx00/jiangzuo)
+npx skills add Zhang-jx00/jiangzuo
 ```
 
 No configuration needed afterwards: any software-development request auto-loads it.

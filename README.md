@@ -103,7 +103,7 @@ jiangzuo/
 
 ```bash
 # ZCode
-git clone https://github.com/<you>/jiangzuo.git && cp -r jiangzuo ~/.zcode/skills/
+git clone https://github.com/Zhang-jx00/jiangzuo.git && cp -r jiangzuo ~/.zcode/skills/
 # Claude Code
 cp -r jiangzuo ~/.claude/skills/
 # 跨客户端新默认（Cursor 等同时识别 Claude/Codex 目录）
@@ -116,10 +116,10 @@ cp -r jiangzuo ~/.agents/skills/
 cp -r jiangzuo <你的项目>/.zcode/skills/     # 或 .claude/skills/、.agents/skills/
 ```
 
-**方式三：skills.sh CLI**
+**方式三：skills.sh CLI**（生态目录 `skills.sh` 上收录为 `zhang-jx00/jiangzuo`）
 
 ```bash
-npx skills add <you>/jiangzuo
+npx skills add Zhang-jx00/jiangzuo
 ```
 
 安装后无需任何配置。**但"自动加载"是有条件的**：本技能自己的触发实测（真实会话 24 条用例，数据见
