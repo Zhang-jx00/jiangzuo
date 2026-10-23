@@ -149,6 +149,58 @@ def _same_number(got, want):
         return str(got) == str(want)
 
 
+def _version_before(lines, rx, begin_idx):
+    """某个标记区**属于哪一版**：取它**前面**最后一个匹配 `rx` 的标题。
+
+    `rx` 必须有**一个**捕获组（版本号）。⇒ 区块与版本的对应关系是
+    **从文件里推出来的**，不是人手写的 ⇒ 不会"人手写错对应关系"。
+
+    为什么要有它（E40）：E39 把验收记录里 **v0.72.0 的区块改写成了 v0.73.0 的数**，
+    而载体对账当时只查**最后一个**区块 ⇒ 那个区块恰好被改成了"当前这一版"的数
+    ⇒ **对账跟着腐化一起漂 ⇒ 绿灯** ⇒ 一处假记录静悄悄地留在台账里。
+    ⇒ 改成：**每个区块都必须对账它自己那一版**的快照。
+    """
+    ver = None
+    for l in lines[:begin_idx]:
+        m = re.search(rx, l)
+        if m:
+            ver = m.group(1)
+    return ver
+
+
+def _check_metrics(problems, pats, src, rel, region, version, metrics, where):
+    """把一个区块里的数与真源对账。`where` 只用于把话说清楚是哪个区块。"""
+    for m in metrics:
+        spec2 = metrics.get(m) if isinstance(metrics, dict) else pats.get(m)
+        if not spec2:
+            problems.append(u"真源没给 %s 的匹配式（patterns.%s）" % (m, m))
+            continue
+        if isinstance(spec2, dict):
+            forms = [spec2] + list(spec2.get("also") or [])
+        else:
+            forms = [{"rx": spec2, "group": 1}]
+        want = value_of(src, m, version)
+        if want is None:
+            problems.append(u"真源里没有 %s%s 的值"
+                            % (m, u"（%s 版）" % version if version else u""))
+            continue
+        for form in forms:
+            rx = form.get("rx")
+            grp = form.get("group", 1)
+            mm = re.search(rx, region)
+            if not mm:
+                problems.append(u"载体 %s %s 找不到 %s（匹配式 %s）" % (rel, where, m, rx))
+                continue
+            got = mm.group(grp)
+            # ⚠️ **数值要按数值比**：JSON 里的 4.300 存成 4.3（浮点），
+            #    而文档里写的是 bench 自己的输出格式 "4.300" ⇒ 纯字符串比较会误红。
+            #    ⇒ 两边都能解析成数字时按数值比（带极小容差），否则按字符串比。
+            if _same_number(got, want):
+                continue
+            problems.append(u"载体 %s %s：%s 写的是 **%s**，真源是 **%s**——"
+                            u"同一个数不能两处不同" % (rel, where, m, got, want))
+
+
 def value_of(src, metric, version=None):
     """取某个指标的值。
 
@@ -221,10 +273,6 @@ def check(skill_dir, err, info):
         problems.append(u"真源没列任何载体（carriers）——那就没有东西可对账")
     for rel in sorted(carriers):
         spec = carriers[rel]
-        zones = spec.get("zones") if isinstance(spec, dict) else None
-        if not zones:
-            # 兼容旧写法：整个载体当一个区
-            zones = [spec if isinstance(spec, dict) else {"metrics": spec or []}]
         path = os.path.join(skill_dir, rel.replace("/", os.sep))
         if not os.path.isfile(path):
             problems.append(u"载体 %s 不存在" % rel)
@@ -232,6 +280,37 @@ def check(skill_dir, err, info):
         with io.open(path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
         regions = marked_regions(text)
+        vrx = spec.get("version_rx") if isinstance(spec, dict) else None
+        if vrx:
+            # ── E40 新机制：**逐区块**对账它**自己那一版**的快照 ──
+            # 区块与版本的对应是**从文件里推出来的**（`version_rx`）⇒ 人手写不错。
+            # ⇒ 这里**不需要**"区数 == 区块数"那种守卫：**每个**区块都会被对账
+            #    （没有所属版本 ⇒ 报；所属版本没有快照 ⇒ 报）⇒ 漏不掉。
+            # ⚠️ 反过来，**index/zones 模式**（下面那条路径）是"**只查真源指定的那几个区**"的语义
+            #    ——文档里可以有旧版本的标记区，**不该**因为多出来就红（既有判据明确要求这一点）⇒
+            #    那条路径上**刻意不加**区块数守卫。
+            if not regions:
+                problems.append(u"载体 %s 里没有 current-state 标记区（应至少有一个）" % rel)
+                continue
+            for ri, (rtext, rstart) in enumerate(regions):
+                ver = _version_before(text.split("\n"), vrx, rstart - 1)
+                where = u"（v%s 的区块，第 %d 个）" % (ver if ver else u"?", ri)
+                if ver is None:
+                    problems.append(u"载体 %s 的第 %d 个标记区（第 %d 行）**没有所属版本**"
+                                    u"（它前面没有匹配 %s 的标题）——这个区块没人对账"
+                                    % (rel, ri, rstart, vrx))
+                    continue
+                if not isinstance((src.get("history") or {}).get(ver), dict):
+                    problems.append(u"真源里没有 %s 的历史快照（history.%s）——"
+                                    u"历史载体必须对账它自己那一版的事实" % (ver, ver))
+                    continue
+                _check_metrics(problems, pats, src, rel, rtext, ver,
+                               spec.get("metrics") or [], where)
+            continue
+        zones = spec.get("zones") if isinstance(spec, dict) else None
+        if not zones:
+            # 兼容旧写法：整个载体当一个区
+            zones = [spec if isinstance(spec, dict) else {"metrics": spec or []}]
         for zi, zone in enumerate(zones):
             metrics = zone.get("metrics") or []
             version = zone.get("version")
@@ -250,38 +329,8 @@ def check(skill_dir, err, info):
                                 u"历史载体必须对账它自己那一版的事实" % (version, version))
                 continue
             region = regions[idx][0]
-            for m in metrics:
-                if isinstance(metrics, dict):
-                    spec2 = metrics.get(m)
-                else:
-                    spec2 = pats.get(m)
-                if not spec2:
-                    problems.append(u"真源没给 %s 的匹配式（patterns.%s）" % (m, m))
-                    continue
-                if isinstance(spec2, dict):
-                    forms = [spec2] + list(spec2.get("also") or [])
-                else:
-                    forms = [{"rx": spec2, "group": 1}]
-                want = value_of(src, m, version)
-                if want is None:
-                    problems.append(u"真源里没有 %s%s 的值"
-                                    % (m, u"（%s 版）" % version if version else u""))
-                    continue
-                for form in forms:
-                    rx = form.get("rx")
-                    grp = form.get("group", 1)
-                    mm = re.search(rx, region)
-                    if not mm:
-                        problems.append(u"载体 %s 的标记区里找不到 %s（匹配式 %s）" % (rel, m, rx))
-                        continue
-                    got = mm.group(grp)
-                    # ⚠️ **数值要按数值比**：JSON 里的 4.300 存成 4.3（浮点），
-                    #    而文档里写的是 bench 自己的输出格式 "4.300" ⇒ 纯字符串比较会误红。
-                    #    ⇒ 两边都能解析成数字时按数值比（带极小容差），否则按字符串比。
-                    if _same_number(got, want):
-                        continue
-                    problems.append(u"载体 %s：%s 写的是 **%s**，真源是 **%s**——同一个数不能两处不同"
-                                    % (rel, m, got, want))
+            _check_metrics(problems, pats, src, rel, region, version, metrics,
+                           u"（第 %d 个标记区）" % zi)
 
     for p in problems:
         err(u"[当前状态] " + p)

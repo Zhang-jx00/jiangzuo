@@ -753,9 +753,11 @@ CASES = [
      "current-state-static-check-neutered",
      "tests.test_scripts.TestCurrentState.test_stale_source_must_be_flagged"),
     # ② 载体对账被关掉 ⇒ 文档里手抄的数与真源不同也不再被报 ⇒ 判据必须红。
+    #    ⚠️ E40：这行代码被搬进了 `current_state._check_metrics()`（缩进从 20 变 12）
+    #    ⇒ 锚点跟着实现走，否则**校准会静默失效**（`--check-only` 当场逮到）。
     ("scripts/current_state.py",
-     "                    if _same_number(got, want):\n                        continue",
-     "                    if True:  # E35 校准：载体不再与真源对账\n                        continue",
+     "            if _same_number(got, want):\n                continue",
+     "            if True:  # E35 校准：载体不再与真源对账\n                continue",
      "current-state-carrier-check-neutered",
      "tests.test_scripts.TestCurrentState.test_drifted_carrier_must_be_flagged"),
     # ③ README 计数**解析不到就静默跳过**的老毛病被修掉 ⇒ 把"不许静默跳过"再关掉
@@ -875,6 +877,43 @@ CASES = [
      "release-consistency-not-checked-treated-as-ok",
      "tests.test_scripts.TestReleaseConsistency."
      "test_not_checked_must_not_be_reported_as_ok"),
+    # ---- E40（v0.74.0）：进化账本自身不许被写坏（行序 / 重复行） ----
+    # ① 行序回退不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            if erounds[k][1] < erounds[k - 1][1]:",
+     "            if False:  # E40 校准：行序回退不再被报",
+     "ledger-round-order-neutered",
+     "tests.test_scripts.TestLedgerIntegrity."
+     "test_ledger_round_order_must_be_flagged"),
+    # ② 重复行不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            if t in seen_rows:",
+     "            if False:  # E40 校准：完全相同的两行不再被报",
+     "ledger-duplicate-row-neutered",
+     "tests.test_scripts.TestLedgerIntegrity."
+     "test_ledger_duplicate_rows_must_be_flagged"),
+    # ③ 验收记录的小节倒序不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            if b < a:",
+     "            if False:  # E40 校准：验收记录小节倒序不再被报",
+     "acceptance-order-neutered",
+     "tests.test_scripts.TestLedgerIntegrity."
+     "test_acceptance_sections_must_be_ascending"),
+    # ④ 区块不再对账"它自己那一版"（版本映射被掐断）⇒ 判据必须红。
+    ("scripts/current_state.py",
+     "                ver = _version_before(text.split(\"\\n\"), vrx, rstart - 1)",
+     "                ver = _version_before(text.split(\"\\n\"), vrx, rstart - 1) "
+     "if False else None  # E40 校准：区块不再对账自己那一版",
+     "carrier-version-rx-neutered",
+     "tests.test_scripts.TestCarrierBlockIntegrity."
+     "test_block_written_with_another_versions_numbers_must_be_flagged"),
+    # ⑤ 区块所属版本缺快照不再被报 ⇒ 判据必须红。
+    ("scripts/current_state.py",
+     "                if not isinstance((src.get(\"history\") or {}).get(ver), dict):",
+     "                if False:  # E40 校准：区块缺历史快照不再被报",
+     "carrier-missing-snapshot-neutered",
+     "tests.test_scripts.TestCarrierBlockIntegrity."
+     "test_block_without_snapshot_must_be_flagged"),
 ]
 
 

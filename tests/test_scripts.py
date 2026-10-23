@@ -5970,5 +5970,204 @@ class TestReleaseConsistency(unittest.TestCase):
             self.assertNotIn(bad, src)
 
 
+class TestLedgerIntegrity(unittest.TestCase):
+    """E40：**进化账本自身不许被写坏** —— 行序不得回退、不得有完全相同的两行。
+
+    为什么（E39 复核出来的洞）：E37 那轮把 E37 的行**插在了 E36 之前**（台账是时间倒序）
+    ⇒ 错了整整一行，E38 才发现并手工换回来 ⇒ 而**没有任何判据**会报。
+    E40 复核又挖出**更早的一批**：E9 的两行、E11 的四行被拆散插到了 E12/E13/E17 后面
+    ⇒ 轮次序列 `… E9 E10 E12 E13 E11 E11 E9 E17 E11 E11 …` ⇒ **3 处回退**。
+
+    ⚠️ 为什么它要**单独**写：进化账本的行格式是 `| 日期 | E37 …`（轮次在**第二格**），
+    与第 25 项原有的查重正则（认 `| **E37** ✅ | v0.70.0 |`）**完全不同** ⇒ 此前**完全不在查重范围内**。
+    """
+
+    HEADER = (u"| 日期 | 证据 | 归因 | 假设 | 变异 | 验证 | 行数收支 | 结论 |\n"
+              u"|---|---|---|---|---|---|---|---|\n")
+
+    def _rows(self, body):
+        return self.HEADER + body
+
+    def _check(self, body, acc_text=None):
+        """把一段台账行放进临时目录，跑第 25 项，返回错误列表。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(d)
+            with io.open(os.path.join(d, "evolution.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(u"# 台账\n\n" + self._rows(body))
+            if acc_text is not None:
+                e = os.path.join(tmp, "evals")
+                os.makedirs(e)
+                with io.open(os.path.join(e, "audit-acceptance.md"), "w",
+                             encoding="utf-8", newline="\n") as f:
+                    f.write(acc_text)
+            del validate_skill.ERRORS[:]
+            del validate_skill.INFOS[:]
+            validate_skill.check_ledger_versions(tmp, u"")
+            return list(validate_skill.ERRORS)
+
+    def test_ledger_round_order_must_be_flagged(self):
+        """红：轮次**回退**（E12 排在 E9 之前）⇒ 必须报。"""
+        body = (u"| 2026-10-20 | E12 留下的缺口 | 归因 | 假设 | 变异 | 验证 | +1 / −0 | KEEP… |\n"
+                u"| 2026-10-20 | E9 留下的缺口 | 归因 | 假设 | 变异 | 验证 | +1 / −0 | KEEP… |\n")
+        errs = self._check(body)
+        self.assertTrue(errs, "轮次回退却没被报出来")
+        self.assertTrue(any(u"反而排在" in e for e in errs), errs)
+
+    def test_ledger_same_round_rows_are_allowed(self):
+        """绿：**同一轮的多行是合法的**（一轮可能有多个变异）⇒ 不得误报。"""
+        body = (u"| 2026-10-20 | E9 留下的缺口甲 | 归因 | 假设 | 变异 | 验证 | +1 / −0 | KEEP… |\n"
+                u"| 2026-10-20 | E9 留下的缺口乙 | 归因 | 假设 | 变异 | 验证 | +2 / −0 | KEEP… |\n")
+        errs = self._check(body)
+        self.assertEqual([e for e in errs if u"反而排在" in e], [],
+                         "同一轮的两行被误判成逆序了")
+
+    def test_ledger_duplicate_rows_must_be_flagged(self):
+        """红：同一张表里**两行完全相同** ⇒ 必须报（台账脚本跑两遍的产物）。"""
+        row = u"| 2026-10-20 | E9 留下的缺口 | 归因 | 假设 | 变异 | 验证 | +1 / −0 | KEEP… |\n"
+        errs = self._check(row + row)
+        self.assertTrue(errs, "完全相同的两行却没被报出来")
+        self.assertTrue(any(u"完全相同" in e for e in errs), errs)
+
+    def test_real_repo_ledger_is_ordered(self):
+        """绿：本仓库的进化账本**行序不倒退、无重复行**。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        del validate_skill.ERRORS[:]
+        del validate_skill.INFOS[:]
+        validate_skill.check_ledger_versions(REPO, u"")
+        bad = [e for e in validate_skill.ERRORS if u"进化账本" in e]
+        self.assertEqual(bad, [], "本仓库的进化账本有行序/重复问题：%s" % bad)
+
+    def test_acceptance_sections_must_be_ascending(self):
+        """红：验收记录的小节**倒序**（新版本排到旧版本前面）⇒ 必须报。
+
+        E39 把 v0.73.0 小节插到了 v0.72.0 **之前**；E40 自己第一版也把 v0.74.0
+        插到了 v0.73.0 之前 ⇒ 两处都因为"只看最后一个区块"的载体对账而**绿灯**。
+        """
+        acc = (u"## v0.73.0（E39）—— 某轮\n\n正文\n\n"
+               u"## v0.72.0（E38）—— 某轮\n\n正文\n")
+        errs = self._check(u"", acc_text=acc)
+        self.assertTrue(errs, "验收记录小节倒序却没被报出来")
+        self.assertTrue(any(u"不得回退" in e for e in errs), errs)
+
+    def test_acceptance_sections_ascending_is_ok(self):
+        """绿：验收记录的小节**升序**（新版本在后）⇒ 不得误报。"""
+        acc = (u"## v0.72.0（E38）—— 某轮\n\n正文\n\n"
+               u"## v0.73.0（E39）—— 某轮\n\n正文\n")
+        errs = self._check(u"", acc_text=acc)
+        self.assertEqual([e for e in errs if u"不得回退" in e], [],
+                         "升序被误判成倒序了")
+
+
+class TestCarrierBlockIntegrity(unittest.TestCase):
+    """E40：**每个** current-state 标记区都必须对账**它自己那一版**的快照。
+
+    为什么（E39 的教训）：E39 把验收记录里 **v0.72.0 的区块改写成了 v0.73.0 的数**
+    （CHANGELOG 里 v0.72.0 的区块也被改了一半）⇒ 而载体对账当时**每个载体只查一个区块**
+    ⇒ 那个被改的区块**恰好**被改成了"当前这一版"的数 ⇒ **对账跟着腐化一起漂 ⇒ 绿灯**
+    ⇒ 一处假记录静悄悄地留在台账里，**没人能发现**。
+    ⇒ E40 起：载体写 `version_rx` ⇒ **每个**区块都自动对账它自己那一版的快照
+    （区块与版本的对应是**从文件里推出来的** ⇒ 人手写不错）。
+    """
+
+    PATTERNS = {
+        "tests": {"rx": r"(\d+) 用例", "group": 1},
+        "validate_infos": {"rx": r"validate \*\*(\d+)\*\* 信息", "group": 1},
+        "mutation_cases": {"rx": r"变异校准 \*\*(\d+)/\d+ 全红", "group": 1},
+        "bench_ms_per_file": {"rx": r"BENCH-OK ([\d.]+) ms/文件", "group": 1},
+    }
+    METRICS = ["tests", "validate_infos", "mutation_cases", "bench_ms_per_file"]
+
+    def _block(self, tests, infos, cases, bench):
+        return (u"<!-- current-state:begin -->\n"
+                u"本机闸门：%d 用例 OK ｜ validate **%d** 信息/0 警告/0 错误 ｜ "
+                u"变异校准 **%d/%d 全红** ｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜\n"
+                u"三仓：DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、"
+                u"DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8** ｜ "
+                u"BENCH-OK %s ms/文件\n"
+                u"<!-- current-state:end -->\n" % (tests, infos, cases, cases, bench))
+
+    def _run(self, ledger, history):
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        errs = []
+        infos = []
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "evals"))
+            with io.open(os.path.join(tmp, "evals", "audit-acceptance.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(ledger)
+            src = {
+                "schema": 1,
+                "static": {},
+                "reported": {},
+                "measured": {},
+                "patterns": self.PATTERNS,
+                "carriers": {
+                    "evals/audit-acceptance.md": {
+                        "version_rx": r"^##\s*v(\d+\.\d+\.\d+)",
+                        "metrics": self.METRICS,
+                    },
+                },
+                "history": history,
+            }
+            with io.open(os.path.join(tmp, "evals", "current-state.json"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps(src, ensure_ascii=False, indent=2,
+                                   sort_keys=True) + "\n")
+            current_state.check(tmp, errs.append, infos.append)
+        return errs
+
+    def test_block_written_with_another_versions_numbers_must_be_flagged(self):
+        """红：v0.72.0 的区块被写成 v0.73.0 的数（E39 实际干过的事）⇒ 必须报。"""
+        ledger = (u"## v0.72.0（E38）—— 某轮\n\n"
+                   + self._block(276, 30, 74, "4.439") + u"\n")
+        history = {"0.72.0": {"static": {}, "reported": {"validate_infos": 29},
+                              "measured": {"bench_ms_per_file": 4.465}}}
+        errs = self._run(ledger, history)
+        self.assertTrue(errs, "区块被写成别的版本的数却没被报出来")
+        self.assertTrue(any(u"同一个数不能两处不同" in e for e in errs), errs)
+
+    def test_block_matching_its_own_version_is_ok(self):
+        """绿：区块里的数与**它自己那一版**的快照一致 ⇒ 不得误报。"""
+        ledger = (u"## v0.72.0（E38）—— 某轮\n\n"
+                   + self._block(271, 29, 72, "4.465") + u"\n")
+        history = {"0.72.0": {"static": {}, "reported": {"validate_infos": 29},
+                              "measured": {"bench_ms_per_file": 4.465}}}
+        errs = self._run(ledger, history)
+        self.assertEqual([e for e in errs if u"同一个数不能两处不同" in e], [],
+                         "正确的区块被误报了：%s" % errs)
+
+    def test_block_without_snapshot_must_be_flagged(self):
+        """红：区块所属的那一版**没有历史快照**⇒ 必须报（否则这个区块没人对账）。"""
+        ledger = (u"## v0.72.0（E38）—— 某轮\n\n"
+                   + self._block(271, 29, 72, "4.465") + u"\n")
+        history = {"0.73.0": {"static": {}, "reported": {"validate_infos": 30},
+                              "measured": {"bench_ms_per_file": 4.439}}}
+        errs = self._run(ledger, history)
+        self.assertTrue(errs, "缺快照却没被报出来")
+        self.assertTrue(any(u"历史快照" in e for e in errs), errs)
+
+    def test_real_repo_carrier_blocks_are_consistent(self):
+        """绿：本仓库的**每个**标记区都对账它自己那一版。"""
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        errs = []
+        infos = []
+        current_state.check(REPO, errs.append, infos.append)
+        bad = [e for e in errs
+               if u"同一个数不能两处不同" in e or u"历史快照" in e
+               or u"没人对账" in e or u"没有所属版本" in e]
+        self.assertEqual(bad, [], "本仓库有标记区对不上账：%s" % bad)
+
+
 if __name__ == "__main__":
     unittest.main()

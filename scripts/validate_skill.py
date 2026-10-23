@@ -204,39 +204,59 @@ def check_frontmatter(skill_dir, text):
 
 
 def check_ledger_versions(skill_dir, cl_text):
-    """第 25 项：台账的版本条目**不得重复**、CHANGELOG 必须**按版本降序**（E36）。
+    """第 25 项：**台账自身不许被写坏**（E36 起，E40 扩到进化账本）。
 
     为什么加这一项：**E35 的台账脚本跑了两遍** ⇒ CHANGELOG 里出现了**两份一模一样的
     v0.69.0 条目**、验收记录里也出现了两份 ⇒ 而**没有任何一道闸发现它**
     （日期核对只看日期、"版本与 CHANGELOG 一致"只看最新那个）⇒
     也就是说：**台账自己可以在无人察觉的情况下被写坏**。
 
-    覆盖面：CHANGELOG 的版本标题、验收记录的版本小节、交接文档规划表里的版本行
-    ⇒ 三处台账里"同一个版本出现两次"一律报错。
+    覆盖面（E36 + E40）：
+      · CHANGELOG 的版本标题（不重复 ＋ 降序）
+      · 验收记录的版本小节（不重复 ＋ **升序**——它是**新版本在后**）
+      · 交接文档规划表里的版本行（不重复，**按表分块**）
+      · **进化账本 `docs/jiangzuo/evolution.md`（E40 新增）**：
+        ① **行序不得回退**（轮次号非递减）——台账是**时间倒序**；
+        ② **同一张表里不得有两行完全相同**。
+    ⇒ 为什么它要单独写一条：进化账本的行格式是 `| 日期 | E37 …`（轮次在**第二格**），
+      与查重正则认的 `| **E37** ✅ | v0.70.0 |` **完全不同** ⇒ 此前**完全不在查重范围内**。
     """
     def dups_of(vs):
         return sorted(set(v for v in vs if vs.count(v) > 1))
 
     vers = re.findall(r"^##\s*\[?(\d+\.\d+\.\d+)\]?", cl_text, re.M)
-    if not vers:
-        return None
-    for v in dups_of(vers):
-        err(u"CHANGELOG 有 **%d 份 v%s 条目**——台账脚本跑了两遍就会留下这种，"
-            u"而它此前**无人能发现**；删掉多余的那份" % (vers.count(v), v))
-    keys = [tuple(int(x) for x in v.split(".")) for v in vers]
-    for i in range(1, len(keys)):
-        if keys[i] > keys[i - 1]:
-            err(u"CHANGELOG 的版本条目不是降序（新版本在前）：v%s 出现在 v%s 之后"
-                % (vers[i], vers[i - 1]))
-            break
+    if vers:
+        for v in dups_of(vers):
+            err(u"CHANGELOG 有 **%d 份 v%s 条目**——台账脚本跑了两遍就会留下这种，"
+                u"而它此前**无人能发现**；删掉多余的那份" % (vers.count(v), v))
+        keys = [tuple(int(x) for x in v.split(".")) for v in vers]
+        for i in range(1, len(keys)):
+            if keys[i] > keys[i - 1]:
+                err(u"CHANGELOG 的版本条目不是降序（新版本在前）：v%s 出现在 v%s 之后"
+                    % (vers[i], vers[i - 1]))
+                break
 
     acc = os.path.join(skill_dir, "evals", "audit-acceptance.md")
+    acc_note = ""
     if os.path.isfile(acc):
         with io.open(acc, "r", encoding="utf-8", errors="replace") as f:
             acc_vers = re.findall(r"^##\s*v(\d+\.\d+\.\d+)", f.read(), re.M)
         for v in dups_of(acc_vers):
             err(u"验收记录 `evals/audit-acceptance.md` 有 **%d 份 v%s 小节**——"
                 u"台账脚本跑了两遍就会留下这种" % (acc_vers.count(v), v))
+        # ── E40 新增：验收记录是**新版本在后**（升序）⇒ 相邻小节不得回退 ──
+        # （E39 把 v0.73.0 小节插到了 v0.72.0 **之前**；E40 自己第一版也把 v0.74.0
+        #   插到了 v0.73.0 之前 ⇒ 两处都被"只看最后一个区块"的载体对账放过 ⇒ 绿灯。）
+        for i in range(1, len(acc_vers)):
+            a = tuple(int(x) for x in acc_vers[i - 1].split("."))
+            b = tuple(int(x) for x in acc_vers[i].split("."))
+            if b < a:
+                err(u"验收记录 `evals/audit-acceptance.md` 的 **v%s 小节排在 v%s 之后**"
+                    u"——验收记录是**新版本在后**（升序），版本号**不得回退**"
+                    u"（CHANGELOG 是新版本在前，两者方向相反，别搞混）"
+                    % (acc_vers[i], acc_vers[i - 1]))
+                break
+        acc_note = u"；验收记录 %d 个小节升序" % len(acc_vers)
 
     hand = os.path.join(skill_dir, "docs", "jiangzuo", "handover.md")
     if os.path.isfile(hand):
@@ -259,8 +279,48 @@ def check_ledger_versions(skill_dir, cl_text):
                         u"台账脚本跑了两遍就会留下这种" % (vs.count(v), v))
                 block = []
 
-    if not dups_of(vers) and all(keys[i] <= keys[i - 1] for i in range(1, len(keys))):
-        info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）" % len(vers))
+    # ── 进化账本（E40 新增）：行序不得回退 ＋ 同一张表里不得有两行完全相同 ──
+    # ⚠️ 分列**复用 `_gfm_cells`**（GFM 规则：未转义的 `|` 才是分隔符）⇒
+    #    不自己写第二份解析（两份实现 ⇒ 两个数）。实测本仓 34 行台账两种切法结果相同，
+    #    但朴素切法一旦遇到格内的 `\|` 就会**悄悄丢掉轮次号** ⇒ 判据变空锁。
+    evo_note = ""
+    evo = os.path.join(skill_dir, "docs", "jiangzuo", "evolution.md")
+    if os.path.isfile(evo):
+        with io.open(evo, "r", encoding="utf-8", errors="replace") as f:
+            elines = f.read().split("\n")
+        erounds = []
+        seen_rows = {}
+        for i, l in enumerate(elines, 1):
+            if not l.startswith("| 20"):
+                continue
+            cells = _gfm_cells(l)
+            if len(cells) > 2:
+                m = re.search(r"\bE(\d+)\b", cells[1])
+                if m:
+                    erounds.append((i, int(m.group(1))))
+            t = l.strip()
+            if len(t) <= 40:
+                continue
+            if t in seen_rows:
+                err(u"进化账本 `docs/jiangzuo/evolution.md:%d` 与第 %d 行**完全相同**"
+                    u"——台账脚本跑两遍就会留下这种，而查重此前**不覆盖**这个文件"
+                    u"（它的行格式是 `| 日期 | E37 …`，与查重正则认的 `| **E37** ✅ | v0.70.0 |` 不同）"
+                    % (i, seen_rows[t]))
+            else:
+                seen_rows[t] = i
+        for k in range(1, len(erounds)):
+            if erounds[k][1] < erounds[k - 1][1]:
+                err(u"进化账本 `docs/jiangzuo/evolution.md:%d` 的 **E%d 反而排在 E%d 之前**"
+                    u"（它在第 %d 行）——台账是**时间倒序**，轮次号**不得回退**"
+                    u"（**同一轮的多行是合法的**：一轮可能有多个变异）"
+                    % (erounds[k][0], erounds[k][1], erounds[k - 1][1], erounds[k - 1][0]))
+        evo_note = u"；进化账本 %d 行有轮次号、行序不倒退、无重复行 ✓" % len(erounds)
+
+    if vers and not dups_of(vers) and all(keys[i] <= keys[i - 1] for i in range(1, len(keys))):
+        info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）%s%s"
+             % (len(vers), acc_note, evo_note))
+    elif not vers:
+        info(u"台账自身无重复、无逆序%s%s" % (acc_note, evo_note))
     return True
 
 
