@@ -17,15 +17,17 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.73.0 已交付并推送**（`7cf1704`，tag `v0.73.0` 同笔，CI run `39921694950` **七道** success ＋**新作业** `release-consistency` run `39921694873` success）；**发布产物的「身份」有人守**（E37，第 26 项）、**Markdown 表格的结构也有人守**（E38，第 12 项第三条）、**远端发布产物的自洽也有人守**（E39，第 27 项 ⇒ CI 每日核「远端 Release ↔ 远端 tag 一一对应、零缺口」）。
+2. 状态：**v0.74.0 已交付并推送**（`bfab558`，tag `v0.74.0` 同笔，CI run `39958442615` **七道** success ＋**新作业** `release-consistency` run `39958442563` success）；**发布产物的「身份」有人守**（E37，第 26 项）、**Markdown 表格的结构也有人守**（E38，第 12 项第三条）、**远端发布产物的自洽也有人守**（E39，第 27 项 ⇒ CI 每日核「远端 Release ↔ 远端 tag 一一对应、零缺口」）、**台账自身也有人守**（E40，第 25 项扩三条：进化账本行序 ＋ 验收记录升序 ＋ **每个标记区对账它自己那一版**）。
    ⚠️ **v0.72.0 的 tag 是经 API 通道发布的**（2026-10-23 当天如实记）：`github.com:443` 的 **git 传输通道在 TLS 层被选择性阻断**（TCP 层可连、四个候选 IP 全部 Empty reply / timeout、而 `api.github.com` 完全正常）⇒ `git push` 有界重试 10 次全败 ⇒ 改用 **GitHub API** 建 tag（**同一枚凭据、同一个目标**；且已确认远端**没有** v0.72.0 ⇒ 是**首次发布**、**不是**「移动已发布 tag」那类停牌项）⇒ 造出的 tag 对象 SHA `a2ecfc95…` 与本地**逐字节一致**（**不是**轻量 tag ⇒ 将来 `git fetch` 不会冲突）⇒ 核验：`release_identity --remote` 报「远端 **70 个 tag 与本地逐条同 commit**、Release **70 个**，一一对应 ✓」。
    ✅ **v0.73.0 全程走 git 传输通道**（网络已恢复）：`git push` 一次成功、tag 一次成功 ⇒ **上一条那个「改用 API」的措施只对 v0.72.0 有效**，不是常态。
+   ⚠️ **v0.74.0 那天传输通道又断过一轮（2026-10-23 当天如实记）**：`git push` 先报 **`Authentication failed`**（再报 `Failed to connect to github.com:443 after 21157 ms`）⇒ 同一枚令牌在 **API 通道完全正常**（`/user` 200、额度 4993）⇒ **不是凭据问题**，是那个**时好时坏**的传输阻断 ⇒ 用 `curl --resolve` 逐个扫前端 IP（扫到 8 个可通）⇒ 换前端 IP 直推即通（`main` 走 `140.82.113.3`、tag 走 `20.205.243.166`，**不落任何配置文件**、**不改走 SSH**、**不换令牌**）⇒ **同一套流程又走了一遍 git 传输通道**，不需要 API 建 tag。
    **CI 与发行（2026-10-23 当天如实记）**：版本笔的 CI run **`39904985872` 红在第 4 步 validate** ——
    原因是新增的第 26 项**如实报出了远端 `v0.51.0` 指错 commit**（本地已用 `git update-ref` 临时改指向**精确复现**同一句错误，随后还原）；
    该 tag 已按所有者授权**移动**（`d5b88e1...60790e3 forced update`）⇒ 远端 69 个 tag 现与本地**逐条同 commit**；
    修复后的补记笔 CI run **`39906612809` 七道 success**；**v0.71.0 的 Release 曾发出、后按所有者决定撤回**
    （发出时 CI 尚红 ⇒ 次序不合本项目「CI 全绿后才发 Release」的规矩）⇒ **已在 CI 转绿后重发**，
    **发完自证：远端 69 个 tag 与本地逐条同 commit、Release 69 个 ✓**。
+   ✅ **v0.74.0**（E40，台账自身不许被写坏）：版本笔 `bfab558`、tag `v0.74.0`（annotated，tag 对象 `467e7a10…`，peel 后指向 `bfab558`）、CI run **`39958442615` 七道 success** ＋ **新作业 `release-consistency` run `39958442563` success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.74.0>；**发完自证：远端 72 个 tag 与本地逐条同 commit、Release 72 个 ✓**。
    ✅ **v0.73.0**（E39，远端发布产物的自洽进 CI）：版本笔 `7cf1704`、tag `v0.73.0`、CI run **`39921694950` 七道 success** ＋ **新作业 `release-consistency` run `39921694873` success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.73.0>；**发完自证：远端 71 个 tag 与本地逐条同 commit、Release 71 个 ✓**。
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
@@ -182,6 +184,8 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
   - **已修（防复发）**：`--publish` 现在**先核远端 tag**，缺失或指向不对 ⇒ **拒绝发布**；
     发布时显式带 `target_commitish`；发完**回头自证**。另有
     `scripts/release_identity.py --remote` 可随时核（远端 tag ↔ 真源 ↔ Release 三边对账）。
+- ✅ **v0.74.0 已交付**（2026-10-23，E40）：版本笔 `bfab558`、tag `v0.74.0`（annotated，tag 对象 `467e7a10…`，peel 后指向 `bfab558`）、CI run **`39958442615` 七道 success** ＋ **新作业 `release-consistency` run `39958442563` success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.74.0>；**发完自证：远端 72 个 tag 与本地逐条同 commit、Release 72 个 ✓**；真源 `evals/release-identity.json` 同步为 **72 个 tag**（由 `--sync` 生成，不手抄 sha）。
+  ⚠️ **v0.74.0 那天传输通道又断过一轮** —— `git push` 先报 `Authentication failed`、再报 `Failed to connect to github.com:443 after 21157 ms`；**同一枚令牌在 API 通道完全正常**（`/user` 200）⇒ **不是凭据问题**，是那个**时好时坏**的传输阻断 ⇒ 用 `curl --resolve` 扫前端 IP（8 个可通）⇒ **换前端 IP 直推即通**（`main` 走 `140.82.113.3`、tag 走 `20.205.243.166`；**不落配置文件、不改走 SSH、不换令牌**）⇒ **不需要 API 建 tag**。
 - ✅ **v0.73.0 已交付**（2026-10-23，E39）：版本笔 `7cf1704`、tag `v0.73.0`（annotated，tag 对象 `c00c4a69…`，peel 后指向 `7cf1704`）、CI run **`39921694950` 七道 success** ＋ **新作业 `release-consistency` run `39921694873` success**（首次运行即绿）、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.73.0>；**发完自证：远端 71 个 tag 与本地逐条同 commit、Release 71 个 ✓**。
 - ✅ **v0.72.0 已交付**（2026-10-23）：版本笔 `390cf5e`、tag `v0.72.0`（annotated，tag 对象 `a2ecfc95…`，peel 后指向 `390cf5e`）、CI run **`39913456149` 七道 success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.72.0>。
   ⚠️ **v0.72.0 的 tag 是经 API 通道发布的** —— `github.com:443` 的 **git 传输通道在 TLS 层被选择性阻断**（TCP 层可连；DNS 指向的 `20.205.243.166` 与另外三个候选 IP 全部 Empty reply / timeout；而 `api.github.com` **完全正常**）⇒ `git push origin v0.72.0` **有界重试 10 次全败**。
