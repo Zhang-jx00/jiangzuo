@@ -5664,6 +5664,85 @@ class TestInstallCommand(unittest.TestCase):
         self.assertIn(u"Zhang-jx00/jiangzuo", r.stdout)
 
 
+class TestChangelogDateTimezone(unittest.TestCase):
+    """E41：**"今天"必须按作者那一天算**，不能按跑闸机器的时钟（跨时区 ⇒ CI 假红）。
+
+    为什么（E41 的 CI 实测）：作者在 +0800 的 **2026-10-24 凌晨**落笔，CI 跑在 **UTC** 的
+    2026-10-23 ⇒ 提交当天被当成"未来日期" ⇒ **CI 假红**（红在第 4 步"校验技能结构"），
+    而**本机四道闸门全绿** ⇒ **只有 CI 才看得见这个洞**（本机看天经地义，绿）。
+    ⇒ 修法：基准取 **max(机器的本地日期, 最近一笔提交的作者日期)** ——
+       **提交里记的就是作者那天的时区** ⇒ 与跑闸机器无关；
+       取较晚者 ⇒ ① 不放宽"写了个明天"（作者当天写明天 ⇒ 仍红）
+       ② 也不误伤**合法的当天**（作者在 +0800 写的 10-24 ⇒ 不再被 UTC 的 10-23 当成未来）。
+    """
+
+    def _git(self, args, cwd, env=None):
+        e = dict(os.environ)
+        if env:
+            e.update(env)
+        p = subprocess.run(["git"] + args, cwd=cwd, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, env=e, encoding="utf-8",
+                           errors="replace", timeout=60)
+        return p
+
+    def _repo(self, tmp, entry_date, author_stamp):
+        """搭一个**带 git 历史**的技能目录：最后一笔提交的作者日期 = author_stamp。"""
+        sk = os.path.join(tmp, "sk")
+        for d in ("references", "templates", "scripts", "evals"):
+            os.makedirs(os.path.join(sk, d))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n"
+                    u"metadata:\n  version: 0.99.0\n---\n正文第一行\n")
+        with io.open(os.path.join(sk, "CHANGELOG.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"# 更新日志\n\n## [0.99.0] - " + entry_date + u"\n\n正文\n")
+        with io.open(os.path.join(sk, "README.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"# sk\n")
+        with io.open(os.path.join(sk, "README.en.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"# sk\n")
+        with io.open(os.path.join(sk, "references", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        with io.open(os.path.join(sk, "templates", "a.md"), "w", encoding="utf-8") as f:
+            f.write(u"# a\n")
+        self._git(["init", "-q", "."], sk)
+        self._git(["add", "-A"], sk)
+        env = {"GIT_AUTHOR_DATE": author_stamp, "GIT_COMMITTER_DATE": author_stamp}
+        p = self._git(["-c", "user.name=t", "-c", "user.email=t@example.com",
+                       "commit", "-q", "-m", "feat: v0.99.0"], sk, env=env)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        return sk
+
+    def _validate(self, sk):
+        return run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+
+    def test_entry_dated_the_author_day_is_not_future(self):
+        """绿：条目日期＝**作者那一天**（机器时钟更早）⇒ 不得被当成"未来日期"。
+
+        ⚠️ 这条**在修之前会红**：机器的"今天"是 2026-10-24，而提交在 2099-01-01
+        ⇒ 2099-01-01 > 2026-10-24 ⇒ 被误判成未来 ⇒ 就是 E41 那次 CI 假红的机制。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, u"2099-01-01", u"2099-01-01T23:30:00+0800")
+            r = self._validate(sk)
+            self.assertNotIn(u"未来日期", r.stdout,
+                             u"作者当天的日期被误判成未来了：%s" % r.stdout)
+
+    def test_entry_after_the_author_day_is_still_future(self):
+        """红：条目日期**晚于**作者那一天 ⇒ 仍必须报（不许因为修时区就放水）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, u"2099-06-01", u"2099-01-01T23:30:00+0800")
+            r = self._validate(sk)
+            self.assertIn(u"未来日期", r.stdout)
+
+    def test_author_today_reads_the_commit_timezone(self):
+        """绿：`_author_today` 取的是**提交自己的那一天**（+0800 的 23:30 ⇒ 仍是 01 日）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, u"2099-01-01", u"2099-01-01T23:30:00+0800")
+            sys.path.insert(0, SCRIPTS)
+            import validate_skill
+            validate_skill = importlib.reload(validate_skill)
+            self.assertEqual(validate_skill._author_today(sk), u"2099-01-01")
+
+
 class TestChangelogVersions(unittest.TestCase):
     """E36（第 25 项）：CHANGELOG 的版本条目**不得重复**、必须**按降序**。
 

@@ -32,9 +32,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-10-24 当场重跑**：291 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-24 当场重跑**：294 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **80/80 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.289 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **81/81 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.289 ms/文件**（预算 ≤20）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -280,7 +280,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 291 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 294 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -292,7 +292,7 @@ python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 �
 正文引用的 28 个文件全部存在且用正斜杠 ｜ 分册间无嵌套阅读链 ｜ scripts 全部可编译 ｜
 20 本分册骨架契约 ｜ README 的脚本/模板/分册计数与实物一致 ｜ README 的入口行数与实物一致 ｜
 README 的规则条数与实物一致（34 条含 1 停用）｜ 分册全部登记进 `lookup.py` 路由词表 ｜
-**Markdown 表格行头完整 + 表内列数一致 + "上表 N 条"对账 + 未来日期拦截**（58 个 .md 全查；E38 加"列数一致"那条，⚠️ 按 **GFM 规则**数列，`\|` 是转义、不算分隔符）｜
+**Markdown 表格行头完整 + 表内列数一致 + "上表 N 条"对账 + 未来日期拦截**（58 个 .md 全查；E38 加"列数一致"那条，⚠️ 按 **GFM 规则**数列，`\|` 是转义、不算分隔符；⚠️ **E41 修**："今天"取 **max(机器的本地日期, 最近一笔提交的作者日期)** —— **提交里记的就是作者那天的时区** ⇒ 与跑闸机器（**CI 是 UTC**）无关 ⇒ 不再把作者当天的提交判成"未来日期"（那次**本机全绿、CI 假红**））｜
 **代码块里"照着跑就能看到"的期望值与实物对账**（用例数 / 语料分母 / 规则条数，E8 新增，第 14 项）｜
 **入库文本里没有 U+FFFD 替换字符**（E15，第 18 项）｜
 **变异校准器随技能分发、零依赖、例数与 CHANGELOG 对账**（E24，第 19 项）｜
@@ -1073,7 +1073,7 @@ git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望�
 grep -n "version:" SKILL.md          # 期望：0.60.0
 python scripts/validate_skill.py .   # 期望：31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 291 tests ... OK（约 170 秒）
+python -m unittest discover -s tests # 期望：Ran 294 tests ... OK（约 170 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

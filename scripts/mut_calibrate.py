@@ -924,6 +924,13 @@ CASES = [
      "install-command-placeholder-neutered",
      "tests.test_scripts.TestInstallCommand."
      "test_placeholder_install_command_must_be_flagged"),
+    # ⑦ 日期基准不再取"作者那一天" ⇒ 判据必须红（否则跨时区又会把当天误判成未来）。
+    ("scripts/validate_skill.py",
+     u"                    if _at and _at > today:",
+     u"                    if False:  # E41 校准：日期基准不再取作者那一天",
+     "changelog-date-timezone-neutered",
+     "tests.test_scripts.TestChangelogDateTimezone."
+     "test_entry_dated_the_author_day_is_not_future"),
 ]
 
 

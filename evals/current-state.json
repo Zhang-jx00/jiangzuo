@@ -384,10 +384,10 @@
       "static": {
         "must_find": 25,
         "must_not_find": 19,
-        "mutation_cases": 80,
+        "mutation_cases": 81,
         "rules_active": 33,
         "rules_disabled": 1,
-        "tests": 291
+        "tests": 294
       }
     }
   },
@@ -507,10 +507,10 @@
   "static": {
     "must_find": 25,
     "must_not_find": 19,
-    "mutation_cases": 80,
+    "mutation_cases": 81,
     "rules_active": 33,
     "rules_disabled": 1,
-    "tests": 291
+    "tests": 294
   },
   "version": "0.75.0"
 }

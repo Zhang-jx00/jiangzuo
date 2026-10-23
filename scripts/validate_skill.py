@@ -203,6 +203,28 @@ def check_frontmatter(skill_dir, text):
     return meta
 
 
+def _author_today(skill_dir):
+    """**作者的那一天**：最近一笔提交的作者日期（按**提交里记的那个时区**渲染）。
+
+    为什么要有它（E41 的 CI 实测）："今天"如果取**跑这道闸的机器的本地日期**，
+    就会在**跨时区**时误判 —— 作者在 +0800 的 10-24 凌晨落笔、CI 跑在 **UTC** 的 10-23
+    ⇒ 提交当天被当成"未来日期" ⇒ **CI 假红**（E41 的版本笔就假红过一次，
+    红在第 4 步"校验技能结构"，本机却全绿 ⇒ **只有 CI 才看得见这个洞**）。
+    ⇒ 而**提交里记的就是作者那天的时区** ⇒ 用它当基准 ⇒ **与跑闸机器的时区无关**。
+    ⇒ 取不到（非 git 目录 / git 不可用）⇒ 返回 None（调用方退回本机日期）。
+    """
+    try:
+        proc = subprocess.Popen(
+            ["git", "log", "-1", "--pretty=%ad", "--date=short"], cwd=skill_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        out = proc.communicate(timeout=30)[0].decode("utf-8", "replace").strip()
+        if proc.returncode != 0 or not re.match(r"^\d{4}-\d{2}-\d{2}$", out):
+            return None
+        return out
+    except Exception:
+        return None
+
+
 def check_ledger_versions(skill_dir, cl_text):
     """第 25 项：**台账自身不许被写坏**（E36 起，E40 扩到进化账本）。
 
@@ -1629,6 +1651,13 @@ def main():
                     dates = re.findall(
                         r"^##\s*\[?\d+\.\d+\.\d+\]?\s*[-–—]?\s*(\d{4}-\d{2}-\d{2})", cl, re.M)
                     today = time.strftime("%Y-%m-%d")
+                    # ⚠️ **"今天"取 max(机器的本地日期, 最近一笔提交的作者日期)**：
+                    #    提交日期是**作者自己的那天**（提交里记着那个时区）⇒ 与跑闸机器的时区无关；
+                    #    取**较晚者** ⇒ ① 不放宽"写了个明天"（作者当天写明天 ⇒ 仍红）
+                    #    ② 也不因为 UTC/本地时差把**合法的当天**误判成未来（E41 的 CI 假红就是这条）。
+                    _at = _author_today(skill_dir)
+                    if _at and _at > today:
+                        today = _at
                     future = sorted(set(d for d in dates if d > today))
                     if future:
                         err("CHANGELOG 有 %d 个未来日期（%s ｜ 今天 %s）——"
