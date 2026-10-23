@@ -17,14 +17,16 @@
 ## 0. 接手时先看这 10 行
 
 1. 项目：**将作（jiangzuo）**——一个遵循 Agent Skills 开放规范的 AI 编程纪律技能，含一条零依赖安全审计链工具集。
-2. 状态：**v0.72.0 已交付并推送**（`390cf5e`，tag `v0.72.0` 同笔，CI run `39913456149` **七道** success）；**发布产物的「身份」有人守**（E37，第 26 项）、**Markdown 表格的结构也有人守**（E38，第 12 项第三条）。
-   ⚠️ **tag 是经 API 通道发布的**（2026-10-23 当天如实记）：`github.com:443` 的 **git 传输通道在 TLS 层被选择性阻断**（TCP 层可连、四个候选 IP 全部 Empty reply / timeout、而 `api.github.com` 完全正常）⇒ `git push` 有界重试 10 次全败 ⇒ 改用 **GitHub API** 建 tag（**同一枚凭据、同一个目标**；且已确认远端**没有** v0.72.0 ⇒ 是**首次发布**、**不是**「移动已发布 tag」那类停牌项）⇒ 造出的 tag 对象 SHA `a2ecfc95…` 与本地**逐字节一致**（**不是**轻量 tag ⇒ 将来 `git fetch` 不会冲突）⇒ 核验：`release_identity --remote` 报「远端 **70 个 tag 与本地逐条同 commit**、Release **70 个**，一一对应 ✓」。
+2. 状态：**v0.73.0 已交付并推送**（`7cf1704`，tag `v0.73.0` 同笔，CI run `39921694950` **七道** success ＋**新作业** `release-consistency` run `39921694873` success）；**发布产物的「身份」有人守**（E37，第 26 项）、**Markdown 表格的结构也有人守**（E38，第 12 项第三条）、**远端发布产物的自洽也有人守**（E39，第 27 项 ⇒ CI 每日核「远端 Release ↔ 远端 tag 一一对应、零缺口」）。
+   ⚠️ **v0.72.0 的 tag 是经 API 通道发布的**（2026-10-23 当天如实记）：`github.com:443` 的 **git 传输通道在 TLS 层被选择性阻断**（TCP 层可连、四个候选 IP 全部 Empty reply / timeout、而 `api.github.com` 完全正常）⇒ `git push` 有界重试 10 次全败 ⇒ 改用 **GitHub API** 建 tag（**同一枚凭据、同一个目标**；且已确认远端**没有** v0.72.0 ⇒ 是**首次发布**、**不是**「移动已发布 tag」那类停牌项）⇒ 造出的 tag 对象 SHA `a2ecfc95…` 与本地**逐字节一致**（**不是**轻量 tag ⇒ 将来 `git fetch` 不会冲突）⇒ 核验：`release_identity --remote` 报「远端 **70 个 tag 与本地逐条同 commit**、Release **70 个**，一一对应 ✓」。
+   ✅ **v0.73.0 全程走 git 传输通道**（网络已恢复）：`git push` 一次成功、tag 一次成功 ⇒ **上一条那个「改用 API」的措施只对 v0.72.0 有效**，不是常态。
    **CI 与发行（2026-10-23 当天如实记）**：版本笔的 CI run **`39904985872` 红在第 4 步 validate** ——
    原因是新增的第 26 项**如实报出了远端 `v0.51.0` 指错 commit**（本地已用 `git update-ref` 临时改指向**精确复现**同一句错误，随后还原）；
    该 tag 已按所有者授权**移动**（`d5b88e1...60790e3 forced update`）⇒ 远端 69 个 tag 现与本地**逐条同 commit**；
    修复后的补记笔 CI run **`39906612809` 七道 success**；**v0.71.0 的 Release 曾发出、后按所有者决定撤回**
    （发出时 CI 尚红 ⇒ 次序不合本项目「CI 全绿后才发 Release」的规矩）⇒ **已在 CI 转绿后重发**，
    **发完自证：远端 69 个 tag 与本地逐条同 commit、Release 69 个 ✓**。
+   ✅ **v0.73.0**（E39，远端发布产物的自洽进 CI）：版本笔 `7cf1704`、tag `v0.73.0`、CI run **`39921694950` 七道 success** ＋ **新作业 `release-consistency` run `39921694873` success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.73.0>；**发完自证：远端 71 个 tag 与本地逐条同 commit、Release 71 个 ✓**。
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
@@ -180,6 +182,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
   - **已修（防复发）**：`--publish` 现在**先核远端 tag**，缺失或指向不对 ⇒ **拒绝发布**；
     发布时显式带 `target_commitish`；发完**回头自证**。另有
     `scripts/release_identity.py --remote` 可随时核（远端 tag ↔ 真源 ↔ Release 三边对账）。
+- ✅ **v0.73.0 已交付**（2026-10-23，E39）：版本笔 `7cf1704`、tag `v0.73.0`（annotated，tag 对象 `c00c4a69…`，peel 后指向 `7cf1704`）、CI run **`39921694950` 七道 success** ＋ **新作业 `release-consistency` run `39921694873` success**（首次运行即绿）、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.73.0>；**发完自证：远端 71 个 tag 与本地逐条同 commit、Release 71 个 ✓**。
 - ✅ **v0.72.0 已交付**（2026-10-23）：版本笔 `390cf5e`、tag `v0.72.0`（annotated，tag 对象 `a2ecfc95…`，peel 后指向 `390cf5e`）、CI run **`39913456149` 七道 success**、Release <https://github.com/Zhang-jx00/jiangzuo/releases/tag/v0.72.0>。
   ⚠️ **v0.72.0 的 tag 是经 API 通道发布的** —— `github.com:443` 的 **git 传输通道在 TLS 层被选择性阻断**（TCP 层可连；DNS 指向的 `20.205.243.166` 与另外三个候选 IP 全部 Empty reply / timeout；而 `api.github.com` **完全正常**）⇒ `git push origin v0.72.0` **有界重试 10 次全败**。
   ⇒ 改用 **GitHub API** 建 tag：**同一枚凭据、同一个目标**（把 v0.72.0 发布到远端）；且**已确认远端没有该 tag**（`GET /git/ref/tags/v0.72.0` = 404）⇒ 这是**首次发布**，**不是**「移动已发布 tag」那类停牌项。
@@ -918,11 +921,17 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
     （它此前用空行隔行 ⇒ GFM 里**空行后的每行都不是表** ⇒ **整张台账在 GitHub 上根本没渲染成表格**
     ⇒ ⚠️ **更正 E37 的一处不准确说法**：E37 写的是「渲染错位」，**机制说错了**）
     ⇒ 全仓扫出并修掉 **14 行**（11 行插空格子、3 行并回多出的格子）。
-    ⇒ **仍未做（下一轮）**：把「行数收支」这一列**变成机器算的** ——
-    ⚠️ E38 实测**「从台账文本反推对应 commit」不可靠**（63 行里 **30 行定位不到**，且有错配：
-    台账行与 commit 不是一一对应、补记笔也算一笔）⇒ ⇒ 只能**显式指定 commit**再算
-    （`git diff --numstat <sha>^ <sha>` 过滤 `scripts/` + `tests/` + `evals/`）⇒
-    **要入库**才谈得上"接手者也有"（放草稿区只是方便我自己）。
+    ⇒ **E39 已改判**：原计划是"把「行数收支」这一列**变成机器算的**"⇒ E39 复核后**不可行**：
+    「**从台账文本反推对应 commit**」不可靠（64 行里 **58 行无法用版本号定位** —— 那些行的证据格里
+    根本没有版本号；且有错配：台账行与 commit 不是一一对应、补记笔也算一笔）
+    ⇒ ⇒ **历史行核不了** ⇒ 只能**显式指定 commit**后再算（`git diff --numstat <sha>^ <sha>` 过滤
+    `scripts/` + `tests/` + `evals/`）⇒ ⇒ **改判为「提供工具、不做自动核验」**：
+    工具给"给定 commit ⇒ 那一轮的行数收支"，**由填表的人显式指定**；
+    机器只核**能定位的那些行**（含版本号的少数行）⇒ **宁可少核，不要错核**。
+    ⇒ **再记一个新洞（E39 顺带发现，还没做）**：**台账的行序没人守** ——
+    E37 那轮把 E37 的行**插在了 E36 之前**（台账是时间倒序）⇒ 错了整整一行
+    ⇒ E38 才发现并手工换回来 ⇒ 而**没有任何判据**会报 ⇒
+    ⇒ 候选：加一条「进化账本的行序必须按日期/轮次倒序」。
     ⇒ **再记一个洞（E38 顺带发现，还没做）**：第 25 项的「台账查重」**不覆盖 `evolution.md`**
     —— 它的行格式是 `| 日期 | E37 …`（轮次在**第二格**），而查重正则认的是
     `| **E37** ✅ | v0.70.0 |` ⇒ **进化账本里若又出现重复行，没人能发现**
