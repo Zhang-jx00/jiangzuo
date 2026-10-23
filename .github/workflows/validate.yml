@@ -10,6 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # E37：第 26 项要核「每个 tag 指向的 commit **真的属于那个版本**」，
+          # 而这需要**完整历史 + tag 对象**。checkout 默认是 shallow
+          # （fetch-depth: 1）且**不 fetch tag** ⇒ 那样这一项在 CI 上只能发一句
+          # 「这轮没跑」⇒ 等于一把**恒绿的空锁**（比没锁更坏）。
+          # ⇒ 拉全历史与全部 tag，让这一项在 CI 上真核。
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-python@v5
         with:

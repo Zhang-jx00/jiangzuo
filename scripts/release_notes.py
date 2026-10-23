@@ -23,12 +23,30 @@ import re
 import subprocess
 import sys
 
+# ⚠️ Windows 控制台默认 GBK ⇒ 打印「⇒」这类字符会 UnicodeEncodeError。
+#    E37 实测：崩的时机恰好是**要拒发 Release 的时候**（那句提示里就有 ⇒）
+#    ⇒ 最需要它说话时哑了 ⇒ 而且崩在发布流程的**最关键一步**上。
+#    ⇒ 统一把两个流切到 UTF-8（Linux/macOS 上是无害的 no-op）。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 CHANGELOG = os.path.join(REPO, "CHANGELOG.md")
 RELEASES_DIR = os.path.join(REPO, "docs", "jiangzuo", "releases")
 OWNER = "Zhang-jx00"
 NAME = "jiangzuo"
+
+# E37：发布产物的**身份**核验在另一个脚本里（`scripts/release_identity.py`）。
+# 同一份实现，不复制第二份——复制出来的两份迟早会不一致，而不一致的那份没人核。
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+try:
+    import release_identity
+except ImportError:            # pragma: no cover —— 脚本单独拷走时的兜底
+    release_identity = None
 
 BOUNDARY_NOTE = """## 已知边界（不藏）
 
@@ -86,6 +104,27 @@ def tag_commit(tag):
         return (None, None)
     date, msg = out.split("\x00", 1)
     return (date.strip()[:10], msg.strip())
+
+
+def tag_sha(tag):
+    """tag 指向的 commit sha（解引用后）—— 发布时要拿它当 `target_commitish`。"""
+    p = subprocess.run(["git", "rev-list", "-1", tag], cwd=REPO,
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return p.stdout.decode("utf-8", "replace").strip()
+
+
+def remote_tag_map():
+    """{tag: commit} —— 远端 tag 指向的 commit；**核不到返回 None**。
+
+    核不到不是"通过"⇒ 调用方必须拒绝发布（见 `do_publish`）。
+    """
+    if release_identity is None:
+        return None
+    try:
+        m = release_identity.remote_tags()
+    except Exception:           # noqa: BLE001 —— 网络/远端异常都算"核不到"
+        return None
+    return m or None
 
 
 def strip_markers(body):
@@ -177,12 +216,56 @@ def do_check(write=False):
     return 0
 
 
+def publish_blockers(remote_map, want_map):
+    """发布前的**拦路项**：逐条说清"这个 tag 为什么不能发"。
+
+    remote_map: {tag: 远端 tag 指向的 commit}
+    want_map:   {tag: 本地 tag 指向的 commit}
+
+    这条纯函数是为了**可测**（E37 的判据要能红），逻辑与 `do_publish` 用的是同一份。
+    """
+    blocked = []
+    for t in sorted(want_map):
+        want = want_map.get(t)
+        got = remote_map.get(t)
+        if got is None:
+            blocked.append(u"%s（远端**没有**这个 tag ⇒ 先 `git push origin %s`；"
+                           u"GitHub 会自动在 main HEAD 上造同名 tag，不能让它发生）" % (t, t))
+        elif want and got != want:
+            blocked.append(u"%s（远端指向 %s，本地是 %s ⇒ 先把远端 tag 修对再发）"
+                           % (t, got[:7], want[:7]))
+    return blocked
+
+
 def do_publish(token, only=None):
     import urllib.request
     ent = entries(read_changelog())
     tg = tags()
     if only:
         tg = ["v" + only]
+
+    # ── E37：发布前**必须**核远端 tag 的身份 ──────────────────────────────
+    # 为什么这一步不能省（真实教训）：`POST /releases` 若**不带** `target_commitish`，
+    # GitHub 用默认分支 main；而当远端还没有这个 tag 时，GitHub 会在 main 的 HEAD 上
+    # **自动造出**一个同名 tag —— 名字对，内容是当时 main 的内容。
+    # E37 查出远端 `v0.51.0` 就是这样来的：它指向 `d5b88e1a`（v0.66.0 的补记笔），
+    # 而不是 v0.51.0 的代码 ⇒ 谁 checkout v0.51.0 拿到的都是别的版本。
+    # 而「68 tag / 68 Release 一一对应、零缺口」当时是**真的**——它只数了名字与数量。
+    # ⇒ 这里改成：**远端 tag 不存在或指向不对 ⇒ 拒绝发布**，并说清要做什么。
+    rtags = remote_tag_map()
+    if rtags is None:
+        print("核不到远端 tag（ls-remote 失败或 remote 不对）⇒ 拒绝发布。")
+        print("  宁可不发，也不在 main HEAD 上自动造出一个同名 tag。")
+        return 2
+    want_map = dict((t, tag_sha(t)) for t in tg)
+    blocked = publish_blockers(rtags, want_map)
+    if blocked:
+        print("**拒绝发布**：%d 个 tag 的远端身份不对（宁可不发，也不在 main HEAD 上造 tag）"
+              % len(blocked))
+        for b in blocked:
+            print("  ! " + b)
+        return 2
+
     api = "https://api.github.com/repos/%s/%s/releases" % (OWNER, NAME)
     hdr = {"Authorization": "token " + token, "Accept": "application/vnd.github+json",
            "User-Agent": "jiangzuo-release"}
@@ -208,6 +291,9 @@ def do_publish(token, only=None):
             "body": notes_for(ver, date, body, fb),
             "draft": False,
             "prerelease": False,
+            # 双保险：显式指定该 tag 应指向的 commit。
+            # tag 已存在时 GitHub 会忽略它；万一它不存在，也不会落到 main HEAD 上。
+            "target_commitish": tag_sha(t),
         }
         req = urllib.request.Request(api, data=json.dumps(payload).encode("utf-8"),
                                      headers=dict(hdr, **{"Content-Type": "application/json"}),
@@ -227,6 +313,16 @@ def do_publish(token, only=None):
         print("  = " + x)
     for x in failed:
         print("  ! " + x)
+    if created:
+        # 发完**回头自证**：远端 tag 指向必须仍与本地一致（不许默默漂移）。
+        problems, summary = release_identity.check_remote(token, verbose=False)
+        if problems:
+            print("**发完自证不过**：")
+            for p in problems:
+                print("  ! " + p)
+            return 1
+        print("发完自证：远端 %d 个 tag 与本地逐条同 commit，Release %d 个 ✓"
+              % (summary.get("remote_tags", 0), summary.get("releases", 0)))
     return 1 if failed else 0
 
 

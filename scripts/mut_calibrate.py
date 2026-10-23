@@ -28,6 +28,16 @@ import re
 import subprocess
 import sys
 
+# ⚠️ Windows 控制台默认 GBK ⇒ 打印「⇒」这类字符会 UnicodeEncodeError。
+#    E37 实测：崩的时机恰好是**要报 INVALID 的时候**（"判据在未变异代码上就不是绿的"
+#    这句里就有 ⇒）⇒ **最需要它说话时哑了**，而且崩掉 ⇒ 前面所有结果全丢、
+#    只剩一个退出码 ⇒ 看上去像"校准全红/全败"这种无信息量的结论。
+#    ⇒ 统一把两个流切到 UTF-8（Linux/macOS 上是无害的 no-op）。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # JSON 源码里的正则要写**两个**反斜杠，手写转义层数极易错一层
 # （E25 改规则时被坑过两次）⇒ 让机器拼。
 B = chr(92)
@@ -793,6 +803,43 @@ CASES = [
      "ledger-acceptance-duplicate-not-flagged",
      "tests.test_scripts.TestChangelogVersions."
      "test_duplicate_sections_in_other_ledgers_must_be_flagged"),
+    # ---- E37（v0.71.0）：发布产物的**身份**必须对得上 ----
+    # ① owner 规则（tag 指向的 commit 是不是属于那个版本）被关掉 ⇒ 判据必须红。
+    ("scripts/release_identity.py",
+     "            if own != t[1:]:",
+     "            if False:  # E37 校准：owner 规则不再判定",
+     "release-identity-owner-rule-neutered",
+     "tests.test_scripts.TestReleaseIdentity."
+     "test_tag_pointing_to_wrong_version_must_be_flagged"),
+    # ② 真源与本地实物的对账被关掉 ⇒ 判据必须红。
+    ("scripts/release_identity.py",
+     '            if actual[t] != items[t].get("commit"):',
+     '            if False:  # E37 校准：真源与实物不再对账',
+     "release-identity-truth-vs-actual-neutered",
+     "tests.test_scripts.TestReleaseIdentity."
+     "test_truth_commit_mismatch_must_be_flagged"),
+    # ③ `ls-remote` 的 `^{}` 解引用不再优先 ⇒ 回到 E37 第一版那个 bug
+    #    （把每一个 annotated tag 都误报成「指错了 commit」）⇒ 判据必须红。
+    ("scripts/release_identity.py",
+     "        res[name] = peel.get(name, sha)",
+     "        res[name] = sha  # E37 校准：不取 ^{} 解引用行",
+     "release-identity-ls-remote-peel-dropped",
+     "tests.test_scripts.TestReleaseIdentity."
+     "test_ls_remote_prefers_peeled_commit"),
+    # ④ 发布前的「远端缺 tag」拦路被关掉 ⇒ 判据必须红。
+    ("scripts/release_notes.py",
+     "        if got is None:",
+     "        if False:  # E37 校准：远端缺 tag 不再拦",
+     "publish-missing-remote-tag-not-blocked",
+     "tests.test_scripts.TestReleaseIdentity."
+     "test_publish_blockers_flags_missing_remote_tag"),
+    # ⑤ 第 26 项整项摘掉 ⇒ 本仓库仍然全绿 ⇒ 没人发现 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     "            check_release_identity(skill_dir)",
+     "            # check_release_identity(skill_dir)  # E37 校准：第 26 项整项摘掉",
+     "validate-release-identity-removed",
+     "tests.test_scripts.TestReleaseIdentity."
+     "test_validate_reports_release_identity"),
 ]
 
 

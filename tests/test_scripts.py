@@ -5655,5 +5655,122 @@ class TestChangelogVersions(unittest.TestCase):
         self.assertIn(u"无重复且按降序", r.stdout)
 
 
+class TestReleaseIdentity(unittest.TestCase):
+    """E37：发布产物的**身份**必须对得上。
+
+    背景：本项目此前核过「68 个 tag / 68 个 Release 一一对应、零缺口」——**全绿**。
+    但那次只数了**名字与数量**。E37 查出远端 `v0.51.0` 实际指向 `d5b88e1a`
+    （那是 **v0.66.0 的补记笔**），而不是 v0.51.0 的代码 ⇒ 谁 checkout v0.51.0
+    拿到的都是别的版本 ⇒ 而那句话当时**是真的**。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, SCRIPTS)
+        import release_identity
+        import release_notes
+        cls.ri = importlib.reload(release_identity)
+        cls.rn = importlib.reload(release_notes)
+
+    def _truth(self):
+        p = os.path.join(REPO, "evals", "release-identity.json")
+        with io.open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_ls_remote_prefers_peeled_commit(self):
+        """绿：annotated tag 要取 `^{}` 那行（commit），**不是**第一行（tag 对象）。
+
+        E37 第一版就是漏了这一步 ⇒ 67 个 tag 全被误报成「指错了 commit」，
+        而真的错的只有 1 个 ⇒ 这条判据必须钉住。
+        """
+        out = ("aaa111\trefs/tags/v0.51.0\n"
+               "bbb222\trefs/tags/v0.51.0^{}\n"
+               "ccc333\trefs/tags/v0.60.0\n")
+        got = self.ri.parse_ls_remote(out)
+        self.assertEqual(got.get("v0.51.0"), "bbb222")
+        self.assertEqual(got.get("v0.60.0"), "ccc333")
+
+    def test_publish_blockers_flags_missing_remote_tag(self):
+        """红：远端**缺** tag ⇒ 必须拦住（否则 GitHub 会在 main HEAD 上造同名 tag）。"""
+        blocked = self.rn.publish_blockers({"v0.1.0": "a" * 40},
+                                           {"v0.1.0": "a" * 40, "v0.2.0": "b" * 40})
+        self.assertEqual(len(blocked), 1, blocked)
+        self.assertIn("v0.2.0", blocked[0])
+        self.assertIn(u"远端**没有**这个 tag", blocked[0])
+
+    def test_publish_blockers_flags_mismatched_commit(self):
+        """红：远端 tag 指向**别的** commit ⇒ 必须拦住。"""
+        blocked = self.rn.publish_blockers({"v0.1.0": "c" * 40}, {"v0.1.0": "a" * 40})
+        self.assertEqual(len(blocked), 1, blocked)
+        self.assertIn(u"远端指向", blocked[0])
+
+    def test_publish_blockers_accepts_matching(self):
+        """绿：完全一致 ⇒ 没有拦路项（**防误伤**的配对判据）。"""
+        blocked = self.rn.publish_blockers({"v0.1.0": "a" * 40}, {"v0.1.0": "a" * 40})
+        self.assertEqual(blocked, [])
+
+    def test_truth_commit_mismatch_must_be_flagged(self):
+        """红：真源里的 commit 与本地实物对不上 ⇒ 必须红。"""
+        data = self._truth()
+        first = sorted(data["tags"])[0]
+        data["tags"][first]["commit"] = "0" * 40
+        errs = []
+        ok = self.ri.check_local(errs.append, lambda m: None, REPO, data)
+        self.assertFalse(ok)
+        self.assertTrue(any(u"真源与实物对不上" in e for e in errs), errs)
+
+    def test_truth_owner_mismatch_must_be_flagged(self):
+        """红：真源里某条目的 owner 与它的版本号不符 ⇒ 必须红。"""
+        data = self._truth()
+        first = sorted(data["tags"])[0]
+        data["tags"][first]["owner"] = "9.9.9"
+        errs = []
+        ok = self.ri.check_local(errs.append, lambda m: None, REPO, data)
+        self.assertFalse(ok)
+        self.assertTrue(any(u"owner" in e for e in errs), errs)
+
+    def test_tag_pointing_to_wrong_version_must_be_flagged(self):
+        """红：**端到端** —— tag 指向别的版本的 commit ⇒ 判据必须红。
+
+        这是「远端 v0.51.0 指向 v0.66.0 补记笔」的同一种错，在临时仓库里复现。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            def g(*a):
+                return subprocess.run(["git", "-C", tmp] + list(a),
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      encoding="utf-8", errors="replace").stdout
+            g("init", "-q")
+            g("config", "user.email", "t@example.com")
+            g("config", "user.name", "t")
+            with io.open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8") as f:
+                f.write("x")
+            g("add", "a.txt")
+            g("commit", "-q", "-m", "fix: v0.2.0 E1——这一笔属于 v0.2.0")
+            g("tag", "v0.1.0")       # tag 名是 v0.1.0，指向的却是 v0.2.0 的 commit
+            data = self.ri.derive(tmp)
+            self.ri.write_truth(data, tmp)
+            errs = []
+            ok = self.ri.check_local(errs.append, lambda m: None, tmp)
+            self.assertFalse(ok, "tag 指错了版本却判绿了")
+            self.assertTrue(any(u"tag 指错了版本" in e for e in errs), errs)
+
+    def test_real_repo_release_identity_passes(self):
+        """绿：本仓库的发布身份对得上（**正例**：防止把判据做成恒红）。"""
+        errs = []
+        infos = []
+        ok = self.ri.check_local(errs.append, infos.append, REPO)
+        self.assertTrue(ok, errs)
+        self.assertTrue(any(u"发布产物的身份" in i for i in infos), infos)
+
+    def test_validate_reports_release_identity(self):
+        """绿：`validate` 报告里**必须有**第 26 项。
+
+        为什么要有这条：它给「把第 26 项整项摘掉」这种变异**一个会红的对象**——
+        没有它的话，把整项从调用列表里删掉，本仓库仍然全绿 ⇒ 变异校准抓不到。
+        """
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertIn(u"发布产物的身份", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

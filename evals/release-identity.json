@@ -1,0 +1,432 @@
+{
+  "generated_by": "scripts/release_identity.py --sync",
+  "known_gaps": {
+    "changelog_without_tag": [
+      "0.1.0",
+      "0.2.0",
+      "0.3.0",
+      "0.34.1",
+      "0.4.0",
+      "0.5.0"
+    ],
+    "tag_without_changelog": [
+      "0.15.0",
+      "0.16.0",
+      "0.17.0",
+      "0.18.0",
+      "0.19.0"
+    ]
+  },
+  "owner_rule": "tag vX.Y.Z 指向的 commit，其 subject 中第一个版本号必须恰好等于 X.Y.Z",
+  "schema": 1,
+  "tags": {
+    "v0.10.0": {
+      "commit": "a1f134367d0288295e72da2ea1d6b86a7b7fff82",
+      "date": "2026-10-14",
+      "owner": "0.10.0",
+      "version": "0.10.0"
+    },
+    "v0.11.0": {
+      "commit": "f7a9917ca077bc84a4ce77e3d03f59725491145d",
+      "date": "2026-10-14",
+      "owner": "0.11.0",
+      "version": "0.11.0"
+    },
+    "v0.12.0": {
+      "commit": "6bf47b17cf204214f5a89efebc399422a6059f5b",
+      "date": "2026-10-14",
+      "owner": "0.12.0",
+      "version": "0.12.0"
+    },
+    "v0.13.0": {
+      "commit": "decd0502dc363ff40c147184eecf3067ed721911",
+      "date": "2026-10-14",
+      "owner": "0.13.0",
+      "version": "0.13.0"
+    },
+    "v0.14.0": {
+      "commit": "50b604f27015879decec7ba765c02d597385564a",
+      "date": "2026-10-14",
+      "owner": "0.14.0",
+      "version": "0.14.0"
+    },
+    "v0.15.0": {
+      "commit": "bb508827d75c315e5d069832258c34236bfd5a61",
+      "date": "2026-10-14",
+      "owner": "0.15.0",
+      "version": "0.15.0"
+    },
+    "v0.16.0": {
+      "commit": "b056dc0fc74ed8da59df13a1c45a48eb1436756a",
+      "date": "2026-10-14",
+      "owner": "0.16.0",
+      "version": "0.16.0"
+    },
+    "v0.17.0": {
+      "commit": "20080adccd68e67bf5aaed38cba72103a5e262b5",
+      "date": "2026-10-14",
+      "owner": "0.17.0",
+      "version": "0.17.0"
+    },
+    "v0.18.0": {
+      "commit": "11974e6c394f11de57b260463a6abb2be6265459",
+      "date": "2026-10-14",
+      "owner": "0.18.0",
+      "version": "0.18.0"
+    },
+    "v0.19.0": {
+      "commit": "a85a3592e757cb9e1277827b1a089a4c9a025612",
+      "date": "2026-10-14",
+      "owner": "0.19.0",
+      "version": "0.19.0"
+    },
+    "v0.20.0": {
+      "commit": "f267f803b27d42cda08c8d68b2c44bc92986898d",
+      "date": "2026-10-14",
+      "owner": "0.20.0",
+      "version": "0.20.0"
+    },
+    "v0.21.0": {
+      "commit": "69456fbb11bc0cceff6e3929a33e7e2e1929de29",
+      "date": "2026-10-14",
+      "owner": "0.21.0",
+      "version": "0.21.0"
+    },
+    "v0.22.0": {
+      "commit": "dc661f6158a61a5c9a3f802df9d2bf7418fc654a",
+      "date": "2026-10-14",
+      "owner": "0.22.0",
+      "version": "0.22.0"
+    },
+    "v0.23.0": {
+      "commit": "afb2b728f69a7dc0e2e8c8c6f3c7909a351cd66f",
+      "date": "2026-10-15",
+      "owner": "0.23.0",
+      "version": "0.23.0"
+    },
+    "v0.24.0": {
+      "commit": "e280cd6bc9e0a57063f0f43c0ce5b52d6f7f62a0",
+      "date": "2026-10-15",
+      "owner": "0.24.0",
+      "version": "0.24.0"
+    },
+    "v0.25.0": {
+      "commit": "dbb4e9f9292769dab66179cdc9195731690c1428",
+      "date": "2026-10-15",
+      "owner": "0.25.0",
+      "version": "0.25.0"
+    },
+    "v0.26.0": {
+      "commit": "c5ff18f4761575914e38e210b139cae4c286ad5e",
+      "date": "2026-10-15",
+      "owner": "0.26.0",
+      "version": "0.26.0"
+    },
+    "v0.27.0": {
+      "commit": "2d718f5f4fd5b1d959f6d2a5bf86b6805a079043",
+      "date": "2026-10-15",
+      "owner": "0.27.0",
+      "version": "0.27.0"
+    },
+    "v0.28.0": {
+      "commit": "9f50e0e9b0e72fe8b2124963af086453332f3951",
+      "date": "2026-10-15",
+      "owner": "0.28.0",
+      "version": "0.28.0"
+    },
+    "v0.29.0": {
+      "commit": "e3c3a1b39ce0afc05a0a47e213c48cc9d4a94448",
+      "date": "2026-10-15",
+      "owner": "0.29.0",
+      "version": "0.29.0"
+    },
+    "v0.30.0": {
+      "commit": "78947d74e85cbd1947b3049b636f88ee0f44b1c8",
+      "date": "2026-10-15",
+      "owner": "0.30.0",
+      "version": "0.30.0"
+    },
+    "v0.31.0": {
+      "commit": "672819f8ce10d2c088696e9e8eeb58fe3b16dd42",
+      "date": "2026-10-15",
+      "owner": "0.31.0",
+      "version": "0.31.0"
+    },
+    "v0.32.0": {
+      "commit": "da660d36c976b08db236995fd5049b7790ee814a",
+      "date": "2026-10-15",
+      "owner": "0.32.0",
+      "version": "0.32.0"
+    },
+    "v0.33.0": {
+      "commit": "63f9bba5a0099327583f4d7b01de3c012593b582",
+      "date": "2026-10-15",
+      "owner": "0.33.0",
+      "version": "0.33.0"
+    },
+    "v0.34.0": {
+      "commit": "3b9f382002f71a15f2c68f83a8653e79e0eabb28",
+      "date": "2026-10-15",
+      "owner": "0.34.0",
+      "version": "0.34.0"
+    },
+    "v0.35.0": {
+      "commit": "721809991ba44501b6deb158136166b9213919d2",
+      "date": "2026-10-15",
+      "owner": "0.35.0",
+      "version": "0.35.0"
+    },
+    "v0.36.0": {
+      "commit": "dc12e549cb878ed08e364a12770105542ae9d568",
+      "date": "2026-10-15",
+      "owner": "0.36.0",
+      "version": "0.36.0"
+    },
+    "v0.36.1": {
+      "commit": "4835ffd77b7300ba247da8cf9c028734b5b21c55",
+      "date": "2026-10-16",
+      "owner": "0.36.1",
+      "version": "0.36.1"
+    },
+    "v0.37.0": {
+      "commit": "f168165cca1f3b10fc7259c09e42a6c3ccee15a7",
+      "date": "2026-10-16",
+      "owner": "0.37.0",
+      "version": "0.37.0"
+    },
+    "v0.38.0": {
+      "commit": "95b216543b2ceacfdeb279520eb76647cb3a2b31",
+      "date": "2026-10-16",
+      "owner": "0.38.0",
+      "version": "0.38.0"
+    },
+    "v0.39.0": {
+      "commit": "6a14ecddec5932f2b2e238ed4f6d4563746b822e",
+      "date": "2026-10-16",
+      "owner": "0.39.0",
+      "version": "0.39.0"
+    },
+    "v0.39.1": {
+      "commit": "7792c54005a16e9018bf87543e201e98875c989c",
+      "date": "2026-10-16",
+      "owner": "0.39.1",
+      "version": "0.39.1"
+    },
+    "v0.39.2": {
+      "commit": "40e419686f424e16f82cb309b7189d522e695e92",
+      "date": "2026-10-16",
+      "owner": "0.39.2",
+      "version": "0.39.2"
+    },
+    "v0.40.0": {
+      "commit": "ee266d717046709c89325482a3b35d3479201a6e",
+      "date": "2026-10-20",
+      "owner": "0.40.0",
+      "version": "0.40.0"
+    },
+    "v0.41.0": {
+      "commit": "427f128c66d59b1b477135b253afcbcd108c18d1",
+      "date": "2026-10-20",
+      "owner": "0.41.0",
+      "version": "0.41.0"
+    },
+    "v0.42.0": {
+      "commit": "b8377aafedfd855894718de77388218a032b565f",
+      "date": "2026-10-20",
+      "owner": "0.42.0",
+      "version": "0.42.0"
+    },
+    "v0.43.0": {
+      "commit": "904de4db9f547f1ebbb2e93e33edf7b44f33603b",
+      "date": "2026-10-20",
+      "owner": "0.43.0",
+      "version": "0.43.0"
+    },
+    "v0.44.0": {
+      "commit": "c101bb6946b92ae8687a0500b416ab3ab60403e5",
+      "date": "2026-10-20",
+      "owner": "0.44.0",
+      "version": "0.44.0"
+    },
+    "v0.45.0": {
+      "commit": "bfc6e48b233a9950c1b0fca21b57b17b54be1cb5",
+      "date": "2026-10-21",
+      "owner": "0.45.0",
+      "version": "0.45.0"
+    },
+    "v0.46.0": {
+      "commit": "08e40d827749adb5a273efef7260059897e12692",
+      "date": "2026-10-21",
+      "owner": "0.46.0",
+      "version": "0.46.0"
+    },
+    "v0.47.0": {
+      "commit": "143315f5c2e29fb43d899dd619059d5b684c4b94",
+      "date": "2026-10-21",
+      "owner": "0.47.0",
+      "version": "0.47.0"
+    },
+    "v0.48.0": {
+      "commit": "1555307669fc3cf93bb74716bd2846dbcc789fcb",
+      "date": "2026-10-21",
+      "owner": "0.48.0",
+      "version": "0.48.0"
+    },
+    "v0.49.0": {
+      "commit": "b1ea2f510a99d45a1bb9d6f29bc6e9fa8f1489b4",
+      "date": "2026-10-21",
+      "owner": "0.49.0",
+      "version": "0.49.0"
+    },
+    "v0.50.0": {
+      "commit": "5920967a3bbdbe0d230d4b00f183515b4af96beb",
+      "date": "2026-10-21",
+      "owner": "0.50.0",
+      "version": "0.50.0"
+    },
+    "v0.51.0": {
+      "commit": "d5da9f39ee5b24f0f307db6333f399ff74493724",
+      "date": "2026-10-21",
+      "owner": "0.51.0",
+      "version": "0.51.0"
+    },
+    "v0.52.0": {
+      "commit": "4aa2b91aaebcc4d0623495ac6827d84c9c83571d",
+      "date": "2026-10-21",
+      "owner": "0.52.0",
+      "version": "0.52.0"
+    },
+    "v0.53.0": {
+      "commit": "06c9a71791a93983fc812a47034dc117cf6a57d7",
+      "date": "2026-10-21",
+      "owner": "0.53.0",
+      "version": "0.53.0"
+    },
+    "v0.54.0": {
+      "commit": "07f3452ffc1b97a5c86669dd2aeb9b2b8cfe2f2a",
+      "date": "2026-10-21",
+      "owner": "0.54.0",
+      "version": "0.54.0"
+    },
+    "v0.55.0": {
+      "commit": "a1c318554c3e89f894c7e453fd2cb7f1ac1af0f3",
+      "date": "2026-10-21",
+      "owner": "0.55.0",
+      "version": "0.55.0"
+    },
+    "v0.56.0": {
+      "commit": "b2d94966fbea25f5e12d50facc442752a75ea0ef",
+      "date": "2026-10-21",
+      "owner": "0.56.0",
+      "version": "0.56.0"
+    },
+    "v0.57.0": {
+      "commit": "2b0930dc7ba6f30898290da8b947dc612a370ee9",
+      "date": "2026-10-21",
+      "owner": "0.57.0",
+      "version": "0.57.0"
+    },
+    "v0.58.0": {
+      "commit": "acf842afac39e8be452fd0d883feb7d35c610810",
+      "date": "2026-10-21",
+      "owner": "0.58.0",
+      "version": "0.58.0"
+    },
+    "v0.59.0": {
+      "commit": "a9c6f3bf08ceeec7952585ca30f048f6684c2bc2",
+      "date": "2026-10-21",
+      "owner": "0.59.0",
+      "version": "0.59.0"
+    },
+    "v0.6.0": {
+      "commit": "ae288e810ec62a8bedd9f87c91df47a289f962b8",
+      "date": "2026-10-06",
+      "owner": "0.6.0",
+      "version": "0.6.0"
+    },
+    "v0.60.0": {
+      "commit": "72e7ed0259da7b5fd59b7b26081561ba157ea51c",
+      "date": "2026-10-21",
+      "owner": "0.60.0",
+      "version": "0.60.0"
+    },
+    "v0.61.0": {
+      "commit": "cb38e58fa3c239805d8dc5b3640c0f3d9643e2e7",
+      "date": "2026-10-22",
+      "owner": "0.61.0",
+      "version": "0.61.0"
+    },
+    "v0.62.0": {
+      "commit": "97978b8d4b691e096bc38edcb67c3153893c7f3b",
+      "date": "2026-10-22",
+      "owner": "0.62.0",
+      "version": "0.62.0"
+    },
+    "v0.63.0": {
+      "commit": "7dc2b504bb05ec86958f5ce573c0d1430c9733d6",
+      "date": "2026-10-22",
+      "owner": "0.63.0",
+      "version": "0.63.0"
+    },
+    "v0.64.0": {
+      "commit": "6f57bda1a554c7749c706961cbb92ffaeccff7d8",
+      "date": "2026-10-22",
+      "owner": "0.64.0",
+      "version": "0.64.0"
+    },
+    "v0.65.0": {
+      "commit": "4c13adb33245b3f0353122757b4f4492593a9933",
+      "date": "2026-10-22",
+      "owner": "0.65.0",
+      "version": "0.65.0"
+    },
+    "v0.66.0": {
+      "commit": "1d6452b8d9b74e36d897f6b118cb457370052fcf",
+      "date": "2026-10-22",
+      "owner": "0.66.0",
+      "version": "0.66.0"
+    },
+    "v0.67.0": {
+      "commit": "6f8e8851943dc2458a49095326a1135e9c1d763a",
+      "date": "2026-10-22",
+      "owner": "0.67.0",
+      "version": "0.67.0"
+    },
+    "v0.68.0": {
+      "commit": "e0006cd6d867c6bc5edc62b99dfb483c252fe870",
+      "date": "2026-10-22",
+      "owner": "0.68.0",
+      "version": "0.68.0"
+    },
+    "v0.69.0": {
+      "commit": "db24d5ded3897daf9768972d8c84794015b8dea6",
+      "date": "2026-10-22",
+      "owner": "0.69.0",
+      "version": "0.69.0"
+    },
+    "v0.7.0": {
+      "commit": "0a473ce76de2d7cf929dd1a1daa5146edbce014d",
+      "date": "2026-10-07",
+      "owner": "0.7.0",
+      "version": "0.7.0"
+    },
+    "v0.70.0": {
+      "commit": "8e22edf4e9881383bd86c65f982145157b85a6d5",
+      "date": "2026-10-23",
+      "owner": "0.70.0",
+      "version": "0.70.0"
+    },
+    "v0.8.0": {
+      "commit": "ab9d785d77c5c64d80e4e3bdc6c794724a78853e",
+      "date": "2026-10-07",
+      "owner": "0.8.0",
+      "version": "0.8.0"
+    },
+    "v0.9.0": {
+      "commit": "67c0f3cc5325fc63f987dfa80f8afb0f8f800c7d",
+      "date": "2026-10-14",
+      "owner": "0.9.0",
+      "version": "0.9.0"
+    }
+  }
+}

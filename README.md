@@ -70,7 +70,7 @@ jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
 ├── references/       # 20 本分册（渐进式披露：进入哪个阶段读哪本）
 ├── templates/        # 14 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准/进化账本…）
-├── scripts/          # 18 个纯标准库脚本
+├── scripts/          # 19 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿
 │   ├── audit_index.py     # 审计链①：文件索引与 gitignore 忽略，产出可复现清单
 │   ├── audit_map.py       # 审计链②：项目侦察地图（语言/入口/路由/鉴权边界/依赖）
@@ -89,8 +89,9 @@ jiangzuo/
 │   ├── validate_skill.py  # 技能结构校验（本仓库 CI 在用）
 │   ├── review_packet.py  # 审查工单打包：把 diff/原话/验收标准/验证命令钉成一个文件（只读）
 │   ├── release_notes.py  # 发行说明生成 / GitHub Release 发布（单一真源＝CHANGELOG）
+│   ├── release_identity.py  # 发布产物的身份核验：tag 指向的 commit 真的属于那个版本吗（E37）
 │   └── current_state.py  # 「当前状态」机器可读真源 + 跨文档对账（E34）
-└── evals/            # 触发测试、红测场景、任务评测、微测夹具（E35）、微测夹具（E35）
+└── evals/            # 触发测试、红测场景、任务评测、微测夹具（E35）、发布身份真源（E37）
 ```
 
 ## 安装

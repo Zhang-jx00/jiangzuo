@@ -50,6 +50,12 @@ try:
 except ImportError:  # pragma: no cover - 只在脚本目录不在 sys.path 时发生
     current_state = None
 
+# 发布产物的**身份**核验（E37 新增第 26 项）。同上：惰性依赖，绝不反向 import 本模块。
+try:
+    import release_identity
+except ImportError:  # pragma: no cover - 只在脚本目录不在 sys.path 时发生
+    release_identity = None
+
 # Windows GBK 控制台打印 ✔ 等符号会 UnicodeEncodeError（2026-10-07 本地实跑实测崩溃，CI 在 Linux 未暴露）
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -1291,6 +1297,32 @@ def check_micro_test_claims(skill_dir):
     return True
 
 
+def check_release_identity(skill_dir):
+    """第 26 项：发布产物的**身份**必须对得上（E37）。
+
+    为什么要有这一项：本项目此前核过「68 个 tag / 68 个 Release 一一对应、零缺口」
+    ——**全绿**。但那次只数了**名字与数量**。E37 复核发现远端 `v0.51.0` 实际指向
+    `d5b88e1a`（那是 **v0.66.0 的补记笔**），而不是 v0.51.0 的代码 ⇒
+    谁 `git checkout v0.51.0` 拿到的都是别的版本 ⇒ 而那句话当时**是真的**。
+
+    ⇒ 「发布产物存在」不等于「发布产物是它该有的那个」。这一项核**内容**：
+      ① 真源 `evals/release-identity.json` 每个条目自洽（键/版本号/sha/owner）；
+      ② 真源与本地 git 事实对账（tag 集合、每个 tag 的指向）；
+      ③ **每个 tag 指向的 commit 真的属于那个版本**（owner 规则）；
+      ④ CHANGELOG 与 tag 的两个差集不许出现**未登记**的新缺口。
+
+    ⚠️ 远端那一侧（`release_identity.py --remote`）要联网 ⇒ 不进本项；
+       它由发布流程在**发之前**跑（`release_notes.py --publish` 现在自己就核）。
+    ⚠️ 本环境没有 git tag（浅克隆 / 未 fetch tags）时，③ 跑不了 ⇒
+       **不假绿**：如实发一条 info 说「这轮没跑」，且 info 条数恒定。
+    """
+    if release_identity is None:
+        err(u"scripts/release_identity.py 导不进来——第 26 项没法跑"
+            u"（发布产物的身份没人核了）")
+        return None
+    return release_identity.check_local(err, info, skill_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="技能结构校验器（将作）：按 Agent Skills 规范校验技能目录，可作 CI 门禁。")
@@ -1372,6 +1404,7 @@ def main():
             check_mut_calibrator(skill_dir)
             check_current_state(skill_dir)
             check_micro_test_claims(skill_dir)
+            check_release_identity(skill_dir)
 
     # 第 23 项的收尾：校验器**自己报的条数**也要与真源对账
     # （"validate 22 信息"这句话在交接文档里出现两处，E33 之前它们互相矛盾过）。

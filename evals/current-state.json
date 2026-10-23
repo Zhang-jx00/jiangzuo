@@ -21,7 +21,7 @@
         "coverage_total",
         "bench_ms_per_file"
       ],
-      "version": "0.70.0"
+      "version": "0.71.0"
     },
     "docs/jiangzuo/handover.md": {
       "index": 0,
@@ -45,7 +45,8 @@
         "bench_ms_per_file",
         "rules_active",
         "rules_disabled"
-      ]
+      ],
+      "version": "0.71.0"
     },
     "evals/audit-acceptance.md": {
       "index": -1,
@@ -68,7 +69,7 @@
         "coverage_total",
         "bench_ms_per_file"
       ],
-      "version": "0.70.0"
+      "version": "0.71.0"
     }
   },
   "history": {
@@ -151,10 +152,50 @@
         "rules_disabled": 1,
         "tests": 255
       }
+    },
+    "0.71.0": {
+      "measured": {
+        "bench_ms_per_file": 4.3,
+        "corpus_must_find": 25,
+        "corpus_must_not_find": 19,
+        "coverage_hit": 14,
+        "coverage_total": 19,
+        "dvwa_conclusions": 58,
+        "dvwa_context_excluded": 0,
+        "dvwa_dropped": 6,
+        "dvwa_findings": 58,
+        "dvwa_flows": 33,
+        "flask_conclusions": 1,
+        "flask_context_excluded": 12,
+        "flask_dropped": 0,
+        "flask_findings": 13,
+        "flask_flows": 0,
+        "requests_conclusions": 0,
+        "requests_context_excluded": 4,
+        "requests_dropped": 0,
+        "requests_findings": 4,
+        "requests_flows": 0,
+        "self_conclusions": 0,
+        "self_context_excluded": 8,
+        "self_dropped": 0,
+        "self_findings": 8,
+        "self_flows": 0
+      },
+      "reported": {
+        "validate_infos": 29
+      },
+      "static": {
+        "must_find": 25,
+        "must_not_find": 19,
+        "mutation_cases": 70,
+        "rules_active": 33,
+        "rules_disabled": 1,
+        "tests": 264
+      }
     }
   },
   "measured": {
-    "bench_ms_per_file": 4.559,
+    "bench_ms_per_file": 4.3,
     "corpus_must_find": 25,
     "corpus_must_not_find": 19,
     "coverage_hit": 14,
@@ -262,17 +303,17 @@
     }
   },
   "reported": {
-    "validate_infos": 28
+    "validate_infos": 29
   },
-  "round": "E36",
+  "round": "E37",
   "schema": 1,
   "static": {
     "must_find": 25,
     "must_not_find": 19,
-    "mutation_cases": 65,
+    "mutation_cases": 70,
     "rules_active": 33,
     "rules_disabled": 1,
-    "tests": 255
+    "tests": 264
   },
   "version": "0.70.0"
 }
