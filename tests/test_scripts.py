@@ -5707,6 +5707,65 @@ class TestInstallCommand(unittest.TestCase):
                              u"别的技能目录被这条闸误伤了：%s" % r.stdout)
 
 
+class TestReleaseNotesSource(unittest.TestCase):
+    """E43：仓里的发行说明**不许成为第二真源**（E43 实测：仓里那份是手写孤儿、已漂）。
+
+    为什么（E43 实测）：发行说明的**单一真源是 `CHANGELOG.md`**（由
+    `scripts/release_notes.py` 生成并发布）⇒ 仓里若再存一份**手写副本**，
+    它就是一个**没人核的第二真源** ⇒ 必然漂。
+    实测：仓里那份 `v0.60.0.md` 是**手写聚合稿**（3795 字符）、
+    **从未发布过**（已发布的正文与生成版**逐字一致**，2768 字符）⇒ 纯孤儿。
+    ⇒ 判据：**每份 `docs/jiangzuo/releases/*.md` 必须与生成器产出的逐字一致**。
+    """
+
+    def _mini(self, tmp, drift=False):
+        sk = os.path.join(tmp, "sk")
+        for d in ("references", "templates", "scripts", "evals", "docs/jiangzuo/releases"):
+            os.makedirs(os.path.join(sk, d.replace("/", os.sep)))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            # ⚠️ 必须带 `metadata.version`：第 25 项（含本轮的发行说明核对）挂在版本号分支里
+            #    ⇒ 没有它 ⇒ 整段被跳过 ⇒ 判据**看起来没跑**（E43 实测的坑）。
+            f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n"
+                    u"metadata:\n  version: 0.99.0\n---\n正文第一行\n")
+        with io.open(os.path.join(sk, "CHANGELOG.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"# 更新日志\n\n## [0.99.0] - 2026-10-24\n\nE99：某轮的标题\n\n- 一条变更\n")
+        sys.path.insert(0, SCRIPTS)
+        import release_notes
+        release_notes = importlib.reload(release_notes)
+        # ⚠️ 必须用**夹具自己的** CHANGELOG（`release_notes.read_changelog()` 读的是**仓库**那份
+        #    ⇒ 用它算出来的 want 与判据算的不是一回事 ⇒ 红例会**假红**、绿例会**假红**）
+        with io.open(os.path.join(sk, "CHANGELOG.md"), "r", encoding="utf-8") as f:
+            ent = release_notes.entries(f.read())
+        date, body, fb = release_notes.resolve("0.99.0", ent)
+        want = release_notes.notes_for("0.99.0", date, body, fb)
+        if drift:
+            want = want + u"\n\n手写加的一段（第二真源 ⇒ 必须红）\n"
+        with io.open(os.path.join(sk, "docs", "jiangzuo", "releases", "v0.99.0.md"),
+                     "w", encoding="utf-8", newline="\n") as f:
+            f.write(want)
+        return sk
+
+    def test_handwritten_release_notes_must_be_flagged(self):
+        """红：仓里的发行说明**与生成版不一致** ⇒ 必须报（它是第二真源）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, drift=True)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"第二真源", r.stdout)
+
+    def test_generated_release_notes_are_ok(self):
+        """绿：与生成版**逐字一致** ⇒ 不得误报。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, drift=False)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotIn(u"第二真源", r.stdout, r.stdout)
+
+    def test_real_repo_release_notes_are_generated(self):
+        """绿：本仓 `docs/jiangzuo/releases/` 里的每份都与生成版一致。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+
 class TestChangelogDateTimezone(unittest.TestCase):
     """E41：**"今天"必须按作者那一天算**，不能按跑闸机器的时钟（跨时区 ⇒ CI 假红）。
 

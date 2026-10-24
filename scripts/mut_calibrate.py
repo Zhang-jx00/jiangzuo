@@ -941,6 +941,14 @@ CASES = [
      "repo-identity-copied-neutered",
      "tests.test_scripts.TestInstallCommand."
      "test_identity_copied_into_another_script_must_be_flagged"),
+    # ---- E43（v0.77.0）：仓里的发行说明不许成为第二真源 ----
+    # ⑨ 手写副本不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     u"                if got.rstrip(\"\\n\") != want.rstrip(\"\\n\"):",
+     u"                if False:  # E43 校准：手写发行说明副本不再被报",
+     "release-notes-second-source-neutered",
+     "tests.test_scripts.TestReleaseNotesSource."
+     "test_handwritten_release_notes_must_be_flagged"),
 ]
 
 

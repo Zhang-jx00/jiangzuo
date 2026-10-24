@@ -56,6 +56,13 @@ try:
 except ImportError:  # pragma: no cover - 只在脚本目录不在 sys.path 时发生
     release_identity = None
 
+# 发行说明的**生成器**（E43 新增）：仓里 `docs/jiangzuo/releases/*.md` 必须与它生成的
+# **逐字一致** ⇒ 判据**复用生成器本身**（不另写一份解析 ⇒ 两份实现会长出两个数）。
+try:
+    import release_notes
+except ImportError:  # pragma: no cover
+    release_notes = None
+
 # Windows GBK 控制台打印 ✔ 等符号会 UnicodeEncodeError（2026-10-07 本地实跑实测崩溃，CI 在 Linux 未暴露）
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -337,6 +344,31 @@ def check_ledger_versions(skill_dir, cl_text):
                     u"（**同一轮的多行是合法的**：一轮可能有多个变异）"
                     % (erounds[k][0], erounds[k][1], erounds[k - 1][1], erounds[k - 1][0]))
         evo_note = u"；进化账本 %d 行有轮次号、行序不倒退、无重复行 ✓" % len(erounds)
+
+    # ── E43：仓里的发行说明必须与 CHANGELOG 生成的**逐字一致** ──
+    # （实测：仓里那份 `v0.60.0.md` 是**手写聚合稿**、**从未发布过**、且已漂
+    #   ⇒ 而已发布的正文与生成版**逐字一致** ⇒ 它就是个"第二真源"的孤儿）
+    rel_dir = os.path.join(skill_dir, "docs", "jiangzuo", "releases")
+    if os.path.isdir(rel_dir) and release_notes is not None:
+        cl_path = os.path.join(skill_dir, "CHANGELOG.md")
+        if os.path.isfile(cl_path):
+            with io.open(cl_path, "r", encoding="utf-8", errors="replace") as f:
+                ent = release_notes.entries(f.read())
+            for name in sorted(os.listdir(rel_dir)):
+                if not name.endswith(".md"):
+                    continue
+                ver = name[1:-3]
+                date, body, fb = release_notes.resolve(ver, ent)
+                want = release_notes.notes_for(ver, date, body, fb)
+                with io.open(os.path.join(rel_dir, name), "r",
+                             encoding="utf-8", errors="replace") as f:
+                    got = f.read()
+                if got.rstrip("\n") != want.rstrip("\n"):
+                    err(u"`docs/jiangzuo/releases/%s` 与 **CHANGELOG 生成的版本不一致**"
+                        u"（%d 字符 vs 生成版 %d 字符）——发行说明的**单一真源是 `CHANGELOG.md`**"
+                        u"，仓里这份要么用 `scripts/release_notes.py --check --write` 重新生成，"
+                        u"要么删掉（**不许手写副本**：它就是第二真源 ⇒ 必然漂）"
+                        % (name, len(got), len(want)))
 
     if vers and not dups_of(vers) and all(keys[i] <= keys[i - 1] for i in range(1, len(keys))):
         info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）%s%s"
