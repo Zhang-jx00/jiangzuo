@@ -232,6 +232,45 @@ def _author_today(skill_dir):
         return None
 
 
+def _cl_entry_bodies(cl_text):
+    """把 CHANGELOG 切成 {版本: 条目正文}。"""
+    out = {}
+    for body in re.split(r"^## ", cl_text, flags=re.M):
+        m = re.match(r"\[?(\d+\.\d+\.\d+)\]?", body)
+        if m:
+            out[m.group(1)] = body
+    return out
+
+
+def _cl_round_of(body):
+    """条目**标题行**里的轮号（`E44：**……` / `E5（收口，纯文档）：**……`）。
+
+    ⚠️ 轮号后面**不一定**跟冒号：v0.39.2 写的是「E5（收口，纯文档）：**……**」⇒ 只认
+    「标题行以 `E<n>` 开头」，不认「`E<n>：`」。
+    ⚠️ 取的是**标题行**（版本行之后的第一个非空行），不是"整段里第一个 E 数字"
+    ——后者会把正文里提到的**别的**轮次当成本轮的轮号。
+    """
+    for l in body.split("\n"):
+        s = l.strip()
+        if not s or re.match(r"^\[?\d+\.\d+\.\d+\]?\s*[-–—]", s):
+            continue
+        m = re.match(r"^E(\d+)(?![0-9])", s)
+        return int(m.group(1)) if m else None
+    return None
+
+
+def _cl_cal_of(body):
+    """条目里**最后一个**「变异校准 N/N」＝那一版的最终例数。
+
+    为什么取最后一个：v0.75.0 的条目里依次出现 81/81（标记区）、**80/80**（判据用例）、
+    81/81（后来又补了一条判据）⇒ 中间那个 80 是**中间值** ⇒ 取最后的才是那一版的最终数。
+    """
+    ms = re.findall(r"变异校准\s*\*?\*?(\d+)\s*/\s*(\d+)", body)
+    if not ms:
+        return None
+    return (int(ms[-1][0]), int(ms[-1][1]))
+
+
 def check_ledger_versions(skill_dir, cl_text):
     """第 25 项：**台账自身不许被写坏**（E36 起，E40 扩到进化账本）。
 
@@ -240,13 +279,17 @@ def check_ledger_versions(skill_dir, cl_text):
     （日期核对只看日期、"版本与 CHANGELOG 一致"只看最新那个）⇒
     也就是说：**台账自己可以在无人察觉的情况下被写坏**。
 
-    覆盖面（E36 + E40）：
+    覆盖面（E36 + E40 + E45）：
       · CHANGELOG 的版本标题（不重复 ＋ 降序）
       · 验收记录的版本小节（不重复 ＋ **升序**——它是**新版本在后**）
       · 交接文档规划表里的版本行（不重复，**按表分块**）
       · **进化账本 `docs/jiangzuo/evolution.md`（E40 新增）**：
         ① **行序不得回退**（轮次号非递减）——台账是**时间倒序**；
         ② **同一张表里不得有两行完全相同**。
+      · **交接文档的「轮次台账」（E45 新增）**——它与 CHANGELOG 必须是**一一对应**：
+        ① 轮号**全局唯一**（同一轮不许写两遍）② 轮号↔版本与 CHANGELOG 一致
+        ③ **不许漏轮次** ④ 行序**不得回退** ⑤ 每行必带完成标记 ✅
+        ⑥ 行里的「变异校准 N/N」必须与 CHANGELOG 对账。
     ⇒ 为什么它要单独写一条：进化账本的行格式是 `| 日期 | E37 …`（轮次在**第二格**），
       与查重正则认的 `| **E37** ✅ | v0.70.0 |` **完全不同** ⇒ 此前**完全不在查重范围内**。
     """
@@ -288,13 +331,13 @@ def check_ledger_versions(skill_dir, cl_text):
         acc_note = u"；验收记录 %d 个小节升序" % len(acc_vers)
 
     hand = os.path.join(skill_dir, "docs", "jiangzuo", "handover.md")
+    hand_note = ""
     if os.path.isfile(hand):
         with io.open(hand, "r", encoding="utf-8", errors="replace") as f:
             hlines = f.read().split("\n")
-        # ⚠️ **按表分块**查重：交接文档 §11 里有**多张规划表**（十轮 / 后续五轮 / 下一轮），
-        #    同一轮**合法地**出现在两张表里（E20–E24 就在十轮表与后续五轮表各出现一次）
-        #    ⇒ 全文件查重会**误报** ⇒ 只在**同一张表内**查重
-        #    （E36 台账脚本跑两遍时，同一行被塞进**同一张表**两次 ⇒ 仍会被逮到）。
+        # ⚠️ **按表分块**查重（"台账脚本跑两遍"那条老坑）：同一行被塞进**同一张表**两次
+        #    ⇒ 仍会被逮到。**E45 已把交接文档的多张规划表合并成一张** ⇒ 下面那段
+        #    「同一轮合法地出现在两张表里」的约定**前提已消失**（见下方 E45 段的全局唯一检查）。
         block = []
         for line in hlines + [""]:
             if line.startswith("|"):
@@ -307,6 +350,103 @@ def check_ledger_versions(skill_dir, cl_text):
                     err(u"交接文档规划表有 **%d 行 v%s**（同一张表内）——"
                         u"台账脚本跑了两遍就会留下这种" % (vs.count(v), v))
                 block = []
+
+        # ── E45：交接文档的**轮次台账**必须与 CHANGELOG 一一对应 ──
+        # 为什么加这一项：交接文档里原先有**两份**手抄的轮次台账（§4 的「E 系列」表
+        # 与 §11 的三张规划表）⇒ 同一轮写两遍 ⇒ **必然漂**：实测同一轮的主题在两处
+        # 互相矛盾、「完成标记 ✅」E1–E20 那 20 轮一个都没打、E30–E41 那段**没有表头**
+        # （GFM 里根本不是表）、E42–E44 压根没有行、还有 4 处**已被 CHANGELOG 订正过
+        # 的校准例数**躺在台账里（E19 30→29 / E21 32→31 / E32 54→55 / E41 80→81）。
+        # ⇒ 改判一条既有约定：原先写着"同一轮合法地出现在两张表里 ⇒ 只按表分块查重"
+        #    （因为 §11 确实有多张规划表）—— **E45 把那些表合并成一张** ⇒
+        #    那条约定的前提消失 ⇒ 现在改成**全局唯一**。
+        bodies = _cl_entry_bodies(cl_text)
+        cl_round = {}
+        cl_cal = {}
+        for _ver, _body in bodies.items():
+            _r = _cl_round_of(_body)
+            if _r is not None:
+                cl_round[_ver] = _r
+            _c = _cl_cal_of(_body)
+            if _c is not None:
+                cl_cal[_ver] = _c
+
+        lrows = []
+        for line in hlines:
+            if not line.startswith("|"):
+                continue
+            cells = _gfm_cells(line)
+            if len(cells) < 3:
+                continue
+            m = re.match(r"^\s*\*{0,2}E(\d+)\*{0,2}\s*(\u2705)?\s*$", cells[0])
+            if not m:
+                continue
+            vm = re.match(r"^\s*v(\d+\.\d+\.\d+)\s*$", cells[1])
+            if not vm:
+                continue
+            lrows.append((int(m.group(1)), vm.group(1), bool(m.group(2)), cells[2:]))
+
+        if cl_round:
+            # ① 台账整个没了 ⇒ 必须报（"不许静默少一份"）
+            if not lrows:
+                err(u"交接文档里**一行轮次台账都没有**，而 CHANGELOG 有 %d 轮（E%d–E%d）——"
+                    u"轮次台账是唯一一处记录，删掉就没人知道做过什么"
+                    % (len(cl_round), min(cl_round.values()), max(cl_round.values())))
+            else:
+                # ② 轮号**全局唯一**（同一轮不许写两遍）
+                seen = {}
+                for _rnd, _ver, _ok, _cells in lrows:
+                    seen.setdefault(_rnd, []).append(_ver)
+                for _rnd in sorted(seen):
+                    if len(seen[_rnd]) > 1:
+                        err(u"交接文档的轮次台账里 **E%d 出现了 %d 次**（%s）——"
+                            u"同一轮只许写一遍（两份手抄必然漂：E45 实测同一轮的主题在两处矛盾）"
+                            % (_rnd, len(seen[_rnd]), u"、".join(seen[_rnd])))
+                # ③ 轮号 ↔ 版本 必须与 CHANGELOG 一致；不许有 CHANGELOG 里没有的版本
+                for _rnd, _ver, _ok, _cells in lrows:
+                    if _ver not in cl_round:
+                        err(u"交接文档轮次台账里的 E%d 写的是 v%s，但 CHANGELOG 里**没有这个版本**"
+                            u"——台账的版本必须来自真源" % (_rnd, _ver))
+                    elif cl_round[_ver] != _rnd:
+                        err(u"交接文档轮次台账里 **E%d 对应的是 v%s**，而 CHANGELOG 的 v%s 是 **E%d**"
+                            u"——轮号与版本的对应必须与真源一致"
+                            % (_rnd, _ver, _ver, cl_round[_ver]))
+                # ④ 不许漏轮次（CHANGELOG 有、台账没有）
+                _missing = sorted(set(cl_round.values()) - set(seen))
+                if _missing:
+                    err(u"交接文档的轮次台账**漏了 %d 轮**（%s）——CHANGELOG 里有、台账里没有"
+                        u"（E45 实测：原 §11 的表格停在 E41 ⇒ 读者会以为项目停在那儿）"
+                        % (len(_missing), u"、".join(u"E%d" % m for m in _missing)))
+                # ⑤ 行序**不得回退**（台账按开发顺序升序排）
+                _order = [r for r, _v, _o, _c in lrows]
+                for _k in range(1, len(_order)):
+                    if _order[_k] <= _order[_k - 1]:
+                        err(u"交接文档轮次台账的轮次号**回退**了：E%d 排在 E%d 之后"
+                            u"（台账按开发顺序升序，不许回退）" % (_order[_k], _order[_k - 1]))
+                        break
+                # ⑥ 每行必须带完成标记 ✅（台账只收已完成的轮次）
+                _no_ok = [r for r, _v, ok, _c in lrows if not ok]
+                if _no_ok:
+                    err(u"交接文档轮次台账有 %d 行**没带完成标记 ✅**（%s）——"
+                        u"台账只收已完成的轮次，完成标记不能靠人手打"
+                        u"（E45 实测：原表 E1–E20 那 20 轮一个都没打）"
+                        % (len(_no_ok), u"、".join(u"E%d" % m for m in _no_ok[:8])))
+                # ⑦ 行里的「变异校准 N/N」必须与 CHANGELOG 对账
+                for _rnd, _ver, _ok, _cells in lrows:
+                    if _ver not in cl_cal:
+                        continue
+                    _hm = re.search(r"变异校准\s*\*?\*?(\d+)\s*/\s*(\d+)",
+                                    u" ".join(_cells))
+                    if not _hm:
+                        continue
+                    _got = (int(_hm.group(1)), int(_hm.group(2)))
+                    if _got != cl_cal[_ver]:
+                        err(u"交接文档轮次台账 E%d（v%s）写的「变异校准 %d/%d」，"
+                            u"CHANGELOG 的 v%s 是 **%d/%d**——数字只能从真源抄"
+                            % (_rnd, _ver, _got[0], _got[1], _ver,
+                               cl_cal[_ver][0], cl_cal[_ver][1]))
+                hand_note = (u"；交接文档轮次台账 %d 行与 CHANGELOG 一一对应（轮号唯一、升序、"
+                             u"版本对账、校准例数对账 ✓）" % len(lrows))
 
     # ── 进化账本（E40 新增）：行序不得回退 ＋ 同一张表里不得有两行完全相同 ──
     # ⚠️ 分列**复用 `_gfm_cells`**（GFM 规则：未转义的 `|` 才是分隔符）⇒
@@ -371,10 +511,10 @@ def check_ledger_versions(skill_dir, cl_text):
                         % (name, len(got), len(want)))
 
     if vers and not dups_of(vers) and all(keys[i] <= keys[i - 1] for i in range(1, len(keys))):
-        info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）%s%s"
-             % (len(vers), acc_note, evo_note))
+        info(u"CHANGELOG 的 %d 个版本条目无重复且按降序 ✓（验收记录与交接文档同查）%s%s%s"
+             % (len(vers), acc_note, evo_note, hand_note))
     elif not vers:
-        info(u"台账自身无重复、无逆序%s%s" % (acc_note, evo_note))
+        info(u"台账自身无重复、无逆序%s%s%s" % (acc_note, evo_note, hand_note))
     return True
 
 

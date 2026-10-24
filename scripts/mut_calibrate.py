@@ -957,6 +957,32 @@ CASES = [
      "release-notes-fallback-neutered",
      "tests.test_scripts.TestReleaseNotesFallback."
      "test_tag_without_changelog_entry_must_be_flagged"),
+    # ---- E45（v0.79.0）：轮次台账只许有一处，且与 CHANGELOG 一一对应 ----
+    # ⑪ 同一轮出现两次不再被报 ⇒ 判据必须红（两份手抄的产物）。
+    ("scripts/validate_skill.py",
+     u"                for _rnd in sorted(seen):\n"
+     u"                    if len(seen[_rnd]) > 1:",
+     u"                for _rnd in sorted(seen):\n"
+     u"                    if False:  # E45 校准：同一轮出现两次不再被报",
+     "round-ledger-duplicate-neutered",
+     "tests.test_scripts.TestRoundLedger."
+     "test_duplicate_round_must_be_flagged"),
+    # ⑫ 漏轮次不再被报 ⇒ 判据必须红（E42–E44 压根没有行就是这么丢的）。
+    ("scripts/validate_skill.py",
+     u"                _missing = sorted(set(cl_round.values()) - set(seen))\n"
+     u"                if _missing:",
+     u"                _missing = sorted(set(cl_round.values()) - set(seen))\n"
+     u"                if False:  # E45 校准：漏轮次不再被报",
+     "round-ledger-missing-round-neutered",
+     "tests.test_scripts.TestRoundLedger."
+     "test_missing_round_must_be_flagged"),
+    # ⑬ 行里的校准例数不再与 CHANGELOG 对账 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     u"                    if _got != cl_cal[_ver]:",
+     u"                    if False:  # E45 校准：校准例数不再与真源对账",
+     "round-ledger-calibration-neutered",
+     "tests.test_scripts.TestRoundLedger."
+     "test_calibration_count_mismatch_must_be_flagged"),
 ]
 
 

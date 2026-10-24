@@ -6528,5 +6528,138 @@ class TestCarrierBlockIntegrity(unittest.TestCase):
         self.assertEqual(bad, [], "本仓库有标记区对不上账：%s" % bad)
 
 
+class TestRoundLedger(unittest.TestCase):
+    """E45：交接文档的**轮次台账**必须与 CHANGELOG 一一对应。
+
+    为什么（E45 复核出来的洞）：交接文档里原先有**两份**手抄的轮次台账
+    ——§4 的「E 系列」表与 §11 的三张规划表 ⇒ **同一轮写两遍** ⇒ 必然漂。实测：
+    ① 同一轮的主题在两处**互相矛盾**（十轮规划表自 E17 起主题整体错位一格）；
+    ② 「完成标记 ✅」**E1–E20 那 20 轮一个都没打**（而它们全都做完了）；
+    ③ **E30–E41 那段没有表头 ⇒ GFM 里根本不是表**（16 行散在 3 个行块里，不渲染）；
+    ④ **E42–E44 压根没有行**（§11 停在 E41 ⇒ 读者会以为项目停在那儿）；
+    ⑤ 4 处**已被 CHANGELOG 订正过、却躺在台账里**的校准例数
+       （E19 30→29 / E21 32→31 / E32 54→55 / E41 80→81）；
+    ⑥ 那 4 行（E35–E38）本来就是 **5 格**，而它们所在的表**没有表头** ⇒ 从来没人查过。
+
+    ⇒ 修法：两份合并成**一张**（第 4 节），并由第 25 项逐行对账。
+    """
+
+    OK = u"\u2705"
+
+    CL = (u"# 更新日志\n\n"
+          u"## [0.3.0] - 2026-10-24\n\nE2：**第二轮** —— 做了点事。\n\n"
+          u"- 判据 2 条，变异校准 **5/5 全红**\n\n"
+          u"## [0.2.0] - 2026-10-23\n\nE1：**第一轮** —— 做了点事。\n\n"
+          u"- 判据 1 条\n\n")
+
+    GOOD = (u"| 轮 | 版本 | 这一轮干了什么 |\n"
+            u"|---|---|---|\n"
+            u"| **E1** " + OK + u" | v0.2.0 | 第一轮干的事。 |\n"
+            u"| **E2** " + OK + u" | v0.3.0 | 第二轮干的事，变异校准 **5/5 全红**。 |\n")
+
+    def _check(self, handover_text, cl_text=None):
+        """把一段交接文档放进临时目录，跑第 25 项，返回错误列表。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(d)
+            with io.open(os.path.join(d, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(handover_text)
+            del validate_skill.ERRORS[:]
+            del validate_skill.INFOS[:]
+            validate_skill.check_ledger_versions(
+                tmp, self.CL if cl_text is None else cl_text)
+            return list(validate_skill.ERRORS)
+
+    # ── 红例 ───────────────────────────────────────────────────────────
+    def test_duplicate_round_must_be_flagged(self):
+        """红：同一轮**出现两次** ⇒ 必须报（两份手抄的产物）。"""
+        errs = self._check(self.GOOD + u"| **E1** " + self.OK + u" | v0.2.0 | 又抄了一遍。 |\n")
+        self.assertTrue(errs, u"同一轮出现两次却没被报出来")
+        self.assertTrue(any(u"出现了 2 次" in e for e in errs), errs)
+
+    def test_missing_round_must_be_flagged(self):
+        """红：CHANGELOG 有、台账没有 ⇒ 必须报（E42–E44 就是这么丢的）。"""
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E1** " + self.OK + u" | v0.2.0 | 只有第一轮。 |\n")
+        self.assertTrue(errs, u"漏了一轮却没被报出来")
+        self.assertTrue(any(u"漏了 1 轮" in e for e in errs), errs)
+
+    def test_round_version_mismatch_must_be_flagged(self):
+        """红：轮号与版本**对不上**（E1 写成 v0.3.0，而 CHANGELOG 的 v0.3.0 是 E2）⇒ 必须报。"""
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E1** " + self.OK + u" | v0.3.0 | 抄错了版本。 |\n"
+                           u"| **E2** " + self.OK + u" | v0.3.0 | 第二轮。 |\n")
+        self.assertTrue(errs, u"轮号与版本对不上却没被报出来")
+        self.assertTrue(any(u"轮号与版本的对应必须与真源一致" in e for e in errs), errs)
+
+    def test_version_not_in_changelog_must_be_flagged(self):
+        """红：台账里的版本在 CHANGELOG 里**压根不存在** ⇒ 必须报。"""
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E1** " + self.OK + u" | v0.2.0 | 第一轮。 |\n"
+                           u"| **E2** " + self.OK + u" | v0.3.0 | 第二轮。 |\n"
+                           u"| **E3** " + self.OK + u" | v0.9.9 | 编出来的版本。 |\n")
+        self.assertTrue(errs, u"CHANGELOG 里没有的版本却没被报出来")
+        self.assertTrue(any(u"没有这个版本" in e for e in errs), errs)
+
+    def test_row_without_done_mark_must_be_flagged(self):
+        """红：行里**没打 ✅** ⇒ 必须报（完成标记不能靠人手打）。"""
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E1** | v0.2.0 | 第一轮。 |\n"
+                           u"| **E2** " + self.OK + u" | v0.3.0 | 第二轮。 |\n")
+        self.assertTrue(errs, u"漏打完成标记却没被报出来")
+        self.assertTrue(any(u"没带完成标记" in e for e in errs), errs)
+
+    def test_calibration_count_mismatch_must_be_flagged(self):
+        """红：行里的「变异校准 N/N」与 CHANGELOG **不一致** ⇒ 必须报。
+
+        ⚠️ 这正是 E45 实测到的那 4 处（E19 30/30、E21 32/32、E32 54/54、E41 80/80）：
+        CHANGELOG 早已订正过（E24 那轮把 v0.53.0–v0.56.0 的旧数一并订正），
+        而**交接文档没人管** ⇒ 错数字就一直躺在那儿。
+        """
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E1** " + self.OK + u" | v0.2.0 | 第一轮。 |\n"
+                           u"| **E2** " + self.OK + u" | v0.3.0 | 第二轮，变异校准 **4/4 全红**。 |\n")
+        self.assertTrue(errs, u"校准例数与真源不一致却没被报出来")
+        self.assertTrue(any(u"数字只能从真源抄" in e for e in errs), errs)
+
+    def test_round_order_regression_must_be_flagged(self):
+        """红：轮次**回退**（E2 排在 E1 之前）⇒ 必须报。"""
+        errs = self._check(u"| 轮 | 版本 | 这一轮干了什么 |\n|---|---|---|\n"
+                           u"| **E2** " + self.OK + u" | v0.3.0 | 第二轮。 |\n"
+                           u"| **E1** " + self.OK + u" | v0.2.0 | 第一轮。 |\n")
+        self.assertTrue(errs, u"轮次回退却没被报出来")
+        self.assertTrue(any(u"回退" in e for e in errs), errs)
+
+    def test_ledger_entirely_gone_must_be_flagged(self):
+        """红：台账**整个没了** ⇒ 必须报（不许静默少一份）。"""
+        errs = self._check(u"# 交接文档\n\n这里什么都没有。\n")
+        self.assertTrue(errs, u"台账整个没了却没被报出来")
+        self.assertTrue(any(u"一行轮次台账都没有" in e for e in errs), errs)
+
+    # ── 绿例（必须都有：只写红例会把这类错放过去）─────────────────────
+    def test_good_ledger_is_not_flagged(self):
+        """绿：台账与 CHANGELOG 一一对应 ⇒ **不得**报。"""
+        errs = self._check(self.GOOD)
+        self.assertEqual([e for e in errs if u"台账" in e], [],
+                         u"好的台账被误报了：%s" % errs)
+
+    def test_real_repo_ledger_matches_changelog(self):
+        """绿：本仓库的轮次台账与 CHANGELOG **一一对应**（E45 改完后）。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with io.open(os.path.join(REPO, "CHANGELOG.md"), "r", encoding="utf-8") as f:
+            cl = f.read()
+        del validate_skill.ERRORS[:]
+        del validate_skill.INFOS[:]
+        validate_skill.check_ledger_versions(REPO, cl)
+        bad = [e for e in validate_skill.ERRORS if u"台账" in e]
+        self.assertEqual(bad, [], u"本仓库的轮次台账对不上：%s" % bad)
+
+
 if __name__ == "__main__":
     unittest.main()

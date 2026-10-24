@@ -509,10 +509,50 @@
         "rules_disabled": 1,
         "tests": 304
       }
+    },
+    "0.79.0": {
+      "measured": {
+        "bench_ms_per_file": 4.401,
+        "corpus_must_find": 25,
+        "corpus_must_not_find": 19,
+        "coverage_hit": 14,
+        "coverage_total": 19,
+        "dvwa_conclusions": 58,
+        "dvwa_context_excluded": 0,
+        "dvwa_dropped": 6,
+        "dvwa_findings": 58,
+        "dvwa_flows": 33,
+        "flask_conclusions": 1,
+        "flask_context_excluded": 12,
+        "flask_dropped": 0,
+        "flask_findings": 13,
+        "flask_flows": 0,
+        "requests_conclusions": 0,
+        "requests_context_excluded": 4,
+        "requests_dropped": 0,
+        "requests_findings": 4,
+        "requests_flows": 0,
+        "self_conclusions": 0,
+        "self_context_excluded": 8,
+        "self_dropped": 0,
+        "self_findings": 8,
+        "self_flows": 0
+      },
+      "reported": {
+        "validate_infos": 31
+      },
+      "static": {
+        "must_find": 25,
+        "must_not_find": 19,
+        "mutation_cases": 87,
+        "rules_active": 33,
+        "rules_disabled": 1,
+        "tests": 314
+      }
     }
   },
   "measured": {
-    "bench_ms_per_file": 4.306,
+    "bench_ms_per_file": 4.401,
     "corpus_must_find": 25,
     "corpus_must_not_find": 19,
     "coverage_hit": 14,
@@ -627,10 +667,10 @@
   "static": {
     "must_find": 25,
     "must_not_find": 19,
-    "mutation_cases": 84,
+    "mutation_cases": 87,
     "rules_active": 33,
     "rules_disabled": 1,
-    "tests": 304
+    "tests": 314
   },
   "version": "0.78.0"
 }
