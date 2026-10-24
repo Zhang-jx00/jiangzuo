@@ -949,6 +949,14 @@ CASES = [
      "release-notes-second-source-neutered",
      "tests.test_scripts.TestReleaseNotesSource."
      "test_handwritten_release_notes_must_be_flagged"),
+    # ---- E44（v0.78.0）：发行说明不许走兜底 ----
+    # ⑩ 「有 tag、无 CHANGELOG 条目」不再被报（且不许用例外消音）⇒ 判据必须红。
+    ("scripts/release_identity.py",
+     u"    for v in sorted(now_no_cl):",
+     u"    for v in []:  # E44 校准：有 tag 无 CHANGELOG 条目不再被报",
+     "release-notes-fallback-neutered",
+     "tests.test_scripts.TestReleaseNotesFallback."
+     "test_tag_without_changelog_entry_must_be_flagged"),
 ]
 
 

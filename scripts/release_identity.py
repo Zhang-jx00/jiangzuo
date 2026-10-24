@@ -333,10 +333,13 @@ def check_local(err, info, repo=REPO, truth_data=None):
         problems.append(u"版本 %s 在 CHANGELOG 里有、却没有 tag——"
                         u"新出现的发布缺口（已登记的例外：%s）"
                         % (v, u"、".join(sorted(reg_no_tag)) or u"无"))
-    for v in sorted(now_no_cl - reg_no_cl):
+    # ⚠️ **E44：这一类不再允许例外** —— v0.15.0–v0.19.0 那五版已**补录** CHANGELOG 条目
+    #   （内容取自各 tag 的提交说明原文）⇒ 兜底数归零 ⇒ ⇒ 而"兜底"（拿 tag 的提交说明
+    #   当发行说明）本身就是**第二个来源** ⇒ **不许依赖、也不许再登记成例外**。
+    for v in sorted(now_no_cl):
         problems.append(u"版本 %s 有 tag、CHANGELOG 里却没有条目——"
-                        u"新出现的台账缺口（已登记的例外：%s）"
-                        % (v, u"、".join(sorted(reg_no_cl)) or u"无"))
+                        u"**发行说明不许走兜底**（兜底＝拿 tag 的提交说明当第二个来源；"
+                        u"E44 起这一类**不再允许登记例外**，请补 CHANGELOG 条目）" % v)
 
     for p in problems:
         err(u"[发布身份] " + p)

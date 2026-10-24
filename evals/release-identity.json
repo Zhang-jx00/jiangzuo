@@ -9,13 +9,7 @@
       "0.4.0",
       "0.5.0"
     ],
-    "tag_without_changelog": [
-      "0.15.0",
-      "0.16.0",
-      "0.17.0",
-      "0.18.0",
-      "0.19.0"
-    ]
+    "tag_without_changelog": []
   },
   "owner_rule": "tag vX.Y.Z 指向的 commit，其 subject 中第一个版本号必须恰好等于 X.Y.Z",
   "schema": 1,

@@ -5766,6 +5766,105 @@ class TestReleaseNotesSource(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
 
 
+
+class TestReleaseNotesFallback(unittest.TestCase):
+    """E44：**发行说明不许走兜底**（兜底＝拿 tag 的提交说明当**第二个来源**）。
+
+    为什么（E44 复核时挖出来的）：发行说明的**单一真源是 `CHANGELOG.md`**，
+    但 v0.15.0–v0.19.0 这五版**没有 CHANGELOG 条目** ⇒ 它们的发行说明是从
+    **tag 的提交说明**兜底生成的 ⇒ **第二个来源** ⇒ 而这一类此前还能被
+    `known_gaps.tag_without_changelog` **登记成例外** ⇒ 例外一旦登记，就没人再管。
+
+    E44 的做法：① 那五版**补录** CHANGELOG 条目（内容取自各 tag 的提交说明原文）；
+    ② 这一类差集**不再允许登记例外** ⇒ 任何"有 tag 无条目"都硬红。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, SCRIPTS)
+        import release_identity
+        import release_notes
+        cls.ri = importlib.reload(release_identity)
+        cls.rn = importlib.reload(release_notes)
+
+    def _git(self, args, cwd, env=None):
+        e = dict(os.environ)
+        if env:
+            e.update(env)
+        return subprocess.run(["git"] + list(args), cwd=cwd, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, env=e, encoding="utf-8",
+                              errors="replace", timeout=60)
+
+    def _repo(self, tmp, with_entry):
+        """一个带 tag 的最小仓库：CHANGELOG **有/没有**该版本条目。"""
+        sk = os.path.join(tmp, "sk")
+        os.makedirs(os.path.join(sk, "scripts"))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(u"---\nname: sk\ndescription: d\nwhen_to_use: w\n"
+                    u"metadata:\n  version: 0.99.0\n---\n正文\n")
+        cl = u"# 更新日志\n\n## [0.98.0] - 2026-10-24\n\n上一版。\n"
+        if with_entry:
+            cl += u"\n## [0.99.0] - 2026-10-24\n\n这一版。\n"
+        with io.open(os.path.join(sk, "CHANGELOG.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(cl)
+        self._git(["init", "-q", "."], sk)
+        self._git(["add", "-A"], sk)
+        self._git(["-c", "user.name=t", "-c", "user.email=t@example.com",
+                   "commit", "-q", "-m", "feat: v0.99.0 某版"], sk)
+        self._git(["tag", "v0.99.0"], sk)
+        return sk
+
+    def _truth(self, gaps=None):
+        data = {
+            "schema": 1,
+            "tags": {
+                "v0.99.0": {
+                    "commit": "0" * 40,
+                    "date": "2026-10-24",
+                    "owner": "0.99.0",
+                    "version": "0.99.0",
+                },
+            },
+            "known_gaps": gaps or {"changelog_without_tag": [], "tag_without_changelog": []},
+        }
+        return data
+
+    def test_tag_without_changelog_entry_must_be_flagged(self):
+        """红：tag 有、CHANGELOG 没条目 ⇒ 必须报（不许拿 tag 的提交说明兜底）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, with_entry=False)
+            errs = []
+            self.ri.check_local(errs.append, lambda m: None, sk, self._truth())
+            self.assertTrue(any(u"没有条目" in e for e in errs), errs)
+            self.assertTrue(any(u"0.99.0" in e for e in errs), errs)
+
+    def test_registering_an_exception_must_not_silence_it(self):
+        """红：**登记成例外也不许放过**（E44：这一类不再允许例外）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, with_entry=False)
+            errs = []
+            gaps = {"changelog_without_tag": [], "tag_without_changelog": ["0.99.0"]}
+            self.ri.check_local(errs.append, lambda m: None, sk, self._truth(gaps))
+            self.assertTrue(any(u"没有条目" in e for e in errs),
+                            u"登记成例外就把缺口放过了：%s" % errs)
+
+    def test_entry_present_is_not_flagged(self):
+        """绿：CHANGELOG **有**该版本条目 ⇒ 不得误报（**防误伤**的配对判据）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._repo(tmp, with_entry=True)
+            errs = []
+            self.ri.check_local(errs.append, lambda m: None, sk, self._truth())
+            self.assertEqual([e for e in errs if u"没有条目" in e], [], errs)
+
+    def test_real_repo_has_no_fallback_version(self):
+        """绿：本仓**每一版**都有 CHANGELOG 条目 ⇒ 兜底数 = 0（E44 补录后）。"""
+        cl = io.open(os.path.join(REPO, "CHANGELOG.md"), encoding="utf-8").read()
+        ent = self.rn.entries(cl)
+        tags = [t[1:] for t in self.ri.local_tags(REPO)]
+        missing = sorted(t for t in tags if t not in ent)
+        self.assertEqual(missing, [],
+                         u"这些版本会走兜底（第二个来源）：%s" % missing)
+
 class TestChangelogDateTimezone(unittest.TestCase):
     """E41：**"今天"必须按作者那一天算**，不能按跑闸机器的时钟（跨时区 ⇒ CI 假红）。
 
