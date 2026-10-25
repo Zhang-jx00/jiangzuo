@@ -998,6 +998,15 @@ CASES = [
      "scale-line-duplicate-neutered",
      "tests.test_scripts.TestScaleLine."
      "test_two_scale_lines_must_be_flagged"),
+    # ---- E47（v0.81.0）：「当前状态（远端）」行不写 sha、逐字对账 ----
+    # 变异①：**改文档**（不是改代码）——往那一行里塞一个远端 sha ⇒ 判据必须红。
+    #   （E47 复核出来的病灶本身就是这一处：写死了 v0.70.0 时代的 sha，冒充「当前状态」。）
+    ("docs/jiangzuo/handover.md",
+     u"**零待推 ⇔ 远端 `main` 与本地 `HEAD` 同 commit** ⇒ 核法：",
+     u"**零待推 ⇔ 远端 `main` 与本地 `HEAD` 同 commit** ⇒ 远端 `main` = `8e22edf`，核法：",
+     "remote-state-line-sha-injected",
+     "tests.test_scripts.TestRemoteStateLine."
+     "test_real_repo_line_matches"),
 ]
 
 

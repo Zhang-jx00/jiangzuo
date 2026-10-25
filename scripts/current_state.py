@@ -186,42 +186,86 @@ def scale_line(skill_dir):
             + u"（本行由 `scripts/current_state.py` 从实物生成、第 23 项**逐字**对账 ⇒ 不许手抄）")
 
 
-def check_scale_line(skill_dir):
-    """交接文档 §0 的「规模」行必须与 `scale_line()` 的产出**逐字一致**（E46）。
+def _handover_text(skill_dir):
+    """读交接文档；读不到返回 None（**读不到不等于没问题**：由调用方决定适用性）。"""
+    path = os.path.join(skill_dir, HANDOVER_REL)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _check_generated_line(text, anchor, want, label):
+    """**通用件**（E46 抽出、E47 复用）：一处「生成版」的文字必须与文档**逐字一致**。
 
     返回**问题列表**（空 = 没问题）。
 
     ⚠️ **只返回、不自己报**（E46 审阅时改的）：原来这里调 `err(...)`、而 `check()` 又把它
     追加进 `problems` ⇒ **同一个问题被报两遍** ⇒ 制造噪声 ⇒ 改成**由统一出口报一次**。
+
+    四种坏法当场红：**不见了 / 写了两处 / 与生成版不一致 / 内容被改**。
     """
-    path = os.path.join(skill_dir, HANDOVER_REL)
-    if not os.path.isfile(path):
-        return []
-    try:
-        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-    except OSError:
-        return []
-    want = scale_line(skill_dir)
-    if want is None:
+    if text is None or want is None:
         return []
     problems = []
-    hits = [l for l in text.split("\n") if SCALE_ANCHOR in l]
+    hits = [l for l in text.split("\n") if anchor in l]
     if not hits:
-        problems.append(u"交接文档的规模行**不见了**——规模数必须写在真源旁边，"
-                        u"且由本模块逐字对账（E46）")
+        problems.append(u"交接文档的%s**不见了**——它必须由生成器产出，"
+                        u"且由本模块逐字对账" % label)
         return problems
     if len(hits) > 1:
-        problems.append(u"交接文档的规模行有 **%d 处**——规模数只许写一处"
-                        u"（两处手抄必然漂：E46 实测那一行已经漂了 5 个数）" % len(hits))
+        problems.append(u"交接文档的%s有 **%d 处**——同一件事只许写一处"
+                        u"（两处手抄必然漂：E46 实测那一行已经漂了 5 个数）"
+                        % (label, len(hits)))
         return problems
-    got = hits[0][hits[0].index(SCALE_ANCHOR):].strip()
+    got = hits[0][hits[0].index(anchor):].strip()
     if got != want:
-        problems.append(u"交接文档的规模行与**实物**不一致：\n"
-                        u"    文档：%s\n    实物：%s\n"
-                        u"    —— 规模数不许手抄（改一处就行：`python scripts/current_state.py --sync` "
-                        u"后把生成的那一行贴回去）" % (got, want))
+        problems.append(u"交接文档的%s与**生成版**不一致：\n"
+                        u"    文档：%s\n    生成：%s\n"
+                        u"    —— 这一处不许手抄（把生成的那一行贴回去即可）" % (label, got, want))
     return problems
+
+
+def check_scale_line(skill_dir):
+    """交接文档 §0 的「规模」行必须与 `scale_line()` 的产出**逐字一致**（E46）。"""
+    return _check_generated_line(_handover_text(skill_dir), SCALE_ANCHOR,
+                                 scale_line(skill_dir), u"规模行")
+
+
+# --------------------------------------------------------------------------
+# 交接文档 §2 的「当前状态（远端）」行（E47）：**生成版，且刻意不写 sha**
+# --------------------------------------------------------------------------
+REMOTE_ANCHOR = u"- **当前状态（远端）**："
+
+
+def remote_state_line(skill_dir=None):
+    """§2「当前状态（远端）」那一行的**生成版**（**刻意不写 sha**）。
+
+    为什么**不写** sha（E47 复核出来的洞）：那一栏原来写的是
+    「**当前状态**：零待推。远端 `main` = `8e22edf`（v0.70.0 版本笔），与本地 HEAD 一致」
+    ⇒ 写死了远端 main 的 sha，而它**每笔都变** ⇒ 实测已过期 8 个版本
+    （现在远端是别的 commit）⇒ 可它顶着一句「**当前状态**」⇒ **冒充当前**。
+    ⇒ 而 sha 这类**每笔都变**的数**任何判据都守不住**（E46 的教训：
+    「不是所有数都该接真源」）⇒
+    ⇒ 正解不是"守住它"，是**别写它**：这一行改成**只说"怎么核"**，不冒充任何状态。
+    """
+    return (REMOTE_ANCHOR
+            + u"**零待推 ⇔ 远端 `main` 与本地 `HEAD` 同 commit**"
+            + u" ⇒ 核法：`git ls-remote origin refs/heads/main`"
+            + u"（**sha 每笔都变 ⇒ 不写死**：写死即过期，E47 实测已过期 8 个版本）")
+
+
+def check_remote_state_line(skill_dir):
+    """§2 的「当前状态（远端）」行必须与 `remote_state_line()` 的产出**逐字一致**（E47）。
+
+    ⇒ 判据的作用不是"守住远端状态"（那要联网、且 sha 每笔都变）⇒
+    而是**挡住"往这一行里塞一个会过期的 sha"** ⇒ 那一行只能长成"怎么核"。
+    """
+    return _check_generated_line(_handover_text(skill_dir), REMOTE_ANCHOR,
+                                 remote_state_line(skill_dir), u"远端状态行")
 
 
 def _same_number(got, want):
@@ -335,6 +379,8 @@ def check(skill_dir, err, info):
     #    （放在最前面：它是最容易被手抄漂掉的一行 ⇒ 漂了当场红）
     #    ⚠️ 问题**由下面的统一出口报** ⇒ 同一个问题只报一次（不制造噪声）。
     problems.extend(check_scale_line(skill_dir))
+    # E47：§2 的「当前状态（远端）」行同理（不写 sha，只说"怎么核"）
+    problems.extend(check_remote_state_line(skill_dir))
 
     # ① schema 与必填项
     if src.get("schema") != 1:

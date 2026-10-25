@@ -6758,5 +6758,80 @@ class TestScaleLine(unittest.TestCase):
                          u"本仓库的规模行对不上：%s" % errs)
 
 
+class TestRemoteStateLine(unittest.TestCase):
+    """E47：§2 的「当前状态（远端）」行必须与**生成版**逐字一致（**不写 sha**）。
+
+    为什么（E47 复核出来的洞）：那一栏原来写死「远端 `main` = `8e22edf`（v0.70.0 版本笔），
+    与本地 HEAD 一致」⇒ sha **每笔都变** ⇒ 实测已过期 8 个版本，而它顶着一句「**当前状态**」
+    ⇒ **冒充当前**。
+    ⇒ 而 sha 这类**每笔都变**的数**任何判据都守不住**（E46 的教训）⇒ 正解是**别写它**：
+    那一行只说「怎么核」，由生成器产出、逐字对账 ⇒ **谁再塞一个 sha，当场红**。
+    """
+
+    def _fixture(self, mutate=None):
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        line = current_state.remote_state_line()
+        self.assertTrue(line, u"生成不出远端状态行")
+        body = u"# 交接文档\n\n" + line + u"\n"
+        if mutate is not None:
+            body = mutate(body, line)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(d)
+            with io.open(os.path.join(d, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            return list(current_state.check_remote_state_line(tmp))
+
+    # ── 红例 ───────────────────────────────────────────────────────────
+    def test_sha_in_the_line_must_be_flagged(self):
+        """红：往这一行里**塞一个 sha** ⇒ 必须报。
+
+        ⚠️ 这正是 E47 实测的那处病灶的**反向**：那一栏原来就写着
+        「远端 `main` = `8e22edf`」⇒ sha 每笔都变 ⇒ 写死即过期 ⇒ 必须当场红。
+        """
+        errs = self._fixture(lambda body, line: body.replace(
+            u"核法：", u"远端 `main` = `8e22edf`，核法："))
+        self.assertTrue(errs, u"塞了 sha 却没被报出来")
+        self.assertTrue(any(u"远端状态行" in e for e in errs), errs)
+
+    def test_missing_line_must_be_flagged(self):
+        """红：整行删掉 ⇒ 必须报（不许静默少一处）。"""
+        errs = self._fixture(lambda body, line: u"# 交接文档\n\n这里没有远端状态行。\n")
+        self.assertTrue(errs, u"远端状态行没了却没被报出来")
+        self.assertTrue(any(u"远端状态行" in e for e in errs), errs)
+
+    def test_two_lines_must_be_flagged(self):
+        """红：**两处**远端状态行 ⇒ 必须报（同一件事只许写一处）。"""
+        errs = self._fixture(lambda body, line: body + line + u"\n")
+        self.assertTrue(errs, u"两处远端状态行却没被报出来")
+        self.assertTrue(any(u"远端状态行" in e for e in errs), errs)
+
+    def test_rewritten_line_must_be_flagged(self):
+        """红：把措辞改掉一个字 ⇒ 必须报（逐字 ⇒ 不许"差不多"）。"""
+        errs = self._fixture(lambda body, line: body.replace(
+            u"**零待推 ⇔ 远端 `main` 与本地 `HEAD` 同 commit**", u"**零待推**"))
+        self.assertTrue(errs, u"措辞被改却没被报出来")
+        self.assertTrue(any(u"远端状态行" in e for e in errs), errs)
+
+    # ── 绿例 ───────────────────────────────────────────────────────────
+    def test_generated_line_is_not_flagged(self):
+        """绿：生成版原样 ⇒ **不得**报。"""
+        errs = self._fixture()
+        self.assertEqual([e for e in errs if u"远端状态行" in e], [],
+                         u"生成版被误报了：%s" % errs)
+
+    def test_real_repo_line_matches(self):
+        """绿：本仓库的远端状态行与生成版**逐字一致**（E47 改完后）。"""
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        errs = list(current_state.check_remote_state_line(REPO))
+        self.assertEqual([e for e in errs if u"远端状态行" in e], [],
+                         u"本仓库的远端状态行对不上：%s" % errs)
+
+
 if __name__ == "__main__":
     unittest.main()
