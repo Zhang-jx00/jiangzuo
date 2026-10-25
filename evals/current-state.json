@@ -637,10 +637,54 @@
         "templates": 14,
         "tests": 326
       }
+    },
+    "0.82.0": {
+      "measured": {
+        "bench_ms_per_file": 7.764,
+        "corpus_must_find": 25,
+        "corpus_must_not_find": 19,
+        "coverage_hit": 14,
+        "coverage_total": 19,
+        "dvwa_conclusions": 58,
+        "dvwa_context_excluded": 0,
+        "dvwa_dropped": 6,
+        "dvwa_findings": 58,
+        "dvwa_flows": 33,
+        "flask_conclusions": 1,
+        "flask_context_excluded": 12,
+        "flask_dropped": 0,
+        "flask_findings": 13,
+        "flask_flows": 0,
+        "requests_conclusions": 0,
+        "requests_context_excluded": 4,
+        "requests_dropped": 0,
+        "requests_findings": 4,
+        "requests_flows": 0,
+        "self_conclusions": 0,
+        "self_context_excluded": 8,
+        "self_dropped": 0,
+        "self_findings": 8,
+        "self_flows": 0
+      },
+      "reported": {
+        "validate_infos": 31
+      },
+      "static": {
+        "booklets": 20,
+        "must_find": 25,
+        "must_not_find": 19,
+        "mutation_cases": 90,
+        "rule_files": 3,
+        "rules_active": 33,
+        "rules_disabled": 1,
+        "scripts": 21,
+        "templates": 14,
+        "tests": 326
+      }
     }
   },
   "measured": {
-    "bench_ms_per_file": 7.336,
+    "bench_ms_per_file": 7.764,
     "corpus_must_find": 25,
     "corpus_must_not_find": 19,
     "coverage_hit": 14,
@@ -667,7 +711,7 @@
     "self_flows": 0
   },
   "measured_at": "2026-10-25",
-  "measured_at_commit": "c42b7b911a1b11dde2ef6b69b053435474aed022",
+  "measured_at_commit": "PENDING-E48",
   "note": "「当前状态」的唯一机器可读真源（E34 起）。\nstatic  = 能当场推出来的数（校验器每跑一次重推一遍 ⇒ 本段不会腐烂）\nreported= 校验器自己报的条数（main() 收尾时对账）\nmeasured= 跑出来的数（三仓检出 / 覆盖 / 语料 / 性能），由 --refresh 从扫描产物写入\nhistory.<版本> = 每版历史快照（历史文档对账它自己那一版，不逼人篡改历史）\n文档里用 <!-- current-state:begin --> … <!-- current-state:end --> 圈出「这里说的是当前状态」的一段，只有标记区受对账管 ⇒ 标记区外的历史数字不会被误伤。\nE40 起：载体只要写 version_rx ⇒ **每个**标记区都自动对账**它自己那一版**的快照\n（区块与版本的对应是从文件里推出来的 ⇒ 人手写不错；E39 把 v0.72.0 的区块改写成\nv0.73.0 的数，而当时只查最后一个区块 ⇒ 对账跟着腐化一起漂 ⇒ 绿灯）。\nmeasured_at_commit = 测量所依据的提交（E40 的 bench 在版本笔落地后回填）。",
   "patterns": {
     "bench_ms_per_file": {
@@ -750,7 +794,7 @@
   "reported": {
     "validate_infos": 31
   },
-  "round": "E47",
+  "round": "E48",
   "schema": 1,
   "static": {
     "booklets": 20,
@@ -764,5 +808,5 @@
     "templates": 14,
     "tests": 326
   },
-  "version": "0.81.0"
+  "version": "0.82.0"
 }
