@@ -58,6 +58,16 @@ JIANGZUO_MARKERS = (
 )
 
 REQUIRED_STATIC = ("tests", "must_find", "must_not_find", "rules_active", "rules_disabled")
+
+# E46：**结构规模**四项（分册 / 脚本 / 模板 / 规则 JSON 文件数）——
+#   交接文档 §0 的「规模」行就是这四个数 ⇒ **一处事实**（门面第 7 项同源）。
+#
+# ⚠️ **它们是「可选」的**（E46 第一版踩过的坑，如实记）：
+#   E46 第一版把它们塞进 `REQUIRED_STATIC` ⇒ 语义变成「**每个**有真源的目录都必须有」
+#   ⇒ 而**别的技能目录**（没有本项目这套 references/ templates/ 结构）被强制要求填表
+#   ⇒ **一道在逼人填表、却对别的目录毫无意义的锁** ⇒ 连累 3 条既有测试变红。
+# ⇒ 改成：**推得出来就写进去；写了就必须对；不许强制别人写**。
+OPTIONAL_STATIC = ("booklets", "scripts", "templates", "rule_files")
 REQUIRED_MEASURED = (
     "dvwa_findings", "dvwa_conclusions", "dvwa_dropped", "dvwa_flows",
     "flask_findings", "flask_conclusions",
@@ -103,7 +113,7 @@ def derive(skill_dir):
 
     truth = validate_skill._expected_truth(skill_dir)
     out = {}
-    for k in REQUIRED_STATIC:
+    for k in REQUIRED_STATIC + OPTIONAL_STATIC:
         v = truth.get(k)
         if v is not None:
             out[k] = v
@@ -134,6 +144,84 @@ def marked_regions(text):
                 continue
         i += 1
     return regions
+
+
+# --------------------------------------------------------------------------
+# 交接文档 §0 的「规模」行（E46）：**由实物生成、逐字对账**
+# --------------------------------------------------------------------------
+SCALE_ANCHOR = u"**规模**："
+HANDOVER_REL = os.path.join("docs", "jiangzuo", "handover.md")
+
+
+def scale_line(skill_dir):
+    """§0「规模」那一行的**生成版**（真源＝实物 ⇒ 经 `_expected_truth` 推）。
+
+    为什么要有它（E46 复核出来的洞）：交接文档 §0 原来有一行手抄的规模
+    （分册 / 脚本 / 规则 JSON / 模板 / **用例数** / **入库文件数** / **提交数** / **tag 数**），
+    而其中**没有一个**有人守 ⇒ 实测已过期 5 个（脚本 18→21、用例 255→314、
+    入库文件 91→96、提交 110→131、tag 68→77）。
+
+    ⇒ 处置按"这个数会不会每笔都变"分三类：
+      · **结构规模**（分册 / 脚本 / 模板 / 规则 JSON 文件数）⇒ 只在增删时变 ⇒ **接真源、守住**；
+      · **别处已有的**（用例数在「本机闸门」行、tag/Release 数在每版的 ✅ 行）⇒ **不重复写**；
+      · **每笔都变的**（入库文件数 / 提交数）⇒ **任何判据都守不住** ⇒ **不写死**（命令在第 13 节）。
+    ⇒ 所以这一行只留**结构规模**四项，其余一律不出现 ⇒ **一处事实**。
+
+    ⚠️ 只写「结构规模」还有个好处：这行**逐字**由本函数产出 ⇒ 校验器拿同一个函数比对
+    ⇒ **多写一个数、少写一个数、写错一个数，当场红**（不是"查得到才红"）。
+    """
+    truth = derive(skill_dir)
+    parts = []
+    for key, fmt in (("booklets", u"%d 分册"),
+                      ("scripts", u"%d 个 Python 脚本"),
+                      ("rule_files", u"%d 份规则 JSON"),
+                      ("templates", u"%d 模板")):
+        v = truth.get(key)
+        if v is None:
+            continue
+        parts.append(fmt % v)
+    if not parts:
+        return None
+    return (SCALE_ANCHOR + u"**" + u" / ".join(parts) + u"**"
+            + u"（本行由 `scripts/current_state.py` 从实物生成、第 23 项**逐字**对账 ⇒ 不许手抄）")
+
+
+def check_scale_line(skill_dir):
+    """交接文档 §0 的「规模」行必须与 `scale_line()` 的产出**逐字一致**（E46）。
+
+    返回**问题列表**（空 = 没问题）。
+
+    ⚠️ **只返回、不自己报**（E46 审阅时改的）：原来这里调 `err(...)`、而 `check()` 又把它
+    追加进 `problems` ⇒ **同一个问题被报两遍** ⇒ 制造噪声 ⇒ 改成**由统一出口报一次**。
+    """
+    path = os.path.join(skill_dir, HANDOVER_REL)
+    if not os.path.isfile(path):
+        return []
+    try:
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    want = scale_line(skill_dir)
+    if want is None:
+        return []
+    problems = []
+    hits = [l for l in text.split("\n") if SCALE_ANCHOR in l]
+    if not hits:
+        problems.append(u"交接文档的规模行**不见了**——规模数必须写在真源旁边，"
+                        u"且由本模块逐字对账（E46）")
+        return problems
+    if len(hits) > 1:
+        problems.append(u"交接文档的规模行有 **%d 处**——规模数只许写一处"
+                        u"（两处手抄必然漂：E46 实测那一行已经漂了 5 个数）" % len(hits))
+        return problems
+    got = hits[0][hits[0].index(SCALE_ANCHOR):].strip()
+    if got != want:
+        problems.append(u"交接文档的规模行与**实物**不一致：\n"
+                        u"    文档：%s\n    实物：%s\n"
+                        u"    —— 规模数不许手抄（改一处就行：`python scripts/current_state.py --sync` "
+                        u"后把生成的那一行贴回去）" % (got, want))
+    return problems
 
 
 def _same_number(got, want):
@@ -243,6 +331,11 @@ def check(skill_dir, err, info):
 
     problems = []
 
+    # ── E46：交接文档 §0 的「规模」行必须与实物**逐字一致** ──
+    #    （放在最前面：它是最容易被手抄漂掉的一行 ⇒ 漂了当场红）
+    #    ⚠️ 问题**由下面的统一出口报** ⇒ 同一个问题只报一次（不制造噪声）。
+    problems.extend(check_scale_line(skill_dir))
+
     # ① schema 与必填项
     if src.get("schema") != 1:
         problems.append(u"真源的 schema 字段是 %r（应为 1）——格式变了要同步改校验器"
@@ -259,6 +352,8 @@ def check(skill_dir, err, info):
     st = src.get("static") or {}
     for k in sorted(set(list(st.keys()) + list(derived.keys()))):
         if k not in st:
+            if k in OPTIONAL_STATIC:
+                continue      # 可选键：**别的目录不该被强制填**（E46 第一版的坑）
             problems.append(u"真源缺 static.%s（实物能推出来：%s）" % (k, derived[k]))
         elif k not in derived:
             problems.append(u"真源里的 static.%s 在本仓库**推不出来**（要么键名错了，要么该删）" % k)

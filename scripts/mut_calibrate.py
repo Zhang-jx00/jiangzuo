@@ -983,6 +983,21 @@ CASES = [
      "round-ledger-calibration-neutered",
      "tests.test_scripts.TestRoundLedger."
      "test_calibration_count_mismatch_must_be_flagged"),
+    # ---- E46（v0.80.0）：「规模」这行字由实物生成、逐字对账 ----
+    # ⑪ 规模行不再与实物逐字比对 ⇒ 判据必须红（写错 / 多写都该红）。
+    ("scripts/current_state.py",
+     u"    if got != want:",
+     u"    if False:  # E46 校准：规模行不再与实物逐字对账",
+     "scale-line-comparison-neutered",
+     "tests.test_scripts.TestScaleLine."
+     "test_wrong_number_must_be_flagged"),
+    # ⑫ 「规模行只许写一处」不再被查 ⇒ 判据必须红（同一事实两处手抄必然漂）。
+    ("scripts/current_state.py",
+     u"    if len(hits) > 1:",
+     u"    if False:  # E46 校准：两处规模行不再被报",
+     "scale-line-duplicate-neutered",
+     "tests.test_scripts.TestScaleLine."
+     "test_two_scale_lines_must_be_flagged"),
 ]
 
 

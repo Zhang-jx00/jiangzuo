@@ -39,9 +39,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-10-24 当场重跑**：314 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-10-25 当场重跑**：320 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **87/87 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 4.401 ms/文件**（预算 ≤20）｜ 第三方三仓
+   变异校准 **89/89 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 5.945 ms/文件**（预算 ≤20，⚠️ 本机较忙，非回归：重建基线同刻 5.469–7.074）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -59,11 +59,11 @@
    ✅ **纪律层的「行为收益」现在有实测、且结论是"不许声称"**（E35）：微测双臂 **A 0/5 失败（0%） vs B 0/5 失败（0%）** ⇒ **基线未红** ⇒ 铁律与门函数**无可测的行为增益** ⇒ 记作**回归哨兵**（`validate` **第 24 项**守住"判定不许脱离数据"）。
    ✅ **「当前状态」有人守了**（E34）：`evals/current-state.json` 是它的**唯一机器可读真源**；上面那段 `current-state` 标记区里的每个数都逐个与真源对账 ⇒ **同一个数两处不同，当场红**（`validate_skill` **第 23 项**）。⚠️ 标记区**外**的数字是**历史**，不受管（那是"当时真值"）。
 3. 位置：项目根 `D:\Github项目\jiangzuo\`，仓库根 `D:\Github项目\jiangzuo\jiangzuo\`（外层=项目、内层=仓库，同名故意的）。
-4. 规模：**20 分册 / 18 个 Python 脚本 / 3 份规则 JSON（34 条目，1 条停用、33 条生效）/ 14 模板 / 255 用例 / 91 个入库文件 / 110 提交 / 68 tag**（68 个 tag 全部已推到远端；**68 个 GitHub Release 也已全部发布**）。
+4. **规模**：**20 分册 / 21 个 Python 脚本 / 3 份规则 JSON / 14 模板**（本行由 `scripts/current_state.py` 从实物生成、第 23 项**逐字**对账 ⇒ 不许手抄）
 5. 远端：https://github.com/Zhang-jx00/jiangzuo （Public，唯一分支 `main`，未开分支保护）。
 6. 交付说明（含**未达标与未验证清单**）：仓库内 `docs/jiangzuo/reports/2026-10-15-delivery-v0.36.1.md`。
 7. 逐轮决策账本：仓库内 `docs/jiangzuo/evolution.md`（**55 条变异台账，0 条 ROLLBACK**；条数由脚本数出来、不手数，
-   `validate_skill.py` 拿它做对账判据）；逐版本记录：`CHANGELOG.md`（**59 个版本**）。
+   `validate_skill.py` 拿它做对账判据）；逐版本记录：`CHANGELOG.md`（每个版本一条）。
    ⚠️ **校准例数也是机器判据**（E24）：`validate_skill.py` 第 19 项从实物数出 CASES 条数并与
    CHANGELOG 最新条目对账 ⇒ **手数的偏差当场红**（E19–E23 曾连续五轮写错）。
 3. **零依赖、零网络**：14 个脚本只用标准库，可审计、可在任何环境直接跑。这是"能被任何项目采用"的前提。
@@ -110,7 +110,7 @@
 
 ```
 D:\Github项目\jiangzuo\                 项目根（不入库）
-├── jiangzuo\                           git 仓库根 = 技能根（87 个入库文件）
+├── jiangzuo\                           git 仓库根 = 技能根
 │   ├── SKILL.md                        入口：正文 201 行 / 约 4992 token（预算 5000）
 │   ├── references\                     20 本分册（api-design / audit-rule-authoring / backend / code-review /
 │   │                                   database / debugging / design / devops / docs-delivery / frontend /
@@ -118,8 +118,8 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 │   │                                   security / security-audit / self-evolution / skill-orchestration /
 │   │                                   testing / ui-design）
 │   ├── templates\                      14 个填空模板（new_doc.py 消费）
-│   ├── scripts\                        14 个 .py + audit-rules\ 下 3 份规则 JSON
-│   ├── evals\                          评测集与验收记录（10 个入库文件）
+│   ├── scripts\                        审计链脚本 + audit-rules\ 下的规则 JSON
+│   ├── evals\                          评测集与验收记录
 │   ├── docs\                           交付报告、进化账本、宪法、对标差距分析、术语表、研究笔记
 │   ├── tests\                          test_scripts.py（286 用例，单文件）
 │   ├── agents\openai.yaml              Codex 系客户端 UI 元数据
@@ -138,7 +138,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 | `preflight.py` | 交付前静态检查：密钥特征 / 调试残留 / 冲突标记 / TODO / 大文件 / diff 统计，输出 `RESULT: PASS/FAIL`，`--strict` 供 CI |
 | `new_doc.py` | 按模板在目标项目生成 `docs/jiangzuo/` 文档骨架（ADR 自动编号） |
 | `lookup.py` | 分册检索器（两段式：整词优先 → 2-gram 重试 + 人工路由词表 `BOOKLET_ALIASES` 加权 + df 泛词过滤） |
-| `validate_skill.py` | 技能结构校验器（CI 门禁）+ `--stats` 占用报告，16 项判据见第 5.2 节 |
+| `validate_skill.py` | 技能结构校验器（CI 门禁）+ `--stats` 占用报告，判据清单见第 5.2 节 |
 | `ship_check.py` | 交付闸门：测试通道 / 静态检查 / 交付报告（四问与可证伪主张 + **必须真被 git 跟踪**）/ 自净核对 / 常驻标准 / 技能结构 |
 | `evolve_report.py` | 进化信号采集（只读，产出"该改哪条"的候选排序） |
 | `review_packet.py` | 把"交给审查者/子代理的东西"钉成一个文件 |
@@ -297,6 +297,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 | **E43** ✅ | v0.77.0 | **仓里的发行说明不许成为第二真源** —— 手写副本已漂，且从未发布过。那份 `docs/jiangzuo/releases/v0.60.0.md` 换成**生成版**（丢掉的是从未发布过的手写聚合稿 ⇒ 事实无损）；第 25 项加一条「每份必须与生成器产出的**逐字一致**」（判据**复用生成器本身**）；判据 `TestReleaseNotesSource` **3 条**；变异校准 **83/83 全红** |
 | **E44** ✅ | v0.78.0 | **发行说明不许走兜底** —— v0.15.0–v0.19.0 那五版的发行说明取自 tag 的提交说明（**第二个来源**）。补录五条 CHANGELOG 条目（内容＝各 tag 的**提交说明原文**、日期＝作者日期、注明是补录）⇒ 兜底数归零；`known_gaps.tag_without_changelog` 清空，且第 26 项**这一类差集不再允许登记例外**；判据 `TestReleaseNotesFallback` **4 条**；变异校准 **84/84 全红** |
 | **E45** ✅ | v0.79.0 | **轮次台账只许有一处** —— 交接文档里原先有**两份**手抄的轮次台账（§4 的「E 系列」表 ＋ §11 的三张规划表）⇒ 同一轮写两遍 ⇒ **必然漂**：① 同一轮的主题两处矛盾（「十轮规划」自 E17 起错位一格）② 「完成标记 ✅」E1–E20 那 20 轮一个都没打 ③ E30–E41 那段**没有表头 ⇒ GFM 里根本不是表**（那 4 行本来就是 5 格）④ E42–E44 没有行 ⑤ **4 处校准例数已被 CHANGELOG 订正过、台账没跟着改**（E19 30→29 / E21 32→31 / E32 54→55 / E41 80→81） ｜ 两份合并成**一张**「轮次台账（E1–E44）」放在第 4 节（行身份＝版本号，真源可查）＋ 补 E42–E44 ＋ 订正那 4 处 ＋ 每行带 ✅ ＋ 行序升序；§11 只留还没做的轮次；第 25 项加**六条**对账（轮号全局唯一／轮号↔版本／不许漏轮次／行序不得回退／每行必带 ✅／校准例数与 CHANGELOG 对账）；判据 `TestRoundLedger` **10 条**（红 8 / 绿 2）；变异校准 **87/87 全红** |
+| **E46** ✅ | v0.80.0 | **「规模」这行字由实物生成、逐字对账** —— 交接文档 §0 的「4. 规模」行**手抄了 8 个数、没有一个人守** ⇒ 实测已过期 **5 个**（脚本 18→21 / 用例 255→314 / 入库文件 91→96 / 提交 110→131 / tag 68→77）；而那 8 个里只有**四个**是结构规模（分册 / 脚本 / 模板 / 规则 JSON），其余是**别处已有的副本**或**每笔都变、守不住**的数 ｜ ① `_expected_truth()` **复用 `_readme_truth()`**（不写第二份计数）⇒ 真源 `static` 新增 4 项；② `current_state.py` 新增 `scale_line()`（生成）＋ `check_scale_line()`（**同一个函数**逐字比对）⇒ 并进第 23 项 ⇒ **写错 / 多写一个数 / 删掉 / 写两处当场红**；③ 副本清零：§0 规模行换生成版 ＋ §0 第 7 条 / §2 目录树 ×3 / §2 文件表 / §13 ×5 去副本 ⇒ **数字只在一处**；判据 `TestScaleLine` **6 条**（红 4 / 绿 2）；变异校准 **89/89 全红**（新增 2 条）；⚠️ bench 读到 5.945 ms/文件 ⇒ **同口径重建基线**对比（上一版同刻 5.469–7.074）⇒ **不是回归** |
 
 **当前所处等级**：交付报告 §5 的"复用阶梯"停在**第 2 级（仓库已有）与第 6 级（标准库）**之间；
 技能本身已可交付使用，**但未自封 1.0.0**——判据见第 11 节第 12 项。
@@ -311,7 +312,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 314 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 320 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -329,7 +330,7 @@ README 的规则条数与实物一致（34 条含 1 停用）｜ 分册全部登
 **变异校准器随技能分发、零依赖、例数与 CHANGELOG 对账**（E24，第 19 项）｜
 **交接文档在仓库内、7 个关键章节齐全、已被 git 跟踪**（E27，第 20 项）｜
 **结论区判定表自洽**（E29，第 21 项）｜ **「全部产出」口径拆解自洽**（E32，第 22 项）｜
-**「当前状态」真源与文档对账**（E34，第 23 项：真源 `evals/current-state.json` ＋ 文档里的 `current-state` 标记区 ⇒ 散文里的数也被人守）｜
+**「当前状态」真源与文档对账**（E34，第 23 项：真源 `evals/current-state.json` ＋ 文档里的 `current-state` 标记区 ⇒ 散文里的数也被人守；**E46 再扩**：§0 的「规模」行由实物**生成**并**逐字**对账 ⇒ 写错 / **多写一个数** / 删掉 / 写两处都当场红）｜
 **微测台账的判定不许脱离数据**（E35，第 24 项：状态格只能是规程允许的判定，且必须与实测失败率差对上 ⇒ **改结论不改数据当场红**）｜
 **两个门面的计数与预算**（E36：第 7 项扩成**中英各查一遍** ＋ 入口行数比**正文行数** ＋ description/entry 字符数也纳入；**E41 再扩**：门面的**安装命令**必须指向真实仓库；**E42 再扩**：仓库身份**只许有一处**（真源 = `scripts/repo_identity.py`）⇒ 抄到第二个脚本当场红，**真源缺失必须报错**（不许静默跳过）；**E43 再扩**：仓里 `docs/jiangzuo/releases/*.md` 必须与 **CHANGELOG 生成的版本逐字一致**（判据**复用生成器本身**）⇒ 手写副本＝第二真源 ⇒ 当场红；**E44 再扩**：**发行说明不许走兜底**（兜底＝拿 tag 的提交说明当第二个来源）⇒ 那一类差集**不再允许登记例外** ⇒ 当场红；⚠️ 实测此前两个门面的命令都写着 `npx skills add <you>/jiangzuo` ⇒ **照抄的人必然失败**、而它在 markdown 里「看着挺像样」⇒ **生态那扇门其实是死路**；⚠️ **本地路径占位符**（`<你的项目>`）是该有的 ⇒ 不得误伤）｜
 **台账自身不许被写坏**（E36，第 25 项：版本条目不得重复 ＋ CHANGELOG 必须降序 ＋ 验收记录/交接文档**按表分块**查重；**E40 扩到进化账本**：轮次号**不得回退** ＋ 同一张表里**不得有两行完全相同**——它的行格式 `| 日期 | E37 …` 与查重正则认的 `| **E37** ✅ | v0.70.0 |` 不同 ⇒ 此前**完全不在查重范围内**；**E40 再扩**：验收记录的版本小节**必须升序**（它是**新版本在后**）＋ **每个 current-state 标记区都对账它自己那一版**的快照——此前**每个载体只查一个区块**（14 个区块里 **12 个**无人守）⇒ E39 把 v0.72.0 的区块改写成 v0.73.0 的数时**对账跟着腐化一起漂 ⇒ 绿灯**）｜
@@ -989,7 +990,7 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 
 | 轮 | 主题 | 前置 | 验收信号（可当场复现） |
 |---|---|---|---|
-| **E46** | **交接文档 §0 的「规模」数字也归真源**（E45 复核时顺手量出：§0 写着 18 脚本 / 255 用例 / 91 入库文件 / 68 tag / 59 个版本，而实物是 **21 / 304 / 96 / 76 / 82** ⇒ 全部过期） | `evals/current-state.json` 已有真源机制（E34），只差把这批数接进去；README 的同一批数**已经**有人守（第 7 项） | §0 那行数字与实物**逐个**对得上；改了任何一项当场红（不许手抄） |
+| **E47** | **「远端一致性」栏归真源**（E46 复核时顺手发现：§2 那栏还写着 **v0.70.0 时代**的远端 `main` = `8e22edf`、CI run `39896946451`、三条「本轮 Release」⇒ 标题写着「✅ v0.70.0 已推送」，可它放在**当前态**章节里 ⇒ 读者会当成现状） | 真实状态可当场查（`git ls-remote` / CI API）⇒ 与其手抄，不如让它**指向可查的来源**；每版的 CI/Release 证据已经在 §0 的 ✅ 行里逐版记着 | §2 那栏不再写死远端 sha / CI run 号；读者能一眼看出「现在的远端状态怎么查」；若要机器守，则照 E46 的做法接真源（**派生**，不是手抄） |
 
 ⚠️ **明确不做 / 停牌项**（收口在**这一处**，别再抄到别处）：
 
@@ -1060,16 +1061,16 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 cd "D:/Github项目/jiangzuo/jiangzuo"
 
 git status --short --branch          # 期望：## main...origin/main，没有任何改动行
-git log --oneline -1                 # 期望：v0.42.0 那一笔（tag v0.42.0 之后可能还有纯文档提交）
-git ls-files | wc -l                 # 期望：81
-git tag | wc -l                      # 期望：42
-git rev-list --count HEAD            # 期望：88
+git log --oneline -1                 # 期望：最近一笔是「已推送」那一笔（tag 之后可能还有纯文档提交）
+git ls-files | wc -l                 # 期望：与第 0 节「规模」对得上（**不写死**：每轮都变）
+git tag | wc -l                      # 期望：与第 0 节「状态」里那一版的 tag 数一致（**不写死**：每发一版 +1）
+git rev-list --count HEAD            # 期望：每提交一次 +1（**不写死**）
 git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望：https://Zhang-jx00:<CREDENTIAL>@github.com/...
 
-grep -n "version:" SKILL.md          # 期望：0.60.0
+grep -n "version:" SKILL.md          # 期望：与第 0 节「状态」那一版的版本号一致
 python scripts/validate_skill.py .   # 期望：31 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 314 tests ... OK（约 190 秒）
+python -m unittest discover -s tests # 期望：Ran 320 tests ... OK（约 190 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

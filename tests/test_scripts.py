@@ -6661,5 +6661,102 @@ class TestRoundLedger(unittest.TestCase):
         self.assertEqual(bad, [], u"本仓库的轮次台账对不上：%s" % bad)
 
 
+class TestScaleLine(unittest.TestCase):
+    """E46：交接文档 §0 的「规模」行必须与**实物**逐字一致（不许手抄）。
+
+    为什么（E46 复核出来的洞）：§0 原来那行手抄了 **8 个**规模数，而**没有一个**有人守
+    ⇒ 实测已过期 **5 个**：脚本 18→21、用例 255→314、入库文件 91→96、提交 110→131、tag 68→77。
+    ⇒ 而这 8 个数里只有**四个**是"结构规模"（分册 / 脚本 / 模板 / 规则 JSON 文件数）——
+    其余是**别处已经有的**（用例数在「本机闸门」行、tag/Release 数在每版的 ✅ 行）
+    或是**每笔都变的**（入库文件数 / 提交数 ⇒ 任何判据都守不住 ⇒ 只能不写死）。
+
+    ⇒ 现在这一行由 `scripts/current_state.py` 的 `scale_line()` **从实物生成**，
+    第 23 项拿**同一个函数**逐字比对 ⇒ **多写一个数、少写一个数、写错一个数，当场红**
+    （不是"查得到才红"）。
+    """
+
+    def _fixture(self, mutate=None):
+        """造一个临时技能目录：里面放**生成版**那一行（可被改坏）。
+
+        刻意用**小数字**（2 分册 / 3 脚本 / 1 模板 / 1 规则 JSON）而不是照抄仓库的数
+        ⇒ 夹具与实物**各自自洽** ⇒ 仓库的规模变了也不必改这个测试。
+        """
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, n in ((os.path.join("references"), 2),
+                           (os.path.join("scripts"), 3),
+                           (os.path.join("templates"), 1),
+                           (os.path.join("scripts", "audit-rules"), 1)):
+                d = os.path.join(tmp, rel)
+                os.makedirs(d)
+                for i in range(n):
+                    ext = ".json" if rel.endswith("audit-rules") else (
+                        ".py" if rel.endswith("scripts") else ".md")
+                    with io.open(os.path.join(d, "f%d%s" % (i, ext)), "w",
+                                 encoding="utf-8", newline="\n") as f:
+                        f.write(u"x\n")
+            line = current_state.scale_line(tmp)
+            self.assertTrue(line, u"生成不出规模行")
+            body = u"# 交接文档\n\n4. " + line + u"\n"
+            if mutate is not None:
+                body = mutate(body, line)
+            d = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(d)
+            with io.open(os.path.join(d, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            return list(current_state.check_scale_line(tmp))
+
+    # ── 红例 ───────────────────────────────────────────────────────────
+    def test_wrong_number_must_be_flagged(self):
+        """红：数字写错（3 个脚本 → 5 个）⇒ 必须报。"""
+        errs = self._fixture(lambda body, line: body.replace(u"3 个 Python 脚本", u"5 个 Python 脚本"))
+        self.assertTrue(errs, u"规模数字写错却没被报出来")
+        self.assertTrue(any(u"规模行" in e for e in errs), errs)
+
+    def test_extra_number_must_be_flagged(self):
+        """红：**多写一个数**（哪怕它是对的）⇒ 必须报。
+
+        ⚠️ 这一条是"逐字对账"相对"逐个数对账"的价值：
+        逐个数对账只会问"你写的数对不对"，而**多出来的副本**（同一事实写两遍）正是
+        本项目反复吃过的亏（E42/E43/E45）⇒ **多写也算错**。
+        """
+        errs = self._fixture(lambda body, line: body.replace(
+            u"**2 分册 / 3 个 Python 脚本 / 1 份规则 JSON / 1 模板**",
+            u"**2 分册 / 3 个 Python 脚本 / 1 份规则 JSON / 1 模板 / 96 个入库文件**"))
+        self.assertTrue(errs, u"规模行多写一个数却没被报出来")
+        self.assertTrue(any(u"规模行" in e for e in errs), errs)
+
+    def test_missing_line_must_be_flagged(self):
+        """红：整行删掉 ⇒ 必须报（不许静默少一行）。"""
+        errs = self._fixture(lambda body, line: u"# 交接文档\n\n这里没有规模行。\n")
+        self.assertTrue(errs, u"规模行没了却没被报出来")
+        self.assertTrue(any(u"规模行" in e for e in errs), errs)
+
+    def test_two_scale_lines_must_be_flagged(self):
+        """红：**两处**规模行 ⇒ 必须报（同一事实只许写一遍）。"""
+        errs = self._fixture(lambda body, line: body + u"5. " + line + u"\n")
+        self.assertTrue(errs, u"两处规模行却没被报出来")
+        self.assertTrue(any(u"规模行" in e for e in errs), errs)
+
+    # ── 绿例（必须有：只写红例会把"判据恒绿"放过去）────────────────────
+    def test_generated_line_is_not_flagged(self):
+        """绿：生成版那一行原样放进去 ⇒ **不得**报。"""
+        errs = self._fixture()
+        self.assertEqual([e for e in errs if u"规模行" in e], [],
+                         u"生成版规模行被误报了：%s" % errs)
+
+    def test_real_repo_scale_line_matches(self):
+        """绿：本仓库的规模行与实物**逐字一致**（E46 改完后）。"""
+        sys.path.insert(0, SCRIPTS)
+        import current_state
+        current_state = importlib.reload(current_state)
+        errs = list(current_state.check_scale_line(REPO))
+        self.assertEqual([e for e in errs if u"规模行" in e], [],
+                         u"本仓库的规模行对不上：%s" % errs)
+
+
 if __name__ == "__main__":
     unittest.main()

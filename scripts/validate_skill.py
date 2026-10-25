@@ -710,6 +710,10 @@ def _readme_truth(skill_dir):
         truth[key] = (len([f for f in os.listdir(path) if f.endswith(suffix)])
                       if os.path.isdir(path) else None)
     truth["rules"] = _count_builtin_rules(skill_dir)
+    # 规则 JSON 的**文件数**（E46）：「3 份规则 JSON」也是一处规模数 ⇒ 与条目数同源。
+    rdir = os.path.join(skill_dir, "scripts", "audit-rules")
+    truth["rule_files"] = (len([f for f in os.listdir(rdir) if f.endswith(".json")])
+                           if os.path.isdir(rdir) else None)
     # 入口行数：**正文行数**（frontmatter 之后）—— 500 上限约束的是正文，不是文件总行数。
     # ⚠️ E36 实测：旧实现拿**总行数**当真源 ⇒ README 只好写"212 行（上限 500）"，
     #    而**说真话**（201 行）反而会被判错 ⇒ **一道在逼人说假话的锁**。
@@ -1158,6 +1162,12 @@ def _expected_truth(skill_dir):
     total, disabled = _count_builtin_rules(skill_dir)
     truth["rules_active"] = None if total is None else total - disabled
     truth["rules_disabled"] = disabled
+    # ④ 结构规模（E46）：分册 / 脚本 / 模板 / 规则 JSON 文件数
+    #    ⚠️ **复用 `_readme_truth()`** —— 门面（第 7 项）已经在数这些 ⇒ 自己再数一遍
+    #    就是**第二份计数实现**（两份实现会长出两个数）⇒ 规模行与门面从此同源。
+    _rt = _readme_truth(skill_dir)
+    for _k in ("booklets", "scripts", "templates", "rule_files"):
+        truth[_k] = _rt.get(_k)
     return truth
 
 
