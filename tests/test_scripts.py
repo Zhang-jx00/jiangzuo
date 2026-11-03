@@ -9,6 +9,7 @@ K-Dense 铁律："a skill with untested scripts cannot land"。
 
 仅使用 Python 标准库（3.8+）。
 """
+import contextlib
 import glob
 import importlib
 import io
@@ -26,7 +27,7 @@ SCRIPTS = os.path.join(REPO, "scripts")
 PY = sys.executable or "python"
 
 SCRIPT_NAMES = ["audit_graph.py", "audit_index.py", "audit_map.py", "audit_rules.py",
-                "review_packet.py",
+                "plan_check.py", "review_packet.py",
                 "audit_scan.py", "evolve_report.py", "lookup.py", "new_doc.py",
                 "preflight.py", "project_scan.py", "sarif_schema_extract.py",
                 "ship_check.py", "validate_skill.py"]
@@ -6910,6 +6911,156 @@ class TestIncidentPointerOnly(unittest.TestCase):
         validate_skill.check_ledger_versions(REPO, cl)
         bad = [e for e in validate_skill.ERRORS if u"历史事故" in e]
         self.assertEqual(bad, [], u"本仓库的 §0 速览段有问题：%s" % bad)
+
+
+class TestPlanCheck(unittest.TestCase):
+    """E51：工作树脏文件清单 vs 本轮计划清单 —— **提交前的机器闸**。
+
+    为什么要有这个（E49 实测）：`git add <点名文件>` 只提交点名的文件 ⇒
+    计划外的脏文件**不报错、也不进提交** ⇒ 永远不会被 git 看见；而
+    `ship_check` 的自净核对**只数个数、不比对清单**。三个环节叠在一起 ⇒
+    E49 收尾时才发现一处能改坏引擎的校准变异残留，它已经潜伏了一整轮。
+
+    ⚠️ 退出码是三态的（与 release_consistency 同一规矩）：
+      0 = 对过了且一致 ｜ 1 = 对过了且不一致（真问题）｜ 2 = 没核成（**不是通过**）。
+    ⇒ 「没给计划清单」「git 不可用」都必须是 2 且**绝不是 0** ——
+      否则这条闸在环境坏掉时永远绿，比没有锁更坏。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, SCRIPTS)
+        import plan_check
+        cls.pc = importlib.reload(plan_check)
+
+    def test_parse_status_z_rename_takes_two_fields(self):
+        """`-z` 格式里 R/C 条目占两个 NUL 字段（新路径在前、旧路径在后）。"""
+        entries = self.pc.parse_status_z(
+            "R  docs/new.md\0docs/old.md\0?? scratch.py\0 M a.py\0")
+        self.assertEqual(entries, [
+            ("R ", "docs/new.md", "docs/old.md"),
+            ("??", "scratch.py", None),
+            (" M", "a.py", None),
+        ])
+
+    def test_unexpected_dirty_file_is_red(self):
+        """红：工作树里动了计划外的文件 ⇒ 退出码 **1**（字面量，不是常量引用）。"""
+        self.pc.read_status = lambda repo: (
+            0, " M scripts/planned.py\0 M scripts/unplanned.py\0")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/planned.py"])
+        self.assertEqual(ret, 1, buf.getvalue())
+        self.assertIn(u"计划外", buf.getvalue())
+        self.assertIn("scripts/unplanned.py", buf.getvalue())
+
+    def test_planned_but_unchanged_is_reported(self):
+        """红：计划里写了、工作树没改 ⇒ 也算不一致（退出码 1）。
+
+        「计划内未动」要么是清单写多了（划掉它），要么是真没做（查为什么）
+        —— 两种都该是显式决定，不许静默放过。
+        """
+        self.pc.read_status = lambda repo: (0, " M scripts/planned.py\0")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/planned.py", "docs/touched.md"])
+        self.assertEqual(ret, 1, buf.getvalue())
+        self.assertIn(u"计划内未动", buf.getvalue())
+        self.assertIn("docs/touched.md", buf.getvalue())
+
+    def test_matching_plan_is_green(self):
+        """绿：改动全部在计划内、清单没有未动条目 ⇒ 退出码 0。"""
+        self.pc.read_status = lambda repo: (
+            0, " M scripts/a.py\0?? docs/new-note.md\0")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/a.py", "docs/new-note.md"])
+        self.assertEqual(ret, 0, buf.getvalue())
+        self.assertIn("PLAN-OK", buf.getvalue())
+
+    def test_rename_covers_either_side(self):
+        """重命名：计划写了旧路径**或**新路径都算对上；两边都没写才算计划外。"""
+        status = "R  scripts/renamed.py\0scripts/old.py\0"
+        self.pc.read_status = lambda repo: (0, status)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/old.py"])
+        self.assertEqual(ret, 0, buf.getvalue())
+        self.pc.read_status = lambda repo: (0, status)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/renamed.py"])
+        self.assertEqual(ret, 0, buf.getvalue())
+        self.pc.read_status = lambda repo: (0, status)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/other.py"])
+        self.assertEqual(ret, 1, buf.getvalue())
+
+    def test_untracked_counts_as_change(self):
+        """未跟踪（??）也是「动过」——新建的文件用计划内路径就能对上。"""
+        self.pc.read_status = lambda repo: (0, "?? scripts/plan_check.py\0")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["scripts/plan_check.py"])
+        self.assertEqual(ret, 0, buf.getvalue())
+
+    def test_no_plan_is_not_checked_never_zero(self):
+        """红：没给计划清单 ⇒ 退出码 **2**（字面量），绝不是 0。
+
+        「没给清单就没法对账」绝不能当成「对过账了」—— 否则这条闸
+        在忘记给清单时永远绿，就是一把恒绿的空锁。
+        """
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main([])
+        self.assertEqual(ret, 2, buf.getvalue())
+        self.assertNotEqual(ret, 0, "没核成被当成了通过")
+        self.assertIn(u"没核成", buf.getvalue())
+
+    def test_git_failure_is_not_checked_never_zero(self):
+        """红：git status 跑不成（非 git 仓库/超时）⇒ 退出码 **2**，绝不是 0。"""
+        self.pc.read_status = lambda repo: (128, "fatal: not a git repository")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["SKILL.md"])
+        self.assertEqual(ret, 2, buf.getvalue())
+        self.assertNotEqual(ret, 0, "没核成被当成了通过")
+
+    def test_plan_file_supports_comments_and_dir_prefix(self):
+        """`--plan FILE`：# 注释与空行跳过；以 / 结尾的条目按目录前缀对账。"""
+        plan = os.path.join(tempfile.mkdtemp(prefix="plan-"), "plan.txt")
+        with io.open(plan, "w", encoding="utf-8") as f:
+            f.write("# E51 计划\n\nscripts/a.py\n  docs/  \n")
+        self.pc.read_status = lambda repo: (0, " M scripts/a.py\0?? docs/sub/x.md\0")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ret = self.pc.main(["--plan", plan])
+        self.assertEqual(ret, 0, buf.getvalue())
+
+    def test_black_box_temp_repo_mismatch_then_ok(self):
+        """黑盒：临时 git 仓库里真实跑一遍 —— 计划外文件当场红；补进计划后转绿。"""
+        repo = tempfile.mkdtemp(prefix="plan-repo-")
+        def git(*a):
+            subprocess.run(["git"] + list(a), cwd=repo, check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        git("init", "-q")
+        with io.open(os.path.join(repo, "base.py"), "w", encoding="utf-8") as f:
+            f.write("x = 1\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
+        with io.open(os.path.join(repo, "base.py"), "a", encoding="utf-8") as f:
+            f.write("y = 2\n")
+        with io.open(os.path.join(repo, "stowaway.py"), "w", encoding="utf-8") as f:
+            f.write("# 计划外的脏文件（E49 那种残留的替身）\n")
+        r = run([os.path.join(SCRIPTS, "plan_check.py"), "--repo", repo, "base.py"])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("stowaway.py", r.stdout)
+        self.assertIn(u"计划外", r.stdout)
+        r = run([os.path.join(SCRIPTS, "plan_check.py"), "--repo", repo,
+                 "base.py", "stowaway.py"])
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("PLAN-OK", r.stdout)
 
 
 if __name__ == "__main__":

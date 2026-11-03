@@ -1015,6 +1015,29 @@ CASES = [
      "incident-pointer-check-neutered",
      "tests.test_scripts.TestIncidentPointerOnly."
      "test_incident_line_without_pointer_must_be_flagged"),
+    # ---- E51（v0.85.0）：工作树脏文件 vs 本轮计划清单的机器闸 ----
+    # 四个承重处各一条：①计划外不收集 ②计划内未动不收集
+    # ③不一致退出码被换成 0 ④「没核成」退出码被换成 0（恒绿的空锁）。
+    ("scripts/plan_check.py",
+     "        unexpected.append((code, path, orig))",
+     "        pass  # E51 校准：计划外的脏文件不再收集",
+     "plan-unexpected-not-collected",
+     "tests.test_scripts.TestPlanCheck.test_unexpected_dirty_file_is_red"),
+    ("scripts/plan_check.py",
+     "            if not any(path == p or orig == p for _, path, orig in entries):",
+     "            if False:  # E51 校准：计划内未动不再收集",
+     "plan-missing-not-collected",
+     "tests.test_scripts.TestPlanCheck.test_planned_but_unchanged_is_reported"),
+    ("scripts/plan_check.py",
+     "    return EXIT_MISMATCH",
+     "    return EXIT_OK  # E51 校准：不一致也当通过",
+     "plan-mismatch-exit-zero",
+     "tests.test_scripts.TestPlanCheck.test_unexpected_dirty_file_is_red"),
+    ("scripts/plan_check.py",
+     "EXIT_NOT_CHECKED = 2",
+     "EXIT_NOT_CHECKED = 0  # E51 校准：没核成被当成通过",
+     "plan-not-checked-exit-zero",
+     "tests.test_scripts.TestPlanCheck.test_git_failure_is_not_checked_never_zero"),
 ]
 
 
