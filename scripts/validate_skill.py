@@ -232,6 +232,29 @@ def _author_today(skill_dir):
         return None
 
 
+# E49：§0 速览段里提到**历史事故**的关键词（清单要短而准，长了会误伤正常速览行）
+INCIDENT_KEYS = (u"API 通道", u"传输通道", u"forced update", u"撤回", u"停推", u"换前端 IP")
+# 指针：速览段里提到事故的行，必须同时带一个「去哪看详情」的指针
+INCIDENT_POINTERS = (u"第 2 节", u"第 5.4 节")
+
+
+def _handover_section_lines(lines, start_rx, end_rx):
+    """取交接文档里某两处标题之间的行：返回 [(行号(1 基), 行文本)]。"""
+    i0 = None
+    for i, l in enumerate(lines):
+        if l.startswith(start_rx):
+            i0 = i
+            break
+    if i0 is None:
+        return []
+    out = []
+    for i in range(i0 + 1, len(lines)):
+        if lines[i].startswith(end_rx):
+            break
+        out.append((i + 1, lines[i]))
+    return out
+
+
 def _cl_entry_bodies(cl_text):
     """把 CHANGELOG 切成 {版本: 条目正文}。"""
     out = {}
@@ -350,6 +373,24 @@ def check_ledger_versions(skill_dir, cl_text):
                     err(u"交接文档规划表有 **%d 行 v%s**（同一张表内）——"
                         u"台账脚本跑了两遍就会留下这种" % (vs.count(v), v))
                 block = []
+
+        # ── E49：§0 速览段里提到**历史事故**的行，必须是「指针行」 ──
+        # ⚠️ **必须放在这个 `if os.path.isfile(hand)` 块里**：`hlines` 在这里才有定义
+        #    （E49 第一版把它写在块外 ⇒ 夹具（没有交接文档）一跑就 UnboundLocalError
+        #      ⇒ 5 个既有测试变红 ⇒ **闸门当场逮住**）。
+        # 为什么要有这条（E49 复核出来的洞）：交接文档 §0（速览）与 §2（历史记录）
+        # 曾把**同一件事故改写后各写一遍**（v0.72.0 的 API 通道、v0.74.0 的传输通道、
+        # v0.51.0 的 forced update、v0.71.0 的撤回、v0.75.0 的 CI 假红…）⇒
+        # 同一事实两处手抄 ⇒ 必然漂（而且漂了没人知道，因为**改写过的重复抓不到**）。
+        # ⇒ 抓手：**速览段只许留指针，详情留在一处** ⇒
+        #    凡提到事故关键词的行，**必须**同时带一个「详见第 2 节 / 见第 5.4 节」的指针。
+        # ⚠️ **关键词清单要短而准**：清单一长就会误伤正常的速览行。
+        for _i, _l in _handover_section_lines(hlines, u"## 0. ", u"## 1. "):
+            if any(k in _l for k in INCIDENT_KEYS) and not any(p in _l for p in INCIDENT_POINTERS):
+                err(u"交接文档 §0（速览）第 %d 行提到历史事故却没有指向详情的指针——"
+                    u"**同一件事故只许写一遍**（速览留指针、详情留一处，E45–E49 的主线）："
+                    u"这一行须带「%s」之一" % (_i, u"」或「".join(INCIDENT_POINTERS)))
+                break
 
         # ── E45：交接文档的**轮次台账**必须与 CHANGELOG 一一对应 ──
         # 为什么加这一项：交接文档里原先有**两份**手抄的轮次台账（§4 的「E 系列」表

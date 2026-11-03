@@ -1007,6 +1007,14 @@ CASES = [
      "remote-state-line-sha-injected",
      "tests.test_scripts.TestRemoteStateLine."
      "test_real_repo_line_matches"),
+    # ---- E49（v0.83.0）：同一件事故只许写一遍（速览留指针、详情留一处）----
+    # 变异：§0 速览段里「提到事故却没有指针」不再被报 ⇒ 判据必须红。
+    ("scripts/validate_skill.py",
+     u"        if any(k in _l for k in INCIDENT_KEYS) and not any(p in _l for p in INCIDENT_POINTERS):",
+     u"        if False:  # E49 校准：速览段里的事故详情不再被报",
+     "incident-pointer-check-neutered",
+     "tests.test_scripts.TestIncidentPointerOnly."
+     "test_incident_line_without_pointer_must_be_flagged"),
 ]
 
 

@@ -6833,5 +6833,84 @@ class TestRemoteStateLine(unittest.TestCase):
                          u"本仓库的远端状态行对不上：%s" % errs)
 
 
+class TestIncidentPointerOnly(unittest.TestCase):
+    """E49：§0 速览段里提到**历史事故**的行，必须带「详情去哪看」的指针。
+
+    为什么（E49 复核出来的洞）：交接文档 §0（速览）与 §2（历史记录）曾把**同一件事故
+    改写后各写一遍**（v0.72.0 的 API 通道、v0.74.0 的传输通道、v0.51.0 的 forced update、
+    v0.71.0 的撤回、v0.75.0 的 CI 假红…）⇒ 同一事实两处手抄 ⇒ 必然漂，
+    而且**改写过的重复抓不到**（逐字查重查不出）⇒
+    ⇒ 抓手只能是**结构**：**速览留指针、详情留一处** ⇒
+    凡是速览段里提到事故关键词的行，**必须**同时带「第 2 节」或「第 5.4 节」。
+    """
+
+    CL = (u"# 更新日志\n\n"
+          u"## [0.2.0] - 2026-10-24\n\n条目。\n\n"
+          u"## [0.1.0] - 2026-10-23\n\n条目。\n")
+
+    GOOD = (u"# 交接文档\n\n"
+            u"## 0. 接手时先看\n\n"
+            u"2. 状态：**v0.2.0 已交付**；⚠️ **发布出过几次事（细节见第 2 节）**："
+            u"v0.1.0 那天传输通道断过一轮 ⇒ **现行规则见第 5.4 节**。\n"
+            u"\n## 1. 下一个\n\n正文。\n")
+
+    def _check(self, handover_text):
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = os.path.join(tmp, "docs", "jiangzuo")
+            os.makedirs(d)
+            with io.open(os.path.join(d, "handover.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(handover_text)
+            del validate_skill.ERRORS[:]
+            del validate_skill.INFOS[:]
+            validate_skill.check_ledger_versions(tmp, self.CL)
+            return list(validate_skill.ERRORS)
+
+    # ── 红例 ───────────────────────────────────────────────────────────
+    def test_incident_line_without_pointer_must_be_flagged(self):
+        """红：速览段里提到「传输通道」却**没有指针** ⇒ 必须报。"""
+        bad = (u"# 交接文档\n\n## 0. 接手时先看\n\n"
+               u"2. 状态：……\n"
+               u"   ⚠️ **v0.1.0 那天传输通道断过一轮**：`git push` 报 `Authentication failed` ⇒ "
+               u"换前端 IP 直推即通 ⇒ **不落配置文件、不改走 SSH、不换令牌**。\n"
+               u"\n## 1. 下一个\n")
+        errs = self._check(bad)
+        self.assertTrue(errs, u"速览段里的事故详情没被报出来")
+        self.assertTrue(any(u"历史事故" in e for e in errs), errs)
+
+    def test_second_copy_of_an_incident_must_be_flagged(self):
+        """红：同一件事故在速览段里出现**两次**、其中一次没有指针 ⇒ 必须报。"""
+        bad = (u"# 交接文档\n\n## 0. 接手时先看\n\n"
+               u"2. 状态：⚠️ **发布出过事（细节见第 2 节）**：……\n"
+               u"   ⚠️ **v0.1.0 的 tag 被移过一次**（`forced update`）⇒ 原 tag 对象仍可取回。\n"
+               u"\n## 1. 下一个\n")
+        errs = self._check(bad)
+        self.assertTrue(errs, u"速览段里重复写事故没被报出来")
+        self.assertTrue(any(u"历史事故" in e for e in errs), errs)
+
+    # ── 绿例 ───────────────────────────────────────────────────────────
+    def test_pointer_line_is_not_flagged(self):
+        """绿：速览段里提到事故**但带指针** ⇒ **不得**报。"""
+        errs = self._check(self.GOOD)
+        self.assertEqual([e for e in errs if u"历史事故" in e], [],
+                         u"带指针的速览行被误报了：%s" % errs)
+
+    def test_real_repo_section_zero_is_not_flagged(self):
+        """绿：本仓库的 §0 速览段**没有**不带指针的事故行（E49 改完后）。"""
+        sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        validate_skill = importlib.reload(validate_skill)
+        with io.open(os.path.join(REPO, "CHANGELOG.md"), "r", encoding="utf-8") as f:
+            cl = f.read()
+        del validate_skill.ERRORS[:]
+        del validate_skill.INFOS[:]
+        validate_skill.check_ledger_versions(REPO, cl)
+        bad = [e for e in validate_skill.ERRORS if u"历史事故" in e]
+        self.assertEqual(bad, [], u"本仓库的 §0 速览段有问题：%s" % bad)
+
+
 if __name__ == "__main__":
     unittest.main()
