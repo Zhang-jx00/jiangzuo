@@ -1038,6 +1038,20 @@ CASES = [
      "EXIT_NOT_CHECKED = 0  # E51 校准：没核成被当成通过",
      "plan-not-checked-exit-zero",
      "tests.test_scripts.TestPlanCheck.test_git_failure_is_not_checked_never_zero"),
+    # ---- E53（v0.87.0）：第 14 项第四类（三仓/自扫实测 ← measured 真源）----
+    # 两个承重处各一条：三仓分支被废 / 自扫分支被废 ⇒ 对应的错数不再被报 ⇒ 判据红。
+    ("scripts/validate_skill.py",
+     '            elif kind == "sims":',
+     '            elif False and kind == "sims":',
+     "sims-tp-check-neutered",
+     "tests.test_scripts.TestValidateSimsNumbers."
+     "test_wrong_sims_numbers_are_flagged"),
+    ("scripts/validate_skill.py",
+     '            elif kind == "sims_self":',
+     '            elif False and kind == "sims_self":',
+     "sims-self-check-neutered",
+     "tests.test_scripts.TestValidateSimsNumbers."
+     "test_wrong_sims_numbers_are_flagged"),
 ]
 
 

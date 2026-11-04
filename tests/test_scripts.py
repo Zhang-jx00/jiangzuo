@@ -495,6 +495,130 @@ class TestValidateExpectedNumbers(unittest.TestCase):
             self.assertIn(u"静默失效", r.stdout)
 
 
+class TestValidateSimsNumbers(unittest.TestCase):
+    """E53：第 14 项的**第四类**——三仓/自扫的实测期望值接真源 `measured` 段。
+
+    为什么要有这一类（E51 订正 §13 时定性）：DVWA 那行「期望：69 发现 / 结论 68」
+    是 E7 时代的 A/B 数字，挂了一个多月没人发现——前三类（用例数/语料分母/规则条数）
+    **管不到三仓发现数** ⇒ 这一类"照着跑就能看到"的期望值成了漏网之鱼。
+
+    真源是 `evals/current-state.json` 的 **measured** 段（--refresh 从扫描产物写入），
+    **不是静态推导**——所以这组测试在进程内**补丁** `_measured_truth`，不往夹具里放
+    current-state.json（放了会拉起第 23 项的载体检查，夹具就得建出整套真源）。
+    真仓库那一侧的黑盒验证由 TestValidate.test_validate_passes_on_self 覆盖
+    （§13 现在就有三仓与自扫两类期望行）。
+
+    完整性按**配对**判：声明了三仓与自扫两形态之一，就必须两个都写全——
+    但**不**按"文件里有 audit_scan 命令"拉新文件（README 的目录树行、分册的
+    通用示例、交付报告的占位行没有可写的期望数，逼着写就是编值）。
+    """
+
+    MEASURED = {"flask_findings": 5, "flask_conclusions": 2,
+                "dvwa_findings": 7, "dvwa_conclusions": 7,
+                "requests_findings": 4, "requests_conclusions": 0,
+                "self_findings": 8, "self_conclusions": 1, "self_context_excluded": 3}
+
+    def _run(self, tmp, md_text, measured=None):
+        """建夹具 + 进程内跑第 14 项（补丁两处真源），返回 (errors, infos)。
+
+        ⚠️ 静态真源也一并固定：进程内 `_expected_truth` 的 unittest 探索会与本
+        测试套件自己的 `tests` 包名相撞 ⇒ 用例数取不到 ⇒ 夹具的静态分支误红。
+        静态三类在夹具上的行为已由 TestValidateExpectedNumbers 的**子进程**测试覆盖，
+        本类只管第四类（sims/sims_self）⇒ 固定成夹具声明的值即可。
+        """
+        if SCRIPTS not in sys.path:
+            sys.path.insert(0, SCRIPTS)
+        import validate_skill
+        sk = TestValidateExpectedNumbers()._mini(tmp, md_text)
+        saved_m = validate_skill._measured_truth
+        saved_t = validate_skill._expected_truth
+        validate_skill._measured_truth = lambda skill_dir: (
+            dict(measured) if measured is not None else {})
+        validate_skill._expected_truth = lambda skill_dir: {
+            "tests": 2, "must_find": 2, "must_not_find": 3,
+            "rules_active": 2, "rules_disabled": 1}
+        try:
+            del validate_skill.ERRORS[:]
+            del validate_skill.INFOS[:]
+            validate_skill.check_expected_numbers(sk)
+            return list(validate_skill.ERRORS), list(validate_skill.INFOS)
+        finally:
+            validate_skill._measured_truth = saved_m
+            validate_skill._expected_truth = saved_t
+
+    def test_wrong_sims_numbers_are_flagged(self):
+        """红：三仓与自扫的期望数各写错一个，必须当场红并点名；绿：改回真源数就过。"""
+        base = TestValidateExpectedNumbers.GOOD.replace(
+            u"```\n",
+            u"python scripts/audit_scan.py ../tp/flask --json o1.json    "
+            u"# 期望：5 发现 / 结论 2\n"
+            u"python scripts/audit_scan.py ../tp/DVWA --json o2.json     "
+            u"# 期望：7 发现 / 结论 7\n"
+            u"# 本仓库自扫（干净仓库标尺：期望 8 发现 / 结论 1 / 另计 3）\n```\n")
+        cases = [
+            (u"期望：5 发现 / 结论 2", u"期望：6 发现 / 结论 2",
+             u"flask 6 发现", u"实际 5/2"),
+            (u"期望：7 发现 / 结论 7", u"期望：7 发现 / 结论 9",
+             u"dvwa 7 发现", u"实际 7/7"),
+            (u"期望 8 发现 / 结论 1 / 另计 3", u"期望 8 发现 / 结论 1 / 另计 9",
+             u"另计 9", u"实际 8/1/3"),
+        ]
+        for good, wrong, label, real in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                errs, _infos = self._run(tmp, base.replace(good, wrong),
+                                         measured=self.MEASURED)
+                self.assertTrue(errs, u"写错「%s」没被拦住" % label)
+                joined = u"\n".join(errs)
+                self.assertIn(label, joined, joined)
+                self.assertIn(real, joined, joined)
+        # 绿：全部与真源一致 ⇒ 无错误，信息行提到四类
+        with tempfile.TemporaryDirectory() as tmp:
+            errs, infos = self._run(tmp, base, measured=self.MEASURED)
+            self.assertEqual(errs, [], infos)
+            self.assertTrue(any(u"三仓与自扫实测" in i for i in infos), infos)
+
+    def test_sims_truth_missing_is_not_silent(self):
+        """红：measured 真源取不到 ⇒ 必须报「真源取不到」，绝不静默当"没问题"。"""
+        base = TestValidateExpectedNumbers.GOOD.replace(
+            u"```\n",
+            u"python scripts/audit_scan.py ../tp/flask --json o1.json    "
+            u"# 期望：5 发现 / 结论 2\n"
+            u"# 本仓库自扫（干净仓库标尺：期望 8 发现 / 结论 1 / 另计 3）\n```\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            errs, _infos = self._run(tmp, base, measured={})
+            joined = u"\n".join(errs)
+            self.assertIn(u"真源 measured 取不到", joined, errs)
+
+    def test_sims_pair_incomplete_is_flagged(self):
+        """红：两形态只声明一半 ⇒ 缺的那一半被点名（少一半 = 另一半静默失效）。"""
+        both = TestValidateExpectedNumbers.GOOD.replace(
+            u"```\n",
+            u"python scripts/audit_scan.py ../tp/flask --json o1.json    "
+            u"# 期望：5 发现 / 结论 2\n"
+            u"# 本仓库自扫（干净仓库标尺：期望 8 发现 / 结论 1 / 另计 3）\n```\n")
+        only_tp = both.replace(
+            u"# 本仓库自扫（干净仓库标尺：期望 8 发现 / 结论 1 / 另计 3）\n", u"")
+        only_self = both.replace(
+            u"python scripts/audit_scan.py ../tp/flask --json o1.json    "
+            u"# 期望：5 发现 / 结论 2\n", u"")
+        with tempfile.TemporaryDirectory() as tmp:
+            errs, _ = self._run(tmp, only_tp, measured=self.MEASURED)
+            self.assertTrue(any(u"缺「自扫" in e for e in errs), errs)
+        with tempfile.TemporaryDirectory() as tmp:
+            errs, _ = self._run(tmp, only_self, measured=self.MEASURED)
+            self.assertTrue(any(u"缺「三仓" in e for e in errs), errs)
+        # 反面：只声明静态三类的文件（如交付报告的占位扫描行）**不被**拉进来
+        with tempfile.TemporaryDirectory() as tmp:
+            errs, _ = self._run(
+                tmp,
+                TestValidateExpectedNumbers.GOOD.replace(
+                    u"```\n",
+                    u"python scripts/audit_scan.py <第三方仓库> --json s.json   "
+                    u"# 只读扫描\n```\n"),
+                measured=self.MEASURED)
+            self.assertEqual(errs, [], u"占位扫描行不该被要求声明期望数：%s" % errs)
+
+
 class TestPreflight(unittest.TestCase):
     def test_preflight_clean_on_self(self):
         r = run([os.path.join(SCRIPTS, "preflight.py"), "--all", "--strict"])

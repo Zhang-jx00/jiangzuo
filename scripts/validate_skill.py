@@ -1213,13 +1213,47 @@ def _expected_truth(skill_dir):
 
 
 # 三类"复制即跑"的期望值形态：(键, 正则, 给人看的名字, 真源键)
+# E53 扩第四类：三仓/自扫的实测数（同一行既写扫描命令又写「N 发现 / 结论 N」）。
+# 它们的真源不是静态推导，而是真源 current-state.json 的 **measured** 段
+# （--refresh 从扫描产物写入 ⇒ 真源不会腐烂）；取不到就单独报错，不当"没问题"。
 EXPECT_FORMS = (
     (u"tests", re.compile(r"Ran\s+(\d+)\s+tests?\b"), u"Ran N tests", u"tests"),
     (u"corpus", re.compile(r"ACCEPT-OK\s+(\d+)/(\d+)\s*检出.*?0/(\d+)\s*安全样本"),
      u"ACCEPT-OK A/B 检出 & 0/C 安全样本", u"must_find"),
     (u"rules", re.compile(r"RULES-OK[（(]\s*(\d+)\s*条，另有\s*(\d+)\s*条数据停用[）)]"),
      u"RULES-OK（N 条，另有 M 条数据停用）", u"rules_active"),
+    # 同一行里 audit_scan.py 的目标（flask/requests/DVWA）决定这组数对账哪一段 measured
+    (u"sims", re.compile(r"audit_scan\.py.*?(flask|requests|DVWA).*?(\d+)\s*发现\s*/\s*结论\s*(\d+)"),
+     u"三仓「N 发现 / 结论 N」", None),
+    # 自扫的干净仓库标尺（E7 那次就是它过期）：期望 N 发现 / 结论 N / 另计 N
+    (u"sims_self", re.compile(r"(\d+)\s*发现\s*/\s*结论\s*(\d+)\s*/\s*另计\s*(\d+)"),
+     u"自扫「N 发现 / 结论 N / 另计 N」", None),
 )
+
+# audit_scan.py 的目标目录名 → 真源 measured 键
+SIMS_KEYS = {
+    "flask": ("flask_findings", "flask_conclusions"),
+    "requests": ("requests_findings", "requests_conclusions"),
+    "dvwa": ("dvwa_findings", "dvwa_conclusions"),
+}
+SIMS_SELF_KEYS = ("self_findings", "self_conclusions", "self_context_excluded")
+
+
+def _measured_truth(skill_dir):
+    """第四类（E53）的真源：`evals/current-state.json` 的 **measured** 段。
+
+    三仓/自扫的发现数只能来自扫描产物 ⇒ 不是静态推导；但这里**不跑扫描**，
+    读的是已落盘的真源（由 `current_state.py --refresh` 从扫描产物写入）。
+    读不到就返回 {} ⇒ 逐行对账时报「真源取不到」，绝不静默当"没问题"。
+    """
+    p = os.path.join(skill_dir, "evals", "current-state.json")
+    try:
+        with io.open(p, encoding="utf-8") as f:
+            src = json.load(f)
+        m = src.get("measured")
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def check_expected_numbers(skill_dir):
@@ -1229,10 +1263,13 @@ def check_expected_numbers(skill_dir):
     就一直是错的，错了一整轮没人发现——因为**没有任何判据把文档里的数字和实物对账**。
     错的是基线，所以它不会让任何检出看起来更好，只会让人拿一把坏尺子量别人。
 
-    本项把三类期望值接上唯一真源：
+    本项把四类期望值接上唯一真源：
       ① 测试用例数 ← unittest 的用例计数（只加载不执行）
       ② 语料分母   ← gen_corpus.py 的 MUST_FIND / MUST_NOT_FIND 长度（AST 静态解析）
       ③ 规则条数   ← scripts/audit-rules/*.json 的条目数与停用数
+      ④ 三仓/自扫实测（E53）← evals/current-state.json 的 measured 段
+        （--refresh 从扫描产物写入；E51 订正 §13 时定性：DVWA「69/68」那类漏网
+         正是因为三类管不到它 ⇒ 扩第四类根治）
 
     另外两件同样重要的事：
       · **形态要写全**——一个 .md 文件只要声明了期望值，就得把适用的形态写齐；
@@ -1241,6 +1278,7 @@ def check_expected_numbers(skill_dir):
       · **取不到真源不放过**——真源取不到时报错，不当"没问题"处理。
     """
     truth = _expected_truth(skill_dir)
+    measured = _measured_truth(skill_dir)
     per_file = {}
     bad = []
     for rel, lineno, line in _md_fenced_lines(skill_dir):
@@ -1286,12 +1324,48 @@ def check_expected_numbers(skill_dir):
                     if off != real_off:
                         bad.append(u"%s:%d 期望「另有 %d 条数据停用」，实际 %d 条——"
                                    u"停用规则要同步这行" % (rel, lineno, off, real_off))
+            elif kind == "sims":
+                # 第四类（E53）：同一行既写扫描命令又写期望 ⇒ 目标名决定对账哪段 measured
+                repo, cf, cc = m.group(1).lower(), int(m.group(2)), int(m.group(3))
+                keys = SIMS_KEYS.get(repo)
+                if not keys or measured.get(keys[0]) is None or measured.get(keys[1]) is None:
+                    bad.append(u"%s:%d 期望「%s %d 发现 / 结论 %d」，但真源 measured 取不到"
+                               u"（evals/current-state.json 的 measured 段或缺 %s 键）——"
+                               u"真源取不到不等于没问题"
+                               % (rel, lineno, repo, cf, cc, repo))
+                else:
+                    rf, rc = measured[keys[0]], measured[keys[1]]
+                    if (cf, cc) != (rf, rc):
+                        bad.append(u"%s:%d 期望「%s %d 发现 / 结论 %d」，实际 %d/%d——"
+                                   u"扫描重跑后数字变了就要 --refresh 真源并同步这行"
+                                   % (rel, lineno, repo, cf, cc, rf, rc))
+            elif kind == "sims_self":
+                # 第四类（E53）的自扫形态：干净仓库标尺（E7 那次坏的就是它）
+                sf, sc, sx = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                vals = tuple(measured.get(k) for k in SIMS_SELF_KEYS)
+                if any(v is None for v in vals):
+                    bad.append(u"%s:%d 期望「%d 发现 / 结论 %d / 另计 %d」，但真源 measured 取不到"
+                               u"（evals/current-state.json 的 measured 段）——真源取不到不等于没问题"
+                               % (rel, lineno, sf, sc, sx))
+                else:
+                    if (sf, sc, sx) != vals:
+                        bad.append(u"%s:%d 期望「%d 发现 / 结论 %d / 另计 %d」，实际 %d/%d/%d——"
+                                   u"扫描重跑后数字变了就要 --refresh 真源并同步这行"
+                                   % ((rel, lineno, sf, sc, sx) + vals))
     # 形态要写全：声明了期望值的文件必须把适用的形态写齐，少一种就等于让这一项静默失效。
     # **按文件判，不按仓库判**：没写期望值的文件不该被要求写（判据不许假定数据形状）。
+    # E53 的边界：三仓与自扫两形态按**配对**判 —— 声明了其中之一就必须两个都写
+    # （少一半 ⇒ 另一半静默失效）；但**不**按"文件里有 audit_scan 命令"拉新文件进来：
+    # README 的目录树行、分册的通用示例、交付报告的 <第三方仓库> 占位行都没有
+    # 可写的期望数，逼着写就是编值（E38 的"不编值"规矩）。
     for rel in sorted(per_file):
         for kind, _rx, label, src in EXPECT_FORMS:
-            if truth.get(src) is None:
-                continue
+            if kind in ("sims", "sims_self"):
+                if not ({"sims", "sims_self"} & per_file[rel]):
+                    continue
+            else:
+                if truth.get(src) is None:
+                    continue
             if kind not in per_file[rel]:
                 bad.append(u"%s 声明了部分期望值却缺「%s」——形态不全就等于让这一项"
                            u"静默失效（等于没有检查）" % (rel, label))
@@ -1299,7 +1373,7 @@ def check_expected_numbers(skill_dir):
         for msg in bad:
             err(msg)
     else:
-        info("期望值与实物对账通过（用例数 / 语料分母 / 规则条数，%d 处声明）"
+        info("期望值与实物对账通过（用例数 / 语料分母 / 规则条数 / 三仓与自扫实测，%d 处声明）"
              % sum(len(v) for v in per_file.values()))
 
 
