@@ -5615,6 +5615,53 @@ class TestMicroTestClaims(unittest.TestCase):
         self.assertNotIn(u"[微测声称]", r.stdout,
                          u"本仓库的微测声称与数据对不上：%s" % r.stdout)
 
+    # ---- E54：过程可审计性声称的机器判定（第 24 项扩展） ----
+
+    COMPOUND = (u"| **必验证门函数**（五步）＋**铁律** | E35/E54 | "
+                u"**基线未红＋有效（可审计性）** | "
+                u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点**；"
+                u"E54 过程实证 **A 证 4/20 vs B 证 18/20**（预注册阈值 B ≥15 且 A ≤8） |\n")
+
+    def test_evidence_claim_with_data_passes(self):
+        """绿：失败率口径基线未红 ＋ 实证数据满足预注册阈值 ⇒ 复合状态格放行。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, self.GOOD.replace(
+                u"| **必验证门函数**（五步）＋**铁律** | E35 红测 MT-A/B | **基线未红** | "
+                u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点** |",
+                self.COMPOUND.strip(u"\n")))
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotIn(u"[微测声称]", r.stdout, r.stdout)
+
+    def test_evidence_claim_violating_threshold_is_flagged(self):
+        """红：实证数据不满足预注册阈值（A 16/20 > 8）⇒ 不得写「有效」。"""
+        md = self.GOOD.replace(
+            u"| **必验证门函数**（五步）＋**铁律** | E35 红测 MT-A/B | **基线未红** | "
+            u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点** |",
+            u"| **必验证门函数**（五步）＋**铁律** | E54 | **基线未红＋有效（可审计性）** | "
+            u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点**；"
+            u"E54 过程实证 **A 证 16/20 vs B 证 18/20** |")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[微测声称]", r.stdout)
+            self.assertIn(u"预注册阈值", r.stdout)
+
+    def test_evidence_claim_without_data_is_flagged(self):
+        """红：声称「有效」（可审计性）却给不出实证数据 ⇒ 判定不许脱离数据。"""
+        md = self.GOOD.replace(
+            u"| **必验证门函数**（五步）＋**铁律** | E35 红测 MT-A/B | **基线未红** | "
+            u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点** |",
+            u"| **必验证门函数**（五步）＋**铁律** | E54 | **基线未红＋有效（可审计性）** | "
+            u"E35 实测 **A 0/5 失败（0%） vs B 0/5 失败（0%）**，差 **0 个百分点**；"
+            u"E54 过程实证：B 臂证据表明显更完整 |")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"[微测声称]", r.stdout)
+            self.assertIn(u"解析不出实证数据", r.stdout)
+
 
 class TestReadmeCounts(unittest.TestCase):
     """E36：README（**中英两个门面**）声明的计数/预算必须与实物一致。

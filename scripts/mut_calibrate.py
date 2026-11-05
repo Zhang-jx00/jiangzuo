@@ -1052,6 +1052,23 @@ CASES = [
      "sims-self-check-neutered",
      "tests.test_scripts.TestValidateSimsNumbers."
      "test_wrong_sims_numbers_are_flagged"),
+    # ---- E54（v0.88.0）：过程可审计性声称的机器判定（第 24 项扩展）----
+    # 两个承重处各一条：①「有效」却给不出实证数据不再被报 ②实证数据不满足预注册阈值不再被报。
+    ("scripts/validate_skill.py",
+    # ⚠️ 锚点选「跳过整块」而不是「去掉守卫留 else」：后者会让 else 分支踩空
+    # （mea=None.group() ⇒ AttributeError）⇒ 判据崩溃，而校准器的「has no attribute」
+    # 启发式会把崩溃误标成「测试 id 不存在 ⇒ 假红灯」（E54 实踩 ⇒ §8 第 80 条）。
+     '        if want == u"基线未红" and u"有效" in status:',
+     '        if False and want == u"基线未红" and u"有效" in status:  # E54 校准：可审计性声称不再被核',
+     "evidence-no-data-check-neutered",
+     "tests.test_scripts.TestMicroTestClaims."
+     "test_evidence_claim_without_data_is_flagged"),
+    ("scripts/validate_skill.py",
+     "                elif b_ev < EVIDENCE_MIN_B or a_ev > EVIDENCE_MAX_A:",
+     "                elif False:  # E54 校准：阈值不再被核",
+     "evidence-threshold-check-neutered",
+     "tests.test_scripts.TestMicroTestClaims."
+     "test_evidence_claim_violating_threshold_is_flagged"),
 ]
 
 

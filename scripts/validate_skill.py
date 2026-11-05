@@ -1783,6 +1783,12 @@ def check_current_state(skill_dir):
 
 MICRO_TEST_RULES = (u"铁律范围句", u"必验证门函数", u"子代理四态回执")
 MICRO_TEST_VERDICTS = (u"有效", u"基线未红", u"无效", u"未跑", u"待测")
+# E54 预注册阈值（**写于双臂重跑之前**，微测规程 E54 节与这里同源）：
+# 「有效（过程可审计性）」只许在 **B 证 ≥ 15/20 且 A 证 ≤ 8/20** 时写
+# （5 次独立会话 × 4 项证据各 0/1，满分 20/20）。
+# 数据不支撑 ⇒ 只能写「基线未红」（继续不宣称）——判定不许脱离数据。
+EVIDENCE_MIN_B = 15
+EVIDENCE_MAX_A = 8
 
 
 def check_micro_test_claims(skill_dir):
@@ -1848,6 +1854,27 @@ def check_micro_test_claims(skill_dir):
             problems.append(u"「%s」实测失败率差 **%.0f 个百分点** ⇒ 按规程该写「%s」，"
                             u"台账写的是「%s」——**改结论不改数据**（或反过来）当场红"
                             % (key, diff, want, status))
+        # E54：失败率口径判「基线未红」时，状态格若另claim「有效」（过程可审计性），
+        # 必须给出实证数据（A 证 x/20 … B 证 y/20）**且满足预注册阈值**——
+        # 换指标不是换规矩：判定不许脱离数据（E32/E33/E35 同一条病）。
+        if want == u"基线未红" and u"有效" in status:
+            mea = re.search(r"A\s*证\s*(\d+)\s*/\s*(\d+)", note)
+            meb = re.search(r"B\s*证\s*(\d+)\s*/\s*(\d+)", note)
+            if not mea or not meb:
+                problems.append(u"「%s」声称「有效」（过程可审计性）却解析不出实证数据"
+                                u"（应写成「A 证 x/20 … B 证 y/20」）——判定不许脱离数据" % key)
+            else:
+                a_ev, ta_ev = int(mea.group(1)), int(mea.group(2))
+                b_ev, tb_ev = int(meb.group(1)), int(meb.group(2))
+                if ta_ev != tb_ev:
+                    problems.append(u"「%s」实证分母不一致（A %d vs B %d）——两臂必须同分母"
+                                    % (key, ta_ev, tb_ev))
+                elif b_ev < EVIDENCE_MIN_B or a_ev > EVIDENCE_MAX_A:
+                    problems.append(u"「%s」实证数据（A %d/%d vs B %d/%d）不满足**预注册阈值**"
+                                    u"（B ≥ %d/20 且 A ≤ %d/20）⇒ 不得写「有效」——"
+                                    u"改结论不改数据当场红"
+                                    % (key, a_ev, ta_ev, b_ev, tb_ev,
+                                       EVIDENCE_MIN_B, EVIDENCE_MAX_A))
     for p in problems:
         err(u"[微测声称] " + p)
     if not problems:
