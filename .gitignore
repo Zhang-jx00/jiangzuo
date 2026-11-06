@@ -26,3 +26,6 @@ docs/jiangzuo/*
 !docs/jiangzuo/reports/
 !docs/jiangzuo/releases/
 !docs/jiangzuo/handover.md
+# 中英分册对照账是交付物（第 12 项扩展对账它）。2026-11-06 plan_check 当场逮住：
+# 写出来的文件被这条 ignore 吞掉 ⇒ git status 看不见 ⇒ 计划对账报「计划内未动」（E55）。
+!docs/jiangzuo/en-coverage.md

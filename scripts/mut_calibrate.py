@@ -1069,6 +1069,20 @@ CASES = [
      "evidence-threshold-check-neutered",
      "tests.test_scripts.TestMicroTestClaims."
      "test_evidence_claim_violating_threshold_is_flagged"),
+    # ---- E55（v0.89.0）：英文分册骨架契约 ＋ 对照账对账 ----
+    # 两个承重处各一条：①硬锚点检查被废 ②对照账对账被废。
+    ("scripts/validate_skill.py",
+     "        for must, label in EN_BOOKLET_HARD:",
+     "        for must, label in ():  # E55 校准：英文骨架锚点不再被核",
+     "en-contract-neutered",
+     "tests.test_scripts.TestEnBooklets."
+     "test_missing_hard_anchor_is_flagged"),
+    ("scripts/validate_skill.py",
+     "        if claimed != actual:",
+     "        if False:  # E55 校准：对照账对账不再被核",
+     "en-coverage-count-neutered",
+     "tests.test_scripts.TestEnBooklets."
+     "test_coverage_mismatch_is_flagged"),
 ]
 
 

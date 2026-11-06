@@ -68,7 +68,8 @@
 ```
 jiangzuo/
 ├── SKILL.md          # 入口：<500 行。核心循环、分级门、HARD-GATE、路由表、反合理化表
-├── references/       # 20 本分册（渐进式披露：进入哪个阶段读哪本）
+├── references/       # 20 本分册（渐进式披露：进入哪个阶段读哪本；英文版见 references/en/，
+│   │                 #   覆盖面见 docs/jiangzuo/en-coverage.md）
 ├── templates/        # 14 个填空即用模板（计划/ADR/契约/复盘/交付报告/常驻标准/进化账本…）
 ├── scripts/          # 22 个纯标准库脚本
 │   ├── project_scan.py    # 摸底自动化：识别技术栈/结构/命令 → 档案草稿

@@ -40,9 +40,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-11-05 当场重跑**：346 用例 OK ｜ validate **31** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-11-06 当场重跑**：350 用例 OK ｜ validate **32** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **99/99 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 9.993 ms/文件**（预算 ≤20，⚠️ 本机较忙，非回归：重建基线同刻对比见台账）｜ 第三方三仓
+   变异校准 **101/101 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 9.993 ms/文件**（预算 ≤20，⚠️ 本机较忙，非回归：重建基线同刻对比见台账）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -308,6 +308,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 | **E52** ✅ | v0.86.0 | **回填 §8 坑位清单**（E50 发现的缺口收口）—— §8 收录截止在第 55 条（约 E26 前后），E28–E51 的坑散落在 CHANGELOG 与 §4 台账里，没有进「症状 → 根因 → 修法 → 留下的东西」的本体 ｜ ① **新增第 56–78 条**（23 条，逐条标实踩轮次；既有 55 条的编号与内容**一个字未动**——别人引用「§8 第 N 条」不能指错）：E29 假红灯/判据没验过/变异打偏、E35 微测四事故、E36 逼人说假话的锁、E37 数数≠指向/规则未实测、E38 空行切表/两套解析、E39 三态退出码/宁可少核、E40 只查最后一个/查重按行、E41 门面占位符/推成≠报成功、E42–E44 三种第二真源、E45 五种漂法、E46–E47 守不住的数别写、E48 外向变更回读、E49 四件套、E50 详细≠份数、E51 校准顺序/三类漏网；② §19 的截止句与五类索引行同步（去掉全部「§8 未收录」标注）；③ §21.2 的对应未达标行移除；④ 第 20 项的编号连续性守卫全程绿 ｜ ⚠️ **不新增判据、不动引擎**：测试 340、校准 **95/95 全红（无新增）**、validate 31/0/0、口径一字未变（DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19） |
 | **E53** ✅ | v0.87.0 | **把「三仓数字」接进期望值对账**（第 14 项扩第四类，根治 DVWA「69/68」那类漏网） —— E51 订正 §13 时定性：前三类（用例数／语料分母／规则条数）**管不到三仓发现/结论数** ⇒ DVWA 期望挂了一个多月没人发现 ｜ ① 第四类两形态：**`sims`**（同一行 `audit_scan.py <目标> … # 期望：N 发现 / 结论 N`，目标名决定对账哪段）＋ **`sims_self`**（`N 发现 / 结论 N / 另计 N`——自扫标尺，E7 那次坏的就是它）；② 真源 = `current-state.json` 的 **measured** 段（`--refresh` 从扫描产物写入 ⇒ 真源不会腐烂；读落盘真源 ⇒ 仍不跑扫描、跨平台同色），**取不到就报错**；③ 完整性按**配对**判（声明其一必须写全其二）——⚠️ **第一版按"文件里有 audit_scan 命令"判 ⇒ 当场红出 9 条误伤**（README 目录树行／交付报告占位行／分册通用示例全被当成电池）⇒ 收窄并按 E52 规矩把新坑写进 §8 第 **79** 条；④ 真仓库当场自证能红（flask 行改 99 ⇒ 第 14 项点名「实际 13/1」⇒ 逐字节还原）｜ 判据 `TestValidateSimsNumbers` **3 条**（⚠️ 进程内补丁**两处**真源——静态真源也要固定，否则 unittest 探索与本套件 `tests` 包名相撞 ⇒ 夹具静态分支误红）；变异校准 **97/97 全红**（新增 **2** 条：三仓分支被废／自扫分支被废）｜ §5.2 的第 14 项描述同步 ｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
 | **E54** ✅ | v0.88.0 | **行为微测二轮：换指标测「过程可审计性」**（E35 的假设第一次拿到双臂数据）—— 预注册在跑之前（指标＝4 项证据完备度：①实跑 ②留痕-命令 ③留痕-结果 ④挂靠；**跑了没写＝0**；阈值＝B ≥15/20 且 A ≤8/20 才许「有效」，否则继续不宣称；失败率口径不变）｜ **实测**（10 次独立 general-purpose 会话，夹具逐次重置、污染检查全过、无效运行重跑不计点）：A 臂 5 次全散文式静态推理 ⇒ **5/20**；B 臂 5 次全实跑＋证据表（B3/B5 自造数据沙箱验证逻辑，A 臂无人做）⇒ **20/20** ｜ **判定**：失败率 **A 0/5 vs B 0/5 ⇒ 基线未红**（保持）；过程证据 **⇒ 有效（可审计性）** ⇒ **本项目第一条有实测的行为增益声称（范围限定：本场景、该指标）**，第 24 项同步扩**实证配对解析**（`A 证 x/20 … B 证 y/20` ＋ 预注册阈值核对，没数据/不达标写「有效」当场红）｜ 判据 `TestMicroTestClaims` **+3 条**；变异校准 **99/99 全红**（新增 **2** 条）｜ meta-test **八条**如实登记（含独立核查新增：预注册不可核证 ⇒ E56 锚定、产出未归档 ⇒ 已当场补齐）；**独立核查 CONSISTENT**；逐次取证 `eval-runs/mt2/evidence-e54.md` ＋ 原始产出全文 `eval-runs/mt2/transcripts-e54.md`（仓库外）｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
+| **E55** ✅ | v0.89.0 | **英文分册第一批**（requirements / testing / code-review / debugging）—— 独立大工程的第 1 批；「明确不做」清单里它被登记为「留作独立大工程」⇒ 大工程也要有第一批 ｜ **落位先核后定**：references/ 与 _readme_truth 的 glob 非递归 ⇒ `references/en/` 有意不进中文分册计数（仍 20）、lookup 词表与中文契约；入口预算只剩 8 tokens ⇒ SKILL.md 一字未动 ｜ **第 12 项扩展 `check_en_booklets`**：两套锚点一个机制（英文硬锚点 When to read / **Output / CRITICAL: read the entire booklet ＋建议项＋160 行）；**对照账 `docs/jiangzuo/en-coverage.md`** 守半拉子（✅ 已译行 ↔ en/ 实际文件一一对应）；双门面各补一行指针（不带计数）｜ **翻译质量流程**：子代理并行整译（行数 1:1：98/98、79/79、118/117、82/82）⇒ 独立双语审（漏译/走样/编造三类；requirements/testing **PASS**；code-review/debugging 审稿意见入库前收口）⇒ 审稿意见落地（TODO 清理／Output 统一／锚点归一）｜ 判据 `TestEnBooklets` **4 条**；变异校准 **101/101 全红**（新增 **2** 条）｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
 
 **当前所处等级**：交付报告 §5 的"复用阶梯"停在**第 2 级（仓库已有）与第 6 级（标准库）**之间；
 技能本身已可交付使用，**但未自封 1.0.0**——判据见第 11 节第 12 项。
@@ -320,9 +321,9 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 
 ```bash
 cd "D:/Github项目/jiangzuo/jiangzuo"
-python scripts/validate_skill.py .            # 期望 31 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .            # 期望 32 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 346 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 350 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -1108,9 +1109,9 @@ git rev-list --count HEAD            # 期望：每提交一次 +1（**不写死
 git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望：https://Zhang-jx00:<CREDENTIAL>@github.com/...
 
 grep -n "version:" SKILL.md          # 期望：与第 0 节「状态」那一版的版本号一致
-python scripts/validate_skill.py .   # 期望：31 条信息 / 0 警告 / 0 错误
+python scripts/validate_skill.py .   # 期望：32 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 346 tests ... OK（约 190 秒）
+python -m unittest discover -s tests # 期望：Ran 350 tests ... OK（约 190 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

@@ -7234,5 +7234,76 @@ class TestPlanCheck(unittest.TestCase):
         self.assertIn("PLAN-OK", r.stdout)
 
 
+class TestEnBooklets(unittest.TestCase):
+    """E55：英文分册骨架契约 ＋ 中英对照账对账（第 12 项扩展）。
+
+    为什么单独一套锚点：中文契约的锚点是中文子串（"何时读"/"产出**"），英文版永远
+    满足不了 ⇒ 两套锚点、一个机制。references/ 的 glob 非递归 ⇒ en/ 不进中文分册
+    计数（20）、lookup 词表与中文契约——翻译不是第二套路由层。
+    对照账（docs/jiangzuo/en-coverage.md）守「半拉子」：✅ 已译行必须与 en/ 实际
+    文件一一对应——多译没登记、登记了没落盘，当场红。
+    """
+
+    GOOD_EN = (u"# Booklet: Demo\n"
+               u"> **When to read**: demo.\n"
+               u"> **Output**: demo.\n"
+               u"> **CRITICAL: read the entire booklet before starting; execute the steps in order, do not skip any.**\n"
+               u"> **Prerequisite**: none.\n"
+               u"## Common mistakes\n"
+               u"- none\n")
+    COV = (u"| 分册 | 英文版路径 | 状态 |\n"
+           u"|---|---|---|\n"
+           u"| demo | references/en/demo.en.md | ✅ 已译 |\n")
+
+    def _mini(self, tmp, en_files, coverage_text):
+        sk = os.path.join(tmp, "sk")
+        os.makedirs(os.path.join(sk, "references", "en"))
+        os.makedirs(os.path.join(sk, "docs", "jiangzuo"))
+        with io.open(os.path.join(sk, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("---\nname: sk\ndescription: 测试\n---\n正文\n")
+        for fname, content in en_files.items():
+            with io.open(os.path.join(sk, "references", "en", fname), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(content)
+        if coverage_text is not None:
+            with io.open(os.path.join(sk, "docs", "jiangzuo", "en-coverage.md"), "w",
+                         encoding="utf-8", newline="\n") as f:
+                f.write(coverage_text)
+        return sk
+
+    def test_missing_hard_anchor_is_flagged(self):
+        """红：英文分册缺 CRITICAL 防跳步行 ⇒ 骨架契约必须红（中文锚点管不到它）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, {"demo.en.md": self.GOOD_EN.replace(
+                u"**CRITICAL: read the entire booklet before starting; execute the steps in order, do not skip any.**\n", u"")}, self.COV)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"CRITICAL 防跳步行", r.stdout)
+
+    def test_coverage_mismatch_is_flagged(self):
+        """红：对照账标 ✅ 已译 2 条而 en/ 只有 1 个文件 ⇒ 半拉子当场红。"""
+        cov = self.COV + u"| ghost | references/en/ghost.en.md | ✅ 已译 |\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, {"demo.en.md": self.GOOD_EN}, cov)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"一一对应", r.stdout)
+
+    def test_coverage_missing_is_flagged(self):
+        """红：en/ 有分册但对照账不见踪影 ⇒ 「哪本已译」没人登记。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, {"demo.en.md": self.GOOD_EN}, None)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"对照账", r.stdout)
+
+    def test_real_repo_en_booklets_pass(self):
+        """绿：本仓库 4 本英文分册过骨架契约、对照账对得上。"""
+        r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
+        self.assertIn(u"英文分册骨架契约全部满足（4 本", r.stdout)
+        self.assertNotIn(u"英文分册 ", r.stdout.replace(
+            u"英文分册骨架契约全部满足（4 本，含对照账对账） ✓", u""), r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

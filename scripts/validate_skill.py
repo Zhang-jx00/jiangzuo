@@ -656,6 +656,68 @@ def check_booklet_contract(skill_dir):
 BODY_TOKEN_BUDGET = 5000
 
 
+# 英文分册骨架锚点（E55）：与中文契约同一机制、两套锚点——
+# 中文锚点（"何时读" "产出**"）是中文子串，英文版永远满足不了 ⇒ 不能共用一套。
+EN_BOOKLET_HARD = (("When to read", "When to read"), ("**Output", "Output"),
+                   ("CRITICAL: read the entire booklet", u"CRITICAL 防跳步行"))
+EN_BOOKLET_SOFT = (("Prerequisite", u"前置行"), ("## Common mistakes", u"「常见错误」节"))
+EN_BOOKLET_MAX_LINES = 160
+EN_COVERAGE_REL = os.path.join("docs", "jiangzuo", "en-coverage.md")
+
+
+def check_en_booklets(skill_dir):
+    """E55：英文分册（references/en/*.md）的骨架契约 ＋ 中英对照账对账。
+
+    为什么单独一个函数：见上——锚点是两套，机制是一套（缺一即错／建议缺失警告／行数上限）。
+    references/ 与 _readme_truth 的 glob 都是**非递归** ⇒ en/ 有意**不进**中文分册计数（20）、
+    lookup 词表与中文契约——翻译不是第二套路由层。
+    对照账 docs/jiangzuo/en-coverage.md 守「半拉子」：标 ✅ 已译的行数必须与 en/ 实际
+    文件一一对应 ⇒ 多译一本没登记、登记了没落盘，当场红。
+    """
+    import glob
+    en_refs = sorted(glob.glob(os.path.join(skill_dir, "references", "en", "*.md")))
+    if not en_refs:
+        return
+    problems = []
+    for path in en_refs:
+        name = os.path.basename(path)
+        with io.open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        n_lines = len(content.splitlines())
+        for must, label in EN_BOOKLET_HARD:
+            if must not in content:
+                problems.append((name, "%s 缺失（骨架契约）" % label, True))
+        for must, label in EN_BOOKLET_SOFT:
+            if must not in content:
+                problems.append((name, "缺 %s（建议）" % label, False))
+        if n_lines > EN_BOOKLET_MAX_LINES:
+            problems.append((name, "%d 行超过 160 行上限" % n_lines, False))
+    cov_path = os.path.join(skill_dir, EN_COVERAGE_REL)
+    if os.path.isfile(cov_path):
+        claimed = set()
+        with io.open(cov_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if not line.startswith("|"):
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) >= 3 and u"✅ 已译" in cells[2]:
+                    claimed.add(cells[1].strip())
+        actual = set("references/en/" + os.path.basename(p) for p in en_refs)
+        if claimed != actual:
+            problems.append((u"en-coverage.md",
+                             u"对照账标 ✅ 已译 %d 条（%s），en/ 实际 %d 个文件（%s）——两边必须一一对应"
+                             % (len(claimed), u"、".join(sorted(claimed)) or u"无",
+                                len(actual), u"、".join(sorted(actual)) or u"无"), True))
+    else:
+        problems.append((u"en-coverage.md",
+                         u"en/ 里已有英文分册但对照账不见踪影——「哪本已译」没人登记（半拉子）", True))
+    if problems:
+        for name, msg, hard in problems:
+            (err if hard else warn)(u"英文分册 %s：%s" % (name, msg))
+    else:
+        info(u"英文分册骨架契约全部满足（%d 本，含对照账对账） ✓" % len(en_refs))
+
+
 def estimate_tokens(text):
     """粗略 token 估算：CJK 字符约 1 token/字，其余约 4 字符/token。"""
     cjk = len(re.findall(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", text))
@@ -2046,6 +2108,7 @@ def main():
             check_one_level(skill_dir, refs)
             check_scripts(skill_dir)
             check_booklet_contract(skill_dir)
+            check_en_booklets(skill_dir)
             check_readme_counts(skill_dir)
             check_repo_identity(skill_dir)
             check_lookup_aliases(skill_dir)

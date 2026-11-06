@@ -6,6 +6,33 @@
 跟着改到实际那天，不要留"写稿那天"。这条由 `validate_skill.py` 核对，对不上即报错——
 2026-10-16 复核时按此修正了 8 条（0.23–0.29 由 10-14 改 10-15、0.6.0 由 10-05 改 10-06）。
 
+## [0.89.0] - 2026-11-06
+
+E55：**英文分册第一批**（独立大工程的第 1 批：requirements / testing / code-review / debugging 四本）。
+
+<!-- current-state:begin -->
+本机闸门：350 用例 OK ｜ validate **32** 信息/0 警告/0 错误 ｜ 变异校准 **101/101 全红** ｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
+三仓：DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8** ｜ BENCH-OK 9.993 ms/文件
+<!-- current-state:end -->
+
+- **落位是先核出来的**：references/ 与 _readme_truth 的 glob 都是**非递归** ⇒ 英文版放 `references/en/`
+  ⇒ 有意**不进**中文分册计数（仍 20）、lookup 词表与中文契约——翻译不是第二套路由层；
+  入口（SKILL.md）预算只剩 8 tokens ⇒ **一个字没动**。
+- **骨架契约两套锚点、一个机制**（第 12 项扩展 `check_en_booklets`）：中文锚点（"何时读"/"产出**"）
+  是中文子串，英文版永远满足不了 ⇒ 英文硬锚点（When to read / **Output / CRITICAL: read the entire booklet）
+  ＋建议项（Prerequisite / ## Common mistakes）＋160 行上限；**对照账** `docs/jiangzuo/en-coverage.md`
+  守「半拉子」：✅ 已译行必须与 en/ 实际文件一一对应（多译没登记、登记了没落盘当场红）；双门面各补一行
+  英文版指针（**不带计数**——计数只住在对照账，避免第二处手抄）。
+- **翻译质量流程**：4 本由子代理并行整译（行数与中文 1:1 对齐：98/98、79/79、118/117、82/82）⇒
+  独立双语句审（子代理）逐节对照三类问题（漏译/走样/编造）⇒ requirements/testing **PASS**、
+  code-review/debugging 审稿结论入库前收口；审稿意见落地：TODO 标记清理、Output 单复数统一、
+  草稿头注释移除；骨架锚点大小写/单复数归一（Read→read、Common Mistakes→Common mistakes、
+  Prerequisites→Prerequisite 锚点前缀兼容）。
+- **判据**：`TestEnBooklets` **4 条**（缺锚点红／对照账虚登红／对照账缺失红／真仓库 4 本全绿）；
+  变异校准 **101/101 全红**（新增 **2** 条：英文锚点被废／对照账对账被废）。
+- **口径不动（引擎一行没动）**：DVWA **58/58**、flask 13/1、requests 4/0、自扫 **8/0/8**、
+  覆盖 **14/19**、语料 **25/25 & 0/19** **一字未变**；bench 沿用真源实测值（`measured` 段不变）。
+
 ## [0.88.0] - 2026-11-05
 
 E54：**行为微测二轮——换指标测「过程可审计性」**（E35 的假设第一次拿到双臂数据）。
