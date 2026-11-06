@@ -524,6 +524,12 @@
       "owner": "0.88.0",
       "version": "0.88.0"
     },
+    "v0.89.0": {
+      "commit": "64f71bc841130e086ea1f9fe043eb0e50ad9cdfd",
+      "date": "2026-11-06",
+      "owner": "0.89.0",
+      "version": "0.89.0"
+    },
     "v0.9.0": {
       "commit": "67c0f3cc5325fc63f987dfa80f8afb0f8f800c7d",
       "date": "2026-10-14",
