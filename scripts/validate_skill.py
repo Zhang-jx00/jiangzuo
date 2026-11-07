@@ -1853,6 +1853,13 @@ EVIDENCE_MIN_B = 15
 EVIDENCE_MAX_A = 8
 
 
+def git_commit_exists(skill_dir, sha):
+    """E56：sha 是否指向本仓库真实存在的提交（微测预注册锚定的核验件）。"""
+    p = subprocess.run(["git", "-C", skill_dir, "rev-parse", "--verify", "--quiet",
+                        sha + "^{commit}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return p.returncode == 0
+
+
 def check_micro_test_claims(skill_dir):
     """第 24 项：微测台账的**状态格必须与实测数据一致**（E35）。
 
@@ -1937,6 +1944,23 @@ def check_micro_test_claims(skill_dir):
                                     u"改结论不改数据当场红"
                                     % (key, a_ev, ta_ev, b_ev, tb_ev,
                                        EVIDENCE_MIN_B, EVIDENCE_MAX_A))
+        # E56：微测实测的**锚定与留痕**（E54 独立核查的两条隐患收口）。
+        # ① 「## E<N> 实测」节必须写明预注册的锚定方式：引用独立预注册笔的 sha，
+        #    或如实标注「预注册与实测同笔」（历史事实）——都没有 ⇒ 「先注册再取数」无法核证；
+        # ② 引用的「预注册笔 <sha>」必须是仓库里真实存在的提交——锚定靠 git，不靠自觉。
+        for m in re.finditer(r"^## (E\d+) 实测", text, re.M):
+            rnd = m.group(1)
+            seg = text[m.end():]
+            nxt = re.search(r"^## ", seg, re.M)
+            seg = seg[:nxt.start()] if nxt else seg
+            if not (u"预注册笔" in seg or u"预注册与实测同笔" in seg):
+                problems.append(u"「%s 实测」节没有预注册锚定——既没引用「预注册笔 <sha>」，"
+                                u"也没如实标注「预注册与实测同笔」（E56 规程）" % rnd)
+        for m in re.finditer(r"预注册笔[:：]?\s*([0-9a-f]{7,40})", text):
+            sha = m.group(1)
+            if not git_commit_exists(skill_dir, sha):
+                problems.append(u"实测引用的「预注册笔 %s」在仓库里不存在——锚定必须真实"
+                                % sha[:12])
     for p in problems:
         err(u"[微测声称] " + p)
     if not problems:

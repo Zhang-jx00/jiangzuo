@@ -5609,6 +5609,56 @@ class TestMicroTestClaims(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, r.stdout)
             self.assertIn(u"[微测声称]", r.stdout)
 
+    def test_pre_reg_anchor_missing_is_flagged(self):
+        """红：实测节既没引用预注册笔也没标注「同笔」⇒ 锚定无法核证（E56 规程）。"""
+        md = self.GOOD + (u"\n## E99 实测：某实验\n\n"
+                          u"| 臂 | 次数 | 失败 |\n|---|---|---|\n| A | 5 | 0 |\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"没有预注册锚定", r.stdout)
+
+    def test_pre_reg_sha_must_exist(self):
+        """红：引用的「预注册笔 <sha>」在仓库里不存在 ⇒ 锚定必须真实（夹具非 git 仓库必红）。"""
+        md = self.GOOD + (u"\n## E99 实测：某实验\n\n预注册笔：deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"
+                          u"| 臂 | 次数 | 失败 |\n|---|---|---|\n| A | 5 | 0 |\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn(u"在仓库里不存在", r.stdout)
+
+    def test_pre_reg_sha_real_commit_passes(self):
+        """绿：临时 git 仓库里真实存在的 sha ⇒ 锚定核验通过。"""
+        repo = tempfile.mkdtemp(prefix="mt-repo-")
+        def git(*a):
+            subprocess.run(["git"] + list(a), cwd=repo, check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        git("init", "-q")
+        with io.open(os.path.join(repo, "evals-micro-tests.md"), "w",
+                     encoding="utf-8", newline="\n") as f:
+            f.write("placeholder\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "pre-reg")
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                             stdout=subprocess.PIPE, encoding="utf-8").stdout.strip()
+        md = self.GOOD + (u"\n## E99 实测：某实验\n\n预注册笔：%s\n"
+                          u"| 臂 | 次数 | 失败 |\n|---|---|---|\n| A | 5 | 0 |\n" % sha)
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = self._mini(tmp, md)
+            subprocess.run(["git", "init", "-q"], cwd=sk, check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", sk, "-c", "user.email=t@t", "-c", "user.name=t",
+                            "commit", "-q", "--allow-empty", "-m", "root"],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", sk, "fetch", repo, "HEAD"], check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["git", "-C", sk, "update-ref", "HEAD", sha], check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            r = run([os.path.join(SCRIPTS, "validate_skill.py"), sk])
+            self.assertNotIn(u"[微测声称]", r.stdout, r.stdout)
+
     def test_real_repo_micro_test_claims_are_consistent(self):
         """绿：本仓库的微测台账状态格与实测数据一致。"""
         r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])

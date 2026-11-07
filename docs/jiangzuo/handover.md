@@ -41,9 +41,9 @@
    远端 `main` 与本地一致（`git rev-list --left-right --count origin/main...HEAD` = `0 0`），无待推笔
    （见下面「远端一致性」一栏）。工作树干净（`git status --porcelain` 空）。
    <!-- current-state:begin -->
-   **本机闸门 2026-11-06 当场重跑**：350 用例 OK ｜ validate **32** 信息/0 警告/0 错误 ｜ preflight PASS ｜
+   **本机闸门 2026-11-07 当场重跑**：353 用例 OK ｜ validate **32** 信息/0 警告/0 错误 ｜ preflight PASS ｜
    ship_check L1 SHIP-OK（6/0/0）｜ audit_rules RULES-OK（33 条，另有 1 条数据停用）｜ 靶场 ACCEPT-OK（25/25 检出 & 0/19 安全样本）｜
-   变异校准 **101/101 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 9.993 ms/文件**（预算 ≤20，⚠️ 本机较忙，非回归：重建基线同刻对比见台账）｜ 第三方三仓
+   变异校准 **103/103 全红**（无 SKIP、无 GREEN、无 INVALID）｜ 性能 **BENCH-OK 9.993 ms/文件**（预算 ≤20，⚠️ 本机较忙，非回归：重建基线同刻对比见台账）｜ 第三方三仓
    DVWA **58 发现/结论 58**、flask 13/1、requests 4/0、DVWA 覆盖 **14/19** ｜ 本仓库自扫 **8 发现/结论 0/另计 8**。
    <!-- current-state:end -->
    ⚠️ **误报率口径已重述成三类（E28）**：结论区 59 ＝ 真阳性 **55** + 误报 **4**，4 条按"能不能靠改规则消掉"分：**静态可修 0（E29 已清零）/ 待能力升级 0（E31 已清零）/ 静态消不掉 4（能力边界型）**；**E32 把「全部产出」口径也判完了** ⇒ 全部产出 75 ＝ 真阳性 55 + 误报 4 + 另计 16 ⇒ **误报率 4/75 ≈ 5.3%**
@@ -310,6 +310,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 | **E53** ✅ | v0.87.0 | **把「三仓数字」接进期望值对账**（第 14 项扩第四类，根治 DVWA「69/68」那类漏网） —— E51 订正 §13 时定性：前三类（用例数／语料分母／规则条数）**管不到三仓发现/结论数** ⇒ DVWA 期望挂了一个多月没人发现 ｜ ① 第四类两形态：**`sims`**（同一行 `audit_scan.py <目标> … # 期望：N 发现 / 结论 N`，目标名决定对账哪段）＋ **`sims_self`**（`N 发现 / 结论 N / 另计 N`——自扫标尺，E7 那次坏的就是它）；② 真源 = `current-state.json` 的 **measured** 段（`--refresh` 从扫描产物写入 ⇒ 真源不会腐烂；读落盘真源 ⇒ 仍不跑扫描、跨平台同色），**取不到就报错**；③ 完整性按**配对**判（声明其一必须写全其二）——⚠️ **第一版按"文件里有 audit_scan 命令"判 ⇒ 当场红出 9 条误伤**（README 目录树行／交付报告占位行／分册通用示例全被当成电池）⇒ 收窄并按 E52 规矩把新坑写进 §8 第 **79** 条；④ 真仓库当场自证能红（flask 行改 99 ⇒ 第 14 项点名「实际 13/1」⇒ 逐字节还原）｜ 判据 `TestValidateSimsNumbers` **3 条**（⚠️ 进程内补丁**两处**真源——静态真源也要固定，否则 unittest 探索与本套件 `tests` 包名相撞 ⇒ 夹具静态分支误红）；变异校准 **97/97 全红**（新增 **2** 条：三仓分支被废／自扫分支被废）｜ §5.2 的第 14 项描述同步 ｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
 | **E54** ✅ | v0.88.0 | **行为微测二轮：换指标测「过程可审计性」**（E35 的假设第一次拿到双臂数据）—— 预注册在跑之前（指标＝4 项证据完备度：①实跑 ②留痕-命令 ③留痕-结果 ④挂靠；**跑了没写＝0**；阈值＝B ≥15/20 且 A ≤8/20 才许「有效」，否则继续不宣称；失败率口径不变）｜ **实测**（10 次独立 general-purpose 会话，夹具逐次重置、污染检查全过、无效运行重跑不计点）：A 臂 5 次全散文式静态推理 ⇒ **5/20**；B 臂 5 次全实跑＋证据表（B3/B5 自造数据沙箱验证逻辑，A 臂无人做）⇒ **20/20** ｜ **判定**：失败率 **A 0/5 vs B 0/5 ⇒ 基线未红**（保持）；过程证据 **⇒ 有效（可审计性）** ⇒ **本项目第一条有实测的行为增益声称（范围限定：本场景、该指标）**，第 24 项同步扩**实证配对解析**（`A 证 x/20 … B 证 y/20` ＋ 预注册阈值核对，没数据/不达标写「有效」当场红）｜ 判据 `TestMicroTestClaims` **+3 条**；变异校准 **99/99 全红**（新增 **2** 条）｜ meta-test **八条**如实登记（含独立核查新增：预注册不可核证 ⇒ E56 锚定、产出未归档 ⇒ 已当场补齐）；**独立核查 CONSISTENT**；逐次取证 `eval-runs/mt2/evidence-e54.md` ＋ 原始产出全文 `eval-runs/mt2/transcripts-e54.md`（仓库外）｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
 | **E55** ✅ | v0.89.0 | **英文分册第一批**（requirements / testing / code-review / debugging）—— 独立大工程的第 1 批；「明确不做」清单里它被登记为「留作独立大工程」⇒ 大工程也要有第一批 ｜ **落位先核后定**：references/ 与 _readme_truth 的 glob 非递归 ⇒ `references/en/` 有意不进中文分册计数（仍 20）、lookup 词表与中文契约；入口预算只剩 8 tokens ⇒ SKILL.md 一字未动 ｜ **第 12 项扩展 `check_en_booklets`**：两套锚点一个机制（英文硬锚点 When to read / **Output / CRITICAL: read the entire booklet ＋建议项＋160 行）；**对照账 `docs/jiangzuo/en-coverage.md`** 守半拉子（✅ 已译行 ↔ en/ 实际文件一一对应）；双门面各补一行指针（不带计数）｜ **翻译质量流程**：子代理并行整译（行数 1:1：98/98、79/79、118/117、82/82）⇒ 独立双语审（漏译/走样/编造三类；requirements/testing **PASS**；code-review/debugging 审稿意见入库前收口）⇒ 审稿意见落地（TODO 清理／Output 统一／锚点归一）｜ 判据 `TestEnBooklets` **4 条**；变异校准 **101/101 全红**（新增 **2** 条）｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
+| **E56** ✅ | v0.90.0 | **微测规程修订**——预注册独立提交锚定＋原始产出当轮归档＋方差必填（E54 独立核查两条隐患收口） ｜ 规程新节「锚定与留痕」三条硬性（①预注册先独立提交、实测笔引用「预注册笔：<sha>」②原始产出当轮归档进 eval-runs 并点名路径 ③方差必填——E54 曾漏报）；**第 24 项扩两条判据**（实测节必须有锚定标记——**上线当场逮住 E35 实测节也缺** ⇒ 补历史标注；引用的 sha 必须 `git rev-parse --verify` 真实存在）｜ E54 历史事实如实标注「预注册与实测同笔（bd99078）」——不冒充有独立锚定 ｜ 判据 `TestMicroTestClaims` **+3 条**（锚定缺失红／假 sha 红／真 sha 黑盒过；真仓库绿为既有用例）；变异校准 **103/103 全红**（新增 **2** 条，「跳过条件」式锚点——§8 第 80 条教训沿用）｜ 口径不动（引擎一行没动）：DVWA 58/58、flask 13/1、requests 4/0、自扫 8/0/8、覆盖 14/19、语料 25/25 & 0/19 **一字未变** |
 
 **当前所处等级**：交付报告 §5 的"复用阶梯"停在**第 2 级（仓库已有）与第 6 级（标准库）**之间；
 技能本身已可交付使用，**但未自封 1.0.0**——判据见第 11 节第 12 项。
@@ -324,7 +325,7 @@ D:\Github项目\jiangzuo\                 项目根（不入库）
 cd "D:/Github项目/jiangzuo/jiangzuo"
 python scripts/validate_skill.py .            # 期望 32 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict    # 期望 RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests          # 期望 Ran 350 tests ... OK
+python -m unittest discover -s tests          # 期望 Ran 353 tests ... OK
 python scripts/ship_check.py --level L1        # 期望 RESULT: SHIP-OK（6 通过/0 警告/0 未过）
 python scripts/audit_rules.py --validate       # 期望 RESULT: RULES-OK（33 条，另有 1 条数据停用）
 ```
@@ -1032,8 +1033,7 @@ python evals/audit-fixtures/dvwa_coverage.py --json ../eval-runs/scan.json      
 
 | 轮 | 主题 | 前置 | 验收信号（可当场复现） |
 |---|---|---|---|
-| **E55** | **分册英文版第一批（独立大工程的第 1 批：4 本）** | 「明确不做」清单里它被登记为「单轮做不完 ⇒ 留作独立大工程」⇒ 独立大工程也要有第一批；当前门面（双 README）与 skills.sh 生态是英文读者第一眼，20 本分册却只有中文 | ① 挑 4 本最常用的（requirements / testing / code-review / debugging）；② 逐本整译（**不精简、不改骨架**：CRITICAL 防跳步行、统一小节、行数与中文版逐本对齐）；③ 双门面路由表补英文列；④ `validate` 第 12 项（分册骨架契约）对英文版同样跑；⑤ 中英对照表登记在册（哪本已译、哪本未译，防止"半拉子"）；⑥ 不动引擎、不动判据语义 |
-| **E56** | **微测规程修订：预注册锚定＋原始产出当轮归档＋方差必算**（E54 独立核查的两条隐患收口） | 独立核查（CONSISTENT）点名：「预注册写于跑之前」不可核证（预注册与实测同笔入库，git 无法区分先后）、「原始产出未归档」（本轮已补，但规程没要求 ⇒ 下轮可能再犯）、规程第 4 步的**方差**本轮是补报的 | ① 规程写死：**预注册先独立提交**（一笔只含预注册，哈希锚定）再取数，实测笔必须引用预注册笔的 sha；② 原始产出（子代理答复全文）**当轮归档**进 eval-runs 并在台账里点名路径；③ 方差列为台账必填；④ 第 24 项可选扩一条「实测笔引用的预注册 sha 必须存在」；⑤ 口径不动 |
+| **E57** | **英文分册第二批（4 本：api-design / frontend / backend / database）** | E55 立了流程（子代理整译 ⇒ 独立双语审 ⇒ 意见落地 ⇒ 对照账当轮登记）⇒ 第二批复用；E55 遗留：审稿二（code-review/debugging）结论待回，回来后如实入账 | ① 四本整译（行数 1:1 对齐）② 独立双语审三类问题全收口 ③ 对照账 8/20 ④ TestEnBooklets 全绿、对照账对账红/绿不破 ⑤ 不动引擎、口径不变 |
 ⚠️ **明确不做 / 停牌项**（收口在**这一处**，别再抄到别处）：
 
 1. **JS 正则字面量**里的 `//` —— JS 的除法与正则**靠上下文区分**，静态判错会把**真代码当注释**
@@ -1112,7 +1112,7 @@ git remote get-url origin | sed -E 's#://[^@/]+@#://<CREDENTIAL>@#'   # 期望�
 grep -n "version:" SKILL.md          # 期望：与第 0 节「状态」那一版的版本号一致
 python scripts/validate_skill.py .   # 期望：32 条信息 / 0 警告 / 0 错误
 python scripts/preflight.py --all --strict   # 期望：RESULT: PASS（critical/high=0）
-python -m unittest discover -s tests # 期望：Ran 350 tests ... OK（约 190 秒）
+python -m unittest discover -s tests # 期望：Ran 353 tests ... OK（约 190 秒）
 python scripts/audit_rules.py --validate    # 期望：RESULT: RULES-OK（33 条，另有 1 条数据停用）
 python scripts/ship_check.py --level L1      # 期望：RESULT: SHIP-OK（6 通过/0 警告/0 未过，会再跑一遍测试）
 

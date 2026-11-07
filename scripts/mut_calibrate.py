@@ -1083,6 +1083,20 @@ CASES = [
      "en-coverage-count-neutered",
      "tests.test_scripts.TestEnBooklets."
      "test_coverage_mismatch_is_flagged"),
+    # ---- E56（v0.90.0）：微测实测的锚定判据（预注册笔 sha 必须真实；实测节必须有锚定标记）----
+    # 两处承重各一条（都是「跳过整块/条件」式锚点——§8 第 80 条的教训）。
+    ("scripts/validate_skill.py",
+     '            if not (u"预注册笔" in seg or u"预注册与实测同笔" in seg):',
+     '            if False:  # E56 校准：锚定标记不再被核',
+     "pre-reg-anchor-check-neutered",
+     "tests.test_scripts.TestMicroTestClaims."
+     "test_pre_reg_anchor_missing_is_flagged"),
+    ("scripts/validate_skill.py",
+     "            if not git_commit_exists(skill_dir, sha):",
+     "            if False and not git_commit_exists(skill_dir, sha):  # E56 校准：sha 不再被核",
+     "pre-reg-sha-check-neutered",
+     "tests.test_scripts.TestMicroTestClaims."
+     "test_pre_reg_sha_must_exist"),
 ]
 
 
