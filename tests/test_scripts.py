@@ -7348,11 +7348,20 @@ class TestEnBooklets(unittest.TestCase):
             self.assertIn(u"对照账", r.stdout)
 
     def test_real_repo_en_booklets_pass(self):
-        """绿：本仓库 4 本英文分册过骨架契约、对照账对得上。"""
+        """绿：本仓库英文分册过骨架契约、对照账对得上。
+
+        ⚠️ 本数**从对照账现查**，不写死——E55 第一版把「4 本」写死在测试里，
+        第二批入库当场红（E57 亲测：每笔都变的数在测试里也是数）。
+        """
         r = run([os.path.join(SCRIPTS, "validate_skill.py"), "."])
-        self.assertIn(u"英文分册骨架契约全部满足（4 本", r.stdout)
-        self.assertNotIn(u"英文分册 ", r.stdout.replace(
-            u"英文分册骨架契约全部满足（4 本，含对照账对账） ✓", u""), r.stdout)
+        m = re.search(u"英文分册骨架契约全部满足（(\\d+) 本，含对照账对账） ✓", r.stdout)
+        self.assertIsNotNone(m, u"英文分册契约信息行不在：%s" % r.stdout)
+        cov = io.open(os.path.join(REPO, "docs", "jiangzuo", "en-coverage.md"),
+                      encoding="utf-8", errors="replace").read()
+        claimed = sum(1 for ln in cov.splitlines()
+                      if ln.startswith(u"|") and u"✅ 已译" in ln)
+        self.assertEqual(int(m.group(1)), claimed,
+                         u"契约信息行的本数与对照账的 ✅ 已译行数对不上")
 
 
 if __name__ == "__main__":

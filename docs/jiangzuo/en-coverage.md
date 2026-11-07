@@ -6,16 +6,16 @@
 
 | 分册 | 英文版路径 | 状态 |
 |---|---|---|
-| api-design | — | 未译 |
+| api-design | references/en/api-design.en.md | ✅ 已译 |
 | audit-rule-authoring | — | 未译 |
-| backend | — | 未译 |
+| backend | references/en/backend.en.md | ✅ 已译 |
 | code-review | references/en/code-review.en.md | ✅ 已译 |
-| database | — | 未译 |
+| database | references/en/database.en.md | ✅ 已译 |
 | debugging | references/en/debugging.en.md | ✅ 已译 |
 | design | — | 未译 |
 | devops | — | 未译 |
 | docs-delivery | — | 未译 |
-| frontend | — | 未译 |
+| frontend | references/en/frontend.en.md | ✅ 已译 |
 | incident | — | 未译 |
 | onboarding | — | 未译 |
 | refactor-performance | — | 未译 |
