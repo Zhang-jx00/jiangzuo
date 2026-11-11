@@ -12,15 +12,15 @@
 | code-review | references/en/code-review.en.md | ✅ 已译 |
 | database | references/en/database.en.md | ✅ 已译 |
 | debugging | references/en/debugging.en.md | ✅ 已译 |
-| design | — | 未译 |
+| design | references/en/design.en.md | ✅ 已译 |
 | devops | — | 未译 |
-| docs-delivery | — | 未译 |
+| docs-delivery | references/en/docs-delivery.en.md | ✅ 已译 |
 | frontend | references/en/frontend.en.md | ✅ 已译 |
 | incident | — | 未译 |
-| onboarding | — | 未译 |
+| onboarding | references/en/onboarding.en.md | ✅ 已译 |
 | refactor-performance | — | 未译 |
 | requirements | references/en/requirements.en.md | ✅ 已译 |
-| security | — | 未译 |
+| security | references/en/security.en.md | ✅ 已译 |
 | security-audit | — | 未译 |
 | self-evolution | — | 未译 |
 | skill-orchestration | — | 未译 |
