@@ -9,13 +9,13 @@
 | 分册 | 英文版路径 | 状态 |
 |---|---|---|
 | api-design | references/en/api-design.en.md | ✅ 已译 |
-| audit-rule-authoring | — | 未译 |
+| audit-rule-authoring | references/en/audit-rule-authoring.en.md | ✅ 已译 |
 | backend | references/en/backend.en.md | ✅ 已译 |
 | code-review | references/en/code-review.en.md | ✅ 已译 |
 | database | references/en/database.en.md | ✅ 已译 |
 | debugging | references/en/debugging.en.md | ✅ 已译 |
 | design | references/en/design.en.md | ✅ 已译 |
-| devops | — | 未译 |
+| devops | references/en/devops.en.md | ✅ 已译 |
 | docs-delivery | references/en/docs-delivery.en.md | ✅ 已译 |
 | frontend | references/en/frontend.en.md | ✅ 已译 |
 | incident | references/en/incident.en.md | ✅ 已译 |
@@ -23,8 +23,8 @@
 | refactor-performance | references/en/refactor-performance.en.md | ✅ 已译 |
 | requirements | references/en/requirements.en.md | ✅ 已译 |
 | security | references/en/security.en.md | ✅ 已译 |
-| security-audit | — | 未译 |
+| security-audit | references/en/security-audit.en.md | ✅ 已译 |
 | self-evolution | references/en/self-evolution.en.md | ✅ 已译 |
 | skill-orchestration | references/en/skill-orchestration.en.md | ✅ 已译 |
 | testing | references/en/testing.en.md | ✅ 已译 |
-| ui-design | — | 未译 |
+| ui-design | references/en/ui-design.en.md | ✅ 已译 |
