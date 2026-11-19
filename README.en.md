@@ -109,7 +109,8 @@ No configuration needed afterwards: any software-development request auto-loads 
 ⚠️ **But "auto-load" has conditions**: this skill's own trigger test (24 real sessions, data in `evals/trigger-tests.md`) hits its positive cases in a clean environment, while in environments with other process-heavy skills installed (superpowers, domain suites) the measured positive trigger rate is **2/19**, overall **7/24 = 29.2 %**, with **0 false triggers**. So:
 
 - **Want it to work in every project → name it explicitly**: "use Jiangzuo to fix this bug", or `/jiangzuo`.
-- **Want the real ceiling of auto-triggering → remove the competing skills and re-run** (that is a measurement-scope question, not a wording question; it is recorded in the decision log).
+- **Want the real ceiling of auto-triggering → remove the competing skills and re-run** (Route A is archived: pending a controllable evaluation environment);
+- **Trigger-rate verdict (2026-11-18)**: the bottleneck is **loading competition** in the environment, not the wording (two rounds of consistent attribution + physical evidence of the competing SessionStart injection); confirmed by the owner. Trigger standard = **explicit naming + high-overlap phrasing**, with competitive positioning in this section; data and the verdict live in `evals/trigger-tests.md`.
 - Non-engineering tasks (translation, prose) are not falsely triggered — that is the negative set, 5/5 passing.
 
 ## Design basis
